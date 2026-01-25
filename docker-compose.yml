@@ -1,0 +1,30 @@
+version: '3.3'
+
+services:
+  app:
+    image: testapp:latest
+    container_name: testapp
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+    volumes:
+      - ./backend/uploads:/app/backend/uploads
+      - ./backend/.env:/app/backend/.env:ro
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

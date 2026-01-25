@@ -1,0 +1,26 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+build
+
+# Environment
+.env
+.env.*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# macOS
+.DS_Store
+
+# 部署相关
+deploy.config
+deploy-package/
+deploy-package.tar.gz
+testapp-image.tar.gz
+

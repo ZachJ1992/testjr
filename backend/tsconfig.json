@@ -1,0 +1,22 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "resolveJsonModule": true,
+    "noEmit": false,
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": [
+    "src",
+    "../shared/src"
+  ],
+  "ts-node": {
+    "esm": true
+  }
+}
+

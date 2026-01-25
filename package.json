@@ -1,0 +1,21 @@
+{
+  "name": "testapp",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "dev:frontend": "npm --workspace frontend run dev",
+    "dev:backend": "npm --workspace backend run dev",
+    "build:frontend": "npm --workspace frontend run build",
+    "build:backend": "npm --workspace backend run build",
+    "lint": "npm --workspace frontend run lint && npm --workspace backend run lint"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
