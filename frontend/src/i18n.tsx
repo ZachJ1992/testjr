@@ -8,6 +8,7 @@ import { ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import dayjs from "dayjs";
+import { antdTheme } from "./theme";
 
 type I18nState = {
   lang: string;
@@ -61,7 +62,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <ConfigProvider locale={antdLocale}>
+    <ConfigProvider locale={antdLocale} theme={antdTheme}>
       <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
     </ConfigProvider>
   );

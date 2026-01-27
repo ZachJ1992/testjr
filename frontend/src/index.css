@@ -1,12 +1,206 @@
+/**
+ * 登途云 - 全局样式
+ * 基于 ui-ux-pro-max 设计系统
+ */
+
 :root {
-  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  color: #0f172a;
-  background-color: #f5f5f5;
+  /* 主色调 */
+  --color-primary: #0891B2;
+  --color-primary-hover: #0E7490;
+  --color-primary-active: #155E75;
+  --color-secondary: #22D3EE;
+  
+  /* 功能色 */
+  --color-success: #22C55E;
+  --color-success-hover: #16A34A;
+  --color-warning: #F59E0B;
+  --color-error: #EF4444;
+  --color-info: #3B82F6;
+  
+  /* 背景色 */
+  --color-bg-primary: #F8FAFC;
+  --color-bg-secondary: #F1F5F9;
+  --color-bg-card: #FFFFFF;
+  --color-bg-sider: #0F172A;
+  
+  /* 文字色 */
+  --color-text-primary: #0F172A;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #94A3B8;
+  --color-text-light: #F8FAFC;
+  
+  /* 边框色 */
+  --color-border: #E2E8F0;
+  --color-border-light: #F1F5F9;
+  
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  
+  /* 字体 */
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 
+    'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5715;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-primary);
+  
+  /* 动画 */
+  --transition-fast: 0.1s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.3s ease;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  height: 100%;
+  padding: 0;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 滚动条优化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-text-tertiary);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary);
+}
+
+/* 统一链接样式 */
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+a:hover {
+  color: var(--color-primary-hover);
+}
+
+/* 选中文本颜色 */
+::selection {
+  background: var(--color-primary);
+  color: white;
+}
+
+/* 全局卡片悬浮效果增强 */
+.ant-card {
+  transition: box-shadow var(--transition-normal), transform var(--transition-normal);
+}
+
+.ant-card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* 可点击卡片 */
+.ant-card.clickable {
+  cursor: pointer;
+}
+
+.ant-card.clickable:hover {
+  transform: translateY(-2px);
+}
+
+/* 表格行悬浮效果 */
+.ant-table-tbody > tr {
+  transition: background-color var(--transition-fast);
+}
+
+/* 按钮交互优化 */
+.ant-btn {
+  transition: all var(--transition-normal);
+}
+
+.ant-btn:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.ant-btn:not(:disabled):active {
+  transform: translateY(0);
+}
+
+/* 统计数字样式增强 */
+.ant-statistic-content-value {
+  font-weight: 600;
+}
+
+/* 金额正负色 */
+.amount-positive {
+  color: var(--color-success);
+}
+
+.amount-negative {
+  color: var(--color-error);
+}
+
+.amount-neutral {
+  color: var(--color-text-primary);
+}
+
+/* 状态标签色彩 */
+.status-active {
+  color: var(--color-success);
+}
+
+.status-pending {
+  color: var(--color-warning);
+}
+
+.status-disabled {
+  color: var(--color-text-tertiary);
+}
+
+.status-error {
+  color: var(--color-error);
+}
+
+/* 页面标题样式 */
+.page-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 16px;
+}
+
+/* 页面描述样式 */
+.page-description {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin-bottom: 24px;
+}
+
+/* 卡片标题样式 */
+.card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* 过渡动画 - 尊重用户偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 

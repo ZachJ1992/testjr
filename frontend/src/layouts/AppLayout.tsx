@@ -28,6 +28,7 @@ import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { SettingOutlined } from "@ant-design/icons";
 import { changePasswordApi, getErrorMessage, getToken } from "../api";
+import { designColors, siderStyles, headerStyles } from "../theme";
 import { Modal, Form, Input, message } from "antd";
 import FloatingAI, { useAI, AIButton, AIDrawerComponent } from "../components/FloatingAI";
 import { TabManagerProvider, TabConfig, TabBar, TabContent } from "../components/TabManager";
@@ -744,23 +745,30 @@ function AppLayout() {
           collapsible 
           collapsed={collapsed} 
           onCollapse={setCollapsed}
+          width={siderStyles.width}
+          collapsedWidth={siderStyles.collapsedWidth}
           style={{
             overflow: "hidden",
-            height: "100vh"
+            height: "100vh",
+            background: siderStyles.background,
           }}
         >
           <div
             style={{
-              height: 48,
-              margin: 12,
-              background: "rgba(255,255,255,0.2)",
+              height: 56,
+              margin: "12px 12px 8px 12px",
+              background: `linear-gradient(135deg, ${designColors.primary} 0%, ${designColors.primaryActive} 100%)`,
               borderRadius: 8,
               color: "#fff",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               fontWeight: 600,
-              flexShrink: 0
+              fontSize: collapsed ? 16 : 18,
+              flexShrink: 0,
+              letterSpacing: collapsed ? 0 : 2,
+              boxShadow: "0 2px 8px rgba(8, 145, 178, 0.3)",
+              transition: "all 0.2s ease",
             }}
           >
             {collapsed ? "登途" : "登途云"}
@@ -783,16 +791,18 @@ function AppLayout() {
         <Layout style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <Header
           style={{
-            background: "#fff",
+            background: headerStyles.background,
             display: "flex",
             alignItems: "center",
             padding: "0 16px",
-            boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+            boxShadow: "0 1px 3px rgba(0, 0, 0, 0.04)",
+            borderBottom: headerStyles.borderBottom,
             zIndex: 10,
             flexDirection: "column",
             paddingTop: 0,
             paddingBottom: 0,
-            flexShrink: 0
+            flexShrink: 0,
+            height: headerStyles.height,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", width: "100%", height: 48 }}>
@@ -830,7 +840,7 @@ function AppLayout() {
           </div>
         </Header>
         <Content style={{ 
-          background: "#f5f7fb", 
+          background: designColors.bgPrimary, 
           display: "flex", 
           flexDirection: "column", 
           flex: 1,
