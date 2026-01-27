@@ -212,7 +212,7 @@ function DirectedPayContractsPage() {
     try {
       await deleteDirectedPayContractApi(token, contract.id);
       message.success("合同删除成功");
-      refresh();
+      await refresh();
     } catch (err) {
       message.error(getErrorMessage(err));
     }
@@ -224,7 +224,7 @@ function DirectedPayContractsPage() {
     try {
       await updateDirectedPayContractStatus(token, contract.id, action);
       message.success("状态更新成功");
-      refresh();
+      await refresh();
     } catch (err) {
       message.error(getErrorMessage(err));
     }

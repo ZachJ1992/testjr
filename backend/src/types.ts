@@ -194,6 +194,8 @@ export interface Contract {
   status: ContractStatus;
   createdAt: string;
   updatedAt: string;
+  // 放款信息
+  usedAmount?: number; // 已用额度（累计放款）
 }
 
 // 资金方相关类型（枚举已从共享文件导入）
@@ -687,6 +689,15 @@ export interface RevenueStats {
   pendingRevenue: number;       // 待确认
   estimatedRevenue: number;     // 预估(未来30天)
   periodRevenue: number;        // 本期新增
+  growthRate?: number;          // 环比增长率
+  // 业务指标（平台看板用）
+  totalInvestment?: number;     // 在投总额
+  dailyAverage?: number;        // 日均收益
+  activeContracts?: number;     // 有效合同数
+  newContractsPeriod?: number;  // 本期新增合同
+  activeFunders?: number;       // 资金方数量
+  activeFinanciers?: number;    // 融资方数量
+  periodWaybills?: number;      // 本期运单数
 }
 
 // 收益趋势数据点

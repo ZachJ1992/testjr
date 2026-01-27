@@ -26,6 +26,7 @@ let interceptedApiData: any[] = [];
 let tmsTotalRecords: number = 0;
 let currentBrowserPid: number | null = null;
 let currentTempDir: string | null = null;
+let isSyncRunning: boolean = false;  // 防止并发同步
 
 // ==================== 浏览器路径查找 ====================
 function findChromePath(): string | null {
@@ -834,10 +835,38 @@ async function setDateFilterToHalfYear(page: Page): Promise<boolean> {
   
   console.log(`[Puppeteer] 确定按钮点击结果:`, confirmResult);
   
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  // 等待"确定"按钮点击后的数据加载
+  if (confirmResult.success || quickButtonResult.success) {
+    console.log('[Puppeteer] 等待日期筛选数据加载...');
+    let waitTime = 0;
+    const maxWait2 = 8000;
+    while (interceptedApiData.length === 0 && waitTime < maxWait2) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      waitTime += 500;
+      if (waitTime % 2000 === 0) {
+        console.log(`[Puppeteer] 等待数据... ${waitTime/1000}s, 拦截数据: ${interceptedApiData.length} 条`);
+      }
+    }
+    
+    if (interceptedApiData.length > 0) {
+      console.log(`[Puppeteer] 日期筛选后已获取到 ${interceptedApiData.length} 条数据，跳过查询按钮`);
+      
+      // 获取总页数
+      const newTotalPages = await page.evaluate(() => {
+        const pageInfo = document.body.innerText.match(/共\s*(\d+)\s*页/);
+        return pageInfo ? parseInt(pageInfo[1], 10) : 0;
+      });
+      console.log(`[Puppeteer] 筛选后总页数: ${newTotalPages}`);
+      
+      return true;
+    }
+  }
   
-  // 步骤4: 点击查询按钮
+  // 如果没有数据，尝试点击查询按钮
   console.log('[Puppeteer] 步骤4: 点击查询按钮...');
+  
+  // 在点击之前清除数据
+  interceptedApiData = [];
   
   const queryClicked = await page.evaluate(() => {
     const buttons = document.querySelectorAll('button, [class*="btn"], span, div');
@@ -857,12 +886,10 @@ async function setDateFilterToHalfYear(page: Page): Promise<boolean> {
   console.log(`[Puppeteer] 查询按钮点击结果:`, queryClicked);
   
   if (queryClicked.success) {
-    interceptedApiData = [];
-    
     console.log('[Puppeteer] 等待筛选结果加载...');
     let waitTime = 0;
-    const maxWait2 = 15000;
-    while (interceptedApiData.length === 0 && waitTime < maxWait2) {
+    const maxWait3 = 10000;
+    while (interceptedApiData.length === 0 && waitTime < maxWait3) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       waitTime += 1000;
       if (waitTime % 3000 === 0) {
@@ -916,11 +943,29 @@ function mapApiDataToRow(item: any): TmsRowData {
  * 获取当前页的表格数据
  */
 async function getTableData(page: Page): Promise<TmsRowData[]> {
+  console.log(`[Puppeteer] getTableData 开始: interceptedApiData.length = ${interceptedApiData.length}`);
   await new Promise(resolve => setTimeout(resolve, 2000));
+  console.log(`[Puppeteer] getTableData 等待后: interceptedApiData.length = ${interceptedApiData.length}`);
   
   if (interceptedApiData.length > 0) {
     console.log(`[Puppeteer] 使用拦截到的 API 数据: ${interceptedApiData.length} 条`);
+    
+    // 调试：输出第一条数据的结构
+    if (interceptedApiData.length > 0) {
+      const firstItem = interceptedApiData[0];
+      const keys = Object.keys(firstItem).slice(0, 15);
+      console.log(`[Puppeteer] 数据字段示例: ${keys.join(', ')}`);
+      console.log(`[Puppeteer] 运单号字段: batchNumber=${firstItem.batchNumber}, batch_number=${firstItem.batch_number}, car_batch=${firstItem.car_batch}`);
+      console.log(`[Puppeteer] 创建时间: createTime=${firstItem.createTime}, create_time=${firstItem.create_time}`);
+    }
+    
     const results = interceptedApiData.map(item => mapApiDataToRow(item));
+    
+    // 调试：输出映射后的第一条数据
+    if (results.length > 0) {
+      console.log(`[Puppeteer] 映射后第一条: 运单号=${results[0].waybillNumber}, 创建时间=${results[0].createdTime}`);
+    }
+    
     const data = [...results];
     interceptedApiData = [];
     return data;
@@ -1015,11 +1060,38 @@ async function getCurrentPageNumber(page: Page): Promise<number> {
 }
 
 /**
- * 翻到下一页 - 修复版本，基于截图分析
+ * 检查页面是否有效（未被 detached）
+ */
+async function isPageValid(page: Page): Promise<boolean> {
+  try {
+    await page.evaluate(() => document.readyState);
+    return true;
+  } catch (e: any) {
+    if (e.message.includes('detached') || e.message.includes('Execution context')) {
+      return false;
+    }
+    throw e;
+  }
+}
+
+/**
+ * 翻到下一页 - 增强版本，包含错误恢复机制
  * 分页区域格式: "1页 页/共62页" + 输入框 + 箭头按钮
  */
-async function goToNextPage(page: Page): Promise<boolean> {
+async function goToNextPage(page: Page, retryCount: number = 0): Promise<boolean> {
+  const MAX_RETRIES = 3;
+  
   try {
+    // 首先检查页面是否有效
+    if (!await isPageValid(page)) {
+      console.log('[Puppeteer] 检测到页面已 detached，等待恢复...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      if (!await isPageValid(page)) {
+        console.log('[Puppeteer] 页面无法恢复');
+        return false;
+      }
+    }
+    
     const currentPage = await getCurrentPageNumber(page);
     console.log(`[Puppeteer] 当前页码: ${currentPage}`);
     
@@ -1116,17 +1188,40 @@ async function goToNextPage(page: Page): Promise<boolean> {
     console.log(`[Puppeteer] 翻页后页码未变化: ${newPage}`);
     return false;
   } catch (error: any) {
-    console.error('[Puppeteer] 翻页失败:', error.message);
+    const isDetachedError = error.message.includes('detached') || 
+                            error.message.includes('Execution context');
+    
+    console.error(`[Puppeteer] 翻页失败 (重试 ${retryCount}/${MAX_RETRIES}):`, error.message);
+    
+    // 如果是 detached 错误且还有重试次数，等待后重试
+    if (isDetachedError && retryCount < MAX_RETRIES) {
+      console.log(`[Puppeteer] 检测到 detached 错误，等待 ${(retryCount + 1) * 2} 秒后重试...`);
+      await new Promise(resolve => setTimeout(resolve, (retryCount + 1) * 2000));
+      return goToNextPage(page, retryCount + 1);
+    }
+    
     return false;
   }
 }
 
 /**
- * 直接跳转到指定页码 - 修复版本
+ * 直接跳转到指定页码 - 增强版本，包含错误恢复机制
  * 基于截图分析：分页区域有输入框，格式 "1页 页/共62页"
  */
-async function jumpToPage(page: Page, targetPage: number): Promise<boolean> {
+async function jumpToPage(page: Page, targetPage: number, retryCount: number = 0): Promise<boolean> {
+  const MAX_RETRIES = 3;
+  
   try {
+    // 首先检查页面是否有效
+    if (!await isPageValid(page)) {
+      console.log('[Puppeteer] 跳转前检测到页面已 detached，等待恢复...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      if (!await isPageValid(page)) {
+        console.log('[Puppeteer] 页面无法恢复');
+        return false;
+      }
+    }
+    
     console.log(`[Puppeteer] 尝试直接跳转到第 ${targetPage} 页...`);
     
     interceptedApiData = [];
@@ -1259,7 +1354,18 @@ async function jumpToPage(page: Page, targetPage: number): Promise<boolean> {
     console.log(`[Puppeteer] 跳转超时，当前页码: ${newPage}，目标: ${targetPage}`);
     return false;
   } catch (error: any) {
-    console.error('[Puppeteer] 跳转页码失败:', error.message);
+    const isDetachedError = error.message.includes('detached') || 
+                            error.message.includes('Execution context');
+    
+    console.error(`[Puppeteer] 跳转页码失败 (重试 ${retryCount}/${MAX_RETRIES}):`, error.message);
+    
+    // 如果是 detached 错误且还有重试次数，等待后重试
+    if (isDetachedError && retryCount < MAX_RETRIES) {
+      console.log(`[Puppeteer] 检测到 detached 错误，等待 ${(retryCount + 1) * 2} 秒后重试...`);
+      await new Promise(resolve => setTimeout(resolve, (retryCount + 1) * 2000));
+      return jumpToPage(page, targetPage, retryCount + 1);
+    }
+    
     return false;
   }
 }
@@ -1311,21 +1417,52 @@ async function waybillExists(waybillNumber: string): Promise<boolean> {
  */
 async function saveWaybill(data: TmsRowData, financierId: string): Promise<boolean> {
   try {
-  const id = randomUUID();
-  await pool.query(
-    `INSERT INTO waybills (
+    const id = randomUUID();
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    
+    // 处理空的日期时间值
+    const departureTime = data.departureTime && data.departureTime.trim() !== '' 
+      ? data.departureTime 
+      : null;
+    const createdTime = data.createdTime && data.createdTime.trim() !== '' 
+      ? data.createdTime 
+      : now;
+    // waybill_date 使用 created_time 的日期部分
+    const waybillDate = createdTime ? createdTime.slice(0, 10) : now.slice(0, 10);
+    
+    await pool.query(
+      `INSERT INTO waybills (
         id, financier_id, waybill_number, operator, driver_name, co_driver,
         vehicle_plate, monthly_cost, created_time, departure_time, remark,
-        customer_name, receivable_total, receivable_transport, payable_total,
+        customer_name, customer_id, business_mode, status,
+        departure_place, arrival_place, vehicle_route, waybill_date,
+        receivable_total, receivable_transport, payable_total,
         driver_piece_rate, co_driver_piece_rate, payable_oil_card, etc_fee,
-        profit, profit_rate, receivable_return
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        profit, profit_rate, receivable_return,
+        batch_status, assign_status, dispatch_status, batch_source, load_type,
+        branch, total_volume, goods_weight
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        id, financierId, data.waybillNumber, data.operator, data.driverName, data.coDriver,
-        data.vehiclePlate, data.monthlyCost, data.createdTime, data.departureTime, data.remark,
-        data.customerName, data.receivableTotal, data.receivableTransport, data.payableTotal,
-        data.driverPieceRate, data.coDriverPieceRate, data.payableOilCard, data.etcFee,
-        data.profit, data.profitRate, data.receivableReturn
+        id, financierId, data.waybillNumber, data.operator || '', data.driverName || '', data.coDriver || '',
+        data.vehiclePlate || '', data.monthlyCost || 0, createdTime, departureTime, data.remark || '',
+        data.customerName || '', financierId, // customer_id 设为 financierId
+        'brokerage', // business_mode 默认值
+        'pending',   // status 默认值
+        '',  // departure_place
+        '',  // arrival_place
+        '',  // vehicle_route
+        waybillDate, // waybill_date
+        data.receivableTotal || 0, data.receivableTransport || 0, data.payableTotal || 0,
+        data.driverPieceRate || 0, data.coDriverPieceRate || 0, data.payableOilCard || 0, data.etcFee || 0,
+        data.profit || 0, data.profitRate || 0, data.receivableReturn || 0,
+        '10',   // batch_status 默认值
+        '200',  // assign_status 默认值  
+        '300',  // dispatch_status 默认值
+        '2',    // batch_source 默认值
+        '2',    // load_type 默认值
+        '',     // branch
+        0,      // total_volume
+        0       // goods_weight
       ]
     );
     return true;
@@ -1354,6 +1491,17 @@ export async function syncWithPuppeteer(
     errorCount: 0,
     errors: [],
   };
+
+  // 检查是否已有同步任务在运行
+  if (isSyncRunning) {
+    console.log('[Puppeteer] 已有同步任务在运行，跳过本次请求');
+    result.errors.push('已有同步任务在运行');
+    return result;
+  }
+  
+  // 设置运行标志
+  isSyncRunning = true;
+  console.log('[Puppeteer] 开始同步任务，设置运行锁');
 
   let browser: Browser | null = null;
   let userDataDir: string | null = null;
@@ -1455,6 +1603,7 @@ export async function syncWithPuppeteer(
     }
     
     console.log('[Puppeteer] 任务列表页面加载完成');
+    console.log(`[Puppeteer] 调试: setDateFilterToHalfYear 后 interceptedApiData.length = ${interceptedApiData.length}`);
 
     // 获取总页数
     const totalPages = await getTotalPages(page);
@@ -1508,14 +1657,24 @@ export async function syncWithPuppeteer(
 
       // 获取当前页数据
       const pageData = await getTableData(page);
+      
+      // 调试：输出当前页数据量
+      console.log(`[Puppeteer] 当前页获取到 ${pageData.length} 条数据`);
 
       for (const row of pageData) {
-        if (!row.waybillNumber) continue;
+        if (!row.waybillNumber) {
+          console.log(`[Puppeteer] 跳过无运单号的数据`);
+          continue;
+        }
 
         result.totalFetched++;
           
           // 检查是否已存在
         const exists = await waybillExists(row.waybillNumber);
+        // 调试: 前5条记录输出详细信息
+        if (result.totalFetched <= 5) {
+          console.log(`[Puppeteer] 调试: 运单号=${row.waybillNumber}, 已存在=${exists}, 创建时间=${row.createdTime}`);
+        }
           if (exists) {
             result.skippedCount++;
           consecutiveExistingCount++;
@@ -1535,9 +1694,17 @@ export async function syncWithPuppeteer(
         const saved = await saveWaybill(row, config.financierId);
         if (saved) {
           result.newCount++;
+          if (result.newCount <= 5 || result.newCount % 100 === 0) {
+            console.log(`[Puppeteer] 新增第 ${result.newCount} 条: ${row.waybillNumber}`);
+          }
         } else {
           result.errorCount++;
         }
+      }
+      
+      // 每页处理完后输出统计
+      if (pageNum % 10 === 0 || pageNum === 1) {
+        console.log(`[Puppeteer] 进度: 页${pageNum}, 总获取${result.totalFetched}, 新增${result.newCount}, 跳过${result.skippedCount}`);
       }
 
       if (reachedExistingData) {
@@ -1635,6 +1802,10 @@ export async function syncWithPuppeteer(
     
     currentBrowserPid = null;
     currentTempDir = null;
+    
+    // 释放运行锁
+    isSyncRunning = false;
+    console.log('[Puppeteer] 同步任务结束，释放运行锁');
   }
 
   return result;

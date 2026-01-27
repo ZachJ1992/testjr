@@ -32,8 +32,11 @@ const SOURCE_TYPE_MAP: Record<string, string> = {
 const FunderRevenue: React.FC = () => {
   const { token, user } = useAuth();
   
-  // 检查是否为资金方用户
-  const isFunderUser = user?.orgContext?.orgType === 'funder' || user?.orgContext?.isPlatformUser;
+  // 检查是否有权限访问（平台用户或资金方用户）
+  const isPlatformUser = user?.permissions?.includes("*") || 
+                         user?.orgContext?.orgType === 'platform' ||
+                         user?.permissions?.includes("view_platform_revenue");
+  const isFunderUser = isPlatformUser || user?.orgContext?.orgType === 'funder';
   
   const [timeRange, setTimeRange] = useState<TimeRange>('month');
   const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null);

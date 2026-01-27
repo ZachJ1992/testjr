@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Card, Row, Col, Statistic, Table, Select, DatePicker, Button, Space, Tag, message, Empty, Spin } from 'antd';
-import { DownloadOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Statistic, Table, Select, DatePicker, Button, Space, Tag, message, Empty, Spin, Progress, Typography } from 'antd';
+import { DownloadOutlined, FileTextOutlined, TeamOutlined, UserOutlined, RiseOutlined, ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons';
+
+const { Text } = Typography;
 import * as echarts from 'echarts';
 import dayjs, { Dayjs } from 'dayjs';
 import { useAuth } from '../auth';
@@ -286,39 +288,97 @@ const PlatformRevenue: React.FC = () => {
           </Col>
         </Row>
 
-        {/* 统计卡片 - 只保留3个：总收益、本期新增、预估收益 */}
-        <Row gutter={16} style={{ marginBottom: 24 }}>
+        {/* 第一排：收益核心指标 - 5个卡片 */}
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          {[
+            { title: '累计总收益', value: stats?.totalRevenue || 0, accent: '#1890ff' },
+            { title: '本期收益', value: stats?.periodRevenue || 0, accent: '#52c41a', showGrowth: true },
+            { title: '日均收益', value: stats?.dailyAverage || (stats?.periodRevenue ? stats.periodRevenue / 30 : 0), accent: '#faad14' },
+            { title: '预估收益(30天)', value: stats?.estimatedRevenue || 0, accent: '#722ed1' },
+            { title: '在投总额', value: stats?.totalInvestment || 0, accent: '#13c2c2' },
+          ].map((item, index) => (
+            <Col key={index} flex="1 1 0" style={{ minWidth: 180 }}>
+              <Card 
+                size="small" 
+                style={{ 
+                  height: '100%',
+                  borderTop: `3px solid ${item.accent}`,
+                  borderRadius: '2px 2px 6px 6px',
+                }}
+                styles={{ body: { padding: '20px' } }}
+              >
+                <div style={{ fontSize: 13, color: '#8c8c8c', marginBottom: 12 }}>{item.title}</div>
+                <div style={{ fontSize: 28, fontWeight: 600, color: '#1f1f1f', lineHeight: 1.2, letterSpacing: '-0.5px' }}>
+                  <span style={{ fontSize: 18, fontWeight: 400, marginRight: 2 }}>¥</span>
+                  {(item.value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                {item.showGrowth && stats?.growthRate !== undefined && (
+                  <div style={{ 
+                    marginTop: 10, 
+                    fontSize: 12, 
+                    color: stats.growthRate >= 0 ? '#52c41a' : '#ff4d4f',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4
+                  }}>
+                    {stats.growthRate >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
+                    环比 {Math.abs(stats.growthRate || 0).toFixed(1)}%
+                  </div>
+                )}
+              </Card>
+            </Col>
+          ))}
+        </Row>
+
+        {/* 第二排：业务增长指标 - 3个卡片，低调简洁风格 */}
+        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
           <Col span={8}>
-            <Card>
-              <Statistic
-                title="总收益"
-                value={stats?.totalRevenue || 0}
-                precision={2}
-                prefix="¥"
-                valueStyle={{ color: '#1890ff', fontSize: 28 }}
-              />
+            <Card size="small" style={{ background: '#fafafa', border: '1px solid #f0f0f0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <FileTextOutlined style={{ fontSize: 20, color: '#1890ff' }} />
+                  <div>
+                    <div style={{ fontSize: 12, color: '#999' }}>有效合同</div>
+                    <div style={{ fontSize: 20, fontWeight: 500 }}>{stats?.activeContracts || 0} <span style={{ fontSize: 12, fontWeight: 400, color: '#999' }}>份</span></div>
+                  </div>
+                </div>
+                {(stats?.newContractsPeriod || 0) > 0 && (
+                  <Tag color="green" style={{ margin: 0 }}>+{stats?.newContractsPeriod} 本期</Tag>
+                )}
+              </div>
             </Card>
           </Col>
           <Col span={8}>
-            <Card>
-              <Statistic
-                title="本期新增"
-                value={stats?.periodRevenue || 0}
-                precision={2}
-                prefix="¥"
-                valueStyle={{ color: '#52c41a' }}
-              />
+            <Card size="small" style={{ background: '#fafafa', border: '1px solid #f0f0f0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <TeamOutlined style={{ fontSize: 20, color: '#52c41a' }} />
+                  <div>
+                    <div style={{ fontSize: 12, color: '#999' }}>合作伙伴</div>
+                    <div style={{ fontSize: 20, fontWeight: 500 }}>
+                      <span style={{ color: '#1890ff' }}>{stats?.activeFunders || 0}</span>
+                      <span style={{ fontSize: 12, color: '#999', margin: '0 4px' }}>资金方</span>
+                      <span style={{ color: '#722ed1' }}>{stats?.activeFinanciers || 0}</span>
+                      <span style={{ fontSize: 12, color: '#999', marginLeft: 4 }}>融资方</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </Card>
           </Col>
           <Col span={8}>
-            <Card>
-              <Statistic
-                title="预估收益(未来30天)"
-                value={stats?.estimatedRevenue || 0}
-                precision={2}
-                prefix="¥"
-                valueStyle={{ color: '#722ed1' }}
-              />
+            <Card size="small" style={{ background: '#fafafa', border: '1px solid #f0f0f0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <RiseOutlined style={{ fontSize: 20, color: '#faad14' }} />
+                  <div>
+                    <div style={{ fontSize: 12, color: '#999' }}>运营数据</div>
+                    <div style={{ fontSize: 20, fontWeight: 500 }}>
+                      {stats?.periodWaybills || 0} <span style={{ fontSize: 12, fontWeight: 400, color: '#999' }}>运单</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </Card>
           </Col>
         </Row>

@@ -1,7 +1,7 @@
 import { Investment, InvestmentStats, InvestmentStatus, OrgUnit, PermissionNode, SafeUser, UserGroupDetail, Supervision, SupervisionStats, SupervisionStatus, SupervisionType, ContractCommission, CommissionStats, CommissionStatus, Contract, ContractType, Funder, FunderType, FunderStatus, Financier, FinancierScale, FinancierStatus, FundPoolMonitoring, SystemParameters, Waybill, WaybillStats, WaybillStatus, BusinessMode, ExternalSystemConfig, DirectedPaymentRequest, PaymentRequestStatus, PaymentRequestStats, ReceiverType, CrawlerConfig, CrawlerSyncLog, CrawlerTestResult, CrawlerSyncResult } from "./types";
 
 // 自动检测后端地址：如果是本地访问用localhost，否则用当前主机名
-const getApiBase = () => {
+export const getApiBase = () => {
   if (import.meta.env.VITE_API_BASE) {
     return import.meta.env.VITE_API_BASE;
   }
@@ -739,6 +739,8 @@ export async function createFinancingContractApi(
     settlementTriggerQuarterEnd?: boolean;
     settlementTriggerBiweekly?: boolean;
     autoSettlement: boolean;
+    profitSharingEnabled?: boolean;
+    profitSharingRatio?: number;
     contractFiles?: string[];
   }
 ): Promise<{ contract: Contract }> {
@@ -2363,6 +2365,19 @@ export interface RevenueStats {
   pendingRevenue: number;       // 待确认
   estimatedRevenue: number;     // 预估(未来30天)
   periodRevenue: number;        // 本期新增
+  // 扩展字段 - 收益增长分析
+  growthRate?: number;          // 环比增长率(%)
+  dailyAverage?: number;        // 日均收益
+  totalInvestment?: number;     // 在投总额
+  // 扩展字段 - 业务增长指标
+  activeContracts?: number;     // 有效合同数
+  newContractsPeriod?: number;  // 本期新增合同数
+  activeFunders?: number;       // 活跃资金方数
+  newFundersPeriod?: number;    // 本期新增资金方
+  activeFinanciers?: number;    // 活跃融资方数
+  newFinanciersPeriod?: number; // 本期新增融资方
+  periodWaybills?: number;      // 本期运单量
+  conversionRate?: number;      // 收益转化率(收益/在投金额)
 }
 
 // 收益趋势数据点

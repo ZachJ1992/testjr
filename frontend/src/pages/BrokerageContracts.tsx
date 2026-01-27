@@ -243,7 +243,7 @@ function BrokerageContractsPage() {
     setLoading(true);
     try {
       // 从后端获取真实数据
-      const res = await fetchContracts(token, "brokerage");
+      const res = await fetchContracts(token, { type: "brokerage" });
       // 按创建时间降序排列（最新的在前面）
       const sortedContracts = [...res.contracts].sort((a, b) => 
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -342,7 +342,7 @@ function BrokerageContractsPage() {
       } as any);
       message.success("合同更新成功");
       setEditModalOpen(false);
-      refresh();
+      await refresh();
     } catch (err) {
       message.error(getErrorMessage(err));
     } finally {
@@ -355,7 +355,7 @@ function BrokerageContractsPage() {
     try {
       await deleteContractApi(token, contract.id);
       message.success("合同删除成功");
-      refresh();
+      await refresh();
     } catch (err) {
       message.error(getErrorMessage(err));
     }
@@ -420,7 +420,7 @@ function BrokerageContractsPage() {
       const newStatus = contract.status === "disabled" ? "active" : "disabled";
       await updateContractStatusApi(token, contract.id, newStatus);
       message.success(newStatus === "disabled" ? "合同已停用" : "合同已启用");
-      refresh();
+      await refresh();
     } catch (err) {
       message.error(getErrorMessage(err));
     }
@@ -552,7 +552,7 @@ function BrokerageContractsPage() {
     {
       title: t("contracts.operations", "操作"),
       key: "actions",
-      width: 200,
+      width: 240,
       render: (_: any, record: Contract) => (
         <Space size="small">
           <Button
@@ -562,6 +562,14 @@ function BrokerageContractsPage() {
             onClick={() => handleView(record)}
           >
             查看
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            style={{ color: record.status === "disabled" ? "#52c41a" : "#faad14" }}
+            onClick={() => handleToggleStatus(record)}
+          >
+            {record.status === "disabled" ? "启用" : "停用"}
           </Button>
           <Button
             type="link"

@@ -18,6 +18,10 @@ pnpm-debug.log*
 # macOS
 .DS_Store
 
+# IDE
+.cursor/
+.shared/
+
 # 部署相关
 deploy.config
 deploy-package/

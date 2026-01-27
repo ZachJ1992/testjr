@@ -63,6 +63,7 @@ import DirectedPayApprovalsPage from "../pages/DirectedPayApprovals";
 import PlatformRevenuePage from "../pages/PlatformRevenue";
 import FunderRevenuePage from "../pages/FunderRevenue";
 import FinancierExpensePage from "../pages/FinancierExpense";
+import SettlementDashboardPage from "../pages/SettlementDashboard";
 
 const { Header, Sider, Content } = Layout;
 
@@ -230,6 +231,12 @@ function AppLayout() {
 
        // 构建结算中心的子菜单
        const settlementChildren: any[] = [];
+       if (user?.permissions?.includes("manage_settlements") || user?.permissions?.includes("view_directed_pay_settlements")) {
+         settlementChildren.push({
+           key: "/settlement-dashboard",
+           label: <Link to="/settlement-dashboard">{t("menu.settlement_dashboard", "结算仪表板")}</Link>
+         });
+       }
        if (user?.permissions?.includes("manage_settlements")) {
          settlementChildren.push({
            key: "/pending-settlements",
@@ -585,6 +592,17 @@ function AppLayout() {
         label: t("menu.payment_waybill_ledger", "单车运单台账"),
         icon: <CreditCardOutlined />,
         element: <PaymentWaybillLedgerPage />
+      });
+    }
+
+    // 结算仪表板（优先显示）
+    if (user?.permissions?.includes("manage_settlements") || user?.permissions?.includes("view_directed_pay_settlements")) {
+      configs.push({
+        key: "/settlement-dashboard",
+        path: "/settlement-dashboard",
+        label: t("menu.settlement_dashboard", "结算仪表板"),
+        icon: <AccountBookOutlined />,
+        element: <SettlementDashboardPage />
       });
     }
 

@@ -472,189 +472,147 @@ function WaybillsPage() {
     URL.revokeObjectURL(url);
   };
 
-  // 表格列定义 - 紧凑布局，包含CSV所有重要字段
+  // 格式化金额显示 - 紧凑格式，不换行
+  const formatMoney = (v: number | undefined | null, showSign = false) => {
+    if (v === undefined || v === null || v === 0) return "-";
+    const formatted = v >= 10000 
+      ? `${(v / 10000).toFixed(1)}万` 
+      : v.toLocaleString();
+    return <span style={{ whiteSpace: 'nowrap' }}>{showSign && v > 0 ? '+' : ''}¥{formatted}</span>;
+  };
+
+  // 表格列定义 - 金额列前置，紧凑布局
   const columns: ColumnsType<WaybillData> = [
     {
       title: "批次号",
       dataIndex: "waybillNumber",
-      width: 120,
+      width: 140,
       fixed: 'left',
       ellipsis: true,
     },
     {
       title: "状态",
-      dataIndex: "status",
-      width: 80,
-      render: (status: WaybillStatus) => {
-        const opt = WAYBILL_STATUS_OPTIONS.find(o => o.value === status);
-        const colorMap: Record<string, string> = {
-          created: "default",
-          dispatched: "processing",
-          loading: "processing",
-          in_transit: "blue",
-          delivered: "cyan",
-          signed: "green",
-          settled: "purple",
-          completed: "success",
-          cancelled: "error",
-        };
-        return <Tag color={colorMap[status] || "default"}>{opt?.label || status || "未知"}</Tag>;
-      }
-    },
-    {
-      title: "车牌号",
-      dataIndex: "vehiclePlate",
-      width: 85,
-    },
-    {
-      title: "司机",
-      dataIndex: "driverName",
-      width: 60,
-      ellipsis: true,
-    },
-    {
-      title: "发车时间",
-      dataIndex: "departureTime",
-      width: 90,
-      ellipsis: true,
-      render: (v: string) => v ? dayjs(v).format('MM-DD HH:mm') : '-',
-    },
-    {
-      title: "网点",
-      dataIndex: "branch",
-      width: 70,
-      ellipsis: true,
-    },
-    {
-      title: "线路",
-      dataIndex: "vehicleRoute",
-      width: 140,
-      ellipsis: true,
-    },
-    {
-      title: "客户",
-      dataIndex: "customerName",
-      width: 90,
-      ellipsis: true,
-    },
-    {
-      title: "项目",
-      dataIndex: "projectName",
-      width: 90,
-      ellipsis: true,
-    },
-    {
-      title: "状态",
       dataIndex: "batchStatus",
-      width: 70,
+      width: 60,
       render: (status: string) => {
         if (!status) return "-";
+        // 简化状态显示
+        const shortStatus = status === "10" ? "待" : status === "20" ? "运" : status === "30" ? "完" : status.slice(0, 2);
         const colorMap: Record<string, string> = {
-          "已到达": "green",
-          "已发车": "blue",
-          "已完成": "green",
-          "已取消": "default",
+          "10": "default", "20": "blue", "30": "green",
+          "已到达": "green", "已发车": "blue", "已完成": "green", "已取消": "default",
         };
-        return <Tag color={colorMap[status] || "default"} style={{ margin: 0 }}>{status}</Tag>;
+        return <Tag color={colorMap[status] || "default"} style={{ margin: 0, padding: '0 4px' }}>{shortStatus}</Tag>;
       }
     },
-    {
-      title: "来源",
-      dataIndex: "batchSource",
-      width: 55,
-      ellipsis: true,
-    },
-    {
-      title: "类型",
-      dataIndex: "batchType",
-      width: 55,
-      ellipsis: true,
-    },
-    {
-      title: "点位",
-      dataIndex: "pointCount",
-      width: 45,
-      align: 'right',
-      render: (v: number) => v || "-",
-    },
-    {
-      title: "体积",
-      dataIndex: "totalVolume",
-      width: 55,
-      align: 'right',
-      render: (v: number) => v ? v.toFixed(1) : "-",
-    },
+    // ========== 金额相关列 - 前置 ==========
     {
       title: "应收",
       dataIndex: "receivableTotal",
-      width: 75,
+      width: 90,
       align: 'right',
-      render: (v: number) => v ? `¥${v.toLocaleString()}` : "-",
+      render: (v: number) => formatMoney(v),
     },
     {
       title: "应付",
       dataIndex: "payableTotal",
-      width: 75,
-      align: 'right',
-      render: (v: number) => v ? `¥${v.toLocaleString()}` : "-",
-    },
-    {
-      title: "油卡",
-      dataIndex: "payableOilCard",
-      width: 65,
-      align: 'right',
-      render: (v: number) => v ? `¥${v.toLocaleString()}` : "-",
-    },
-    {
-      title: "ETC",
-      dataIndex: "etcFee",
-      width: 65,
-      align: 'right',
-      render: (v: number) => v ? `¥${v.toLocaleString()}` : "-",
-    },
-    {
-      title: "发站",
-      dataIndex: "departurePlace",
       width: 90,
-      ellipsis: true,
-    },
-    {
-      title: "到站",
-      dataIndex: "arrivalPlace",
-      width: 90,
-      ellipsis: true,
+      align: 'right',
+      render: (v: number) => formatMoney(v),
     },
     {
       title: "毛利",
       dataIndex: "profit",
-      width: 75,
+      width: 90,
       align: 'right',
       render: (v: number) => {
         if (v === undefined || v === null) return "-";
         const color = v >= 0 ? "#52c41a" : "#ff4d4f";
-        return <span style={{ color, fontWeight: 500 }}>{`¥${v.toLocaleString()}`}</span>;
+        const formatted = Math.abs(v) >= 10000 
+          ? `${(v / 10000).toFixed(1)}万` 
+          : v.toLocaleString();
+        return <span style={{ color, fontWeight: 500, whiteSpace: 'nowrap' }}>¥{formatted}</span>;
       },
     },
     {
       title: "利率",
       dataIndex: "profitRate",
-      width: 50,
+      width: 55,
       align: 'right',
       render: (v: number) => {
         if (v === undefined || v === null) return "-";
         const color = v >= 0 ? "#52c41a" : "#ff4d4f";
-        return <span style={{ color }}>{(v * 100).toFixed(0)}%</span>;
+        return <span style={{ color, whiteSpace: 'nowrap' }}>{(v * 100).toFixed(0)}%</span>;
       },
+    },
+    {
+      title: "油卡",
+      dataIndex: "payableOilCard",
+      width: 75,
+      align: 'right',
+      render: (v: number) => formatMoney(v),
+    },
+    {
+      title: "ETC",
+      dataIndex: "etcFee",
+      width: 75,
+      align: 'right',
+      render: (v: number) => formatMoney(v),
+    },
+    // ========== 基础信息列 ==========
+    {
+      title: "车牌",
+      dataIndex: "vehiclePlate",
+      width: 90,
+    },
+    {
+      title: "司机",
+      dataIndex: "driverName",
+      width: 70,
+      ellipsis: true,
+    },
+    {
+      title: "发站",
+      dataIndex: "departurePlace",
+      width: 80,
+      ellipsis: true,
+    },
+    {
+      title: "到站",
+      dataIndex: "arrivalPlace",
+      width: 80,
+      ellipsis: true,
+    },
+    {
+      title: "时间",
+      dataIndex: "createdTime",
+      width: 90,
+      render: (v: string, record: WaybillData) => {
+        const time = record.departureTime || v;
+        return time ? <span style={{ whiteSpace: 'nowrap' }}>{dayjs(time).format('MM-DD HH:mm')}</span> : '-';
+      },
+    },
+    {
+      title: "客户",
+      dataIndex: "customerName",
+      width: 80,
+      ellipsis: true,
+    },
+    {
+      title: "来源",
+      dataIndex: "batchSource",
+      width: 50,
+      ellipsis: true,
     },
     {
       title: "备注",
       dataIndex: "remark",
-      width: 90,
+      width: 100,
       ellipsis: true,
     },
     {
       title: "操作",
-      width: 120,
+      width: 130,
       fixed: 'right',
       render: (_, record) => (
         <Space size={0}>
@@ -821,7 +779,7 @@ function WaybillsPage() {
         dataSource={waybills}
         columns={columns}
         pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
-        scroll={{ x: 1850 }}
+        scroll={{ x: 1400 }}
         size="small"
         bordered
       />

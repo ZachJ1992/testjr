@@ -37,6 +37,8 @@ interface FinancingFormValues {
   settlementTriggerQuarterEnd?: boolean;
   settlementTriggerBiweekly?: boolean;
   autoSettlement: boolean;
+  profitSharingEnabled: boolean;
+  profitSharingRatio: number;
 }
 
 function CreateFinancingContractPage() {
@@ -138,7 +140,9 @@ function CreateFinancingContractPage() {
         settlementTriggerDay: values.settlementTriggerDay,
         settlementTriggerQuarterEnd: values.settlementTriggerQuarterEnd,
         settlementTriggerBiweekly: values.settlementTriggerBiweekly,
-        autoSettlement: values.autoSettlement || false
+        autoSettlement: values.autoSettlement || false,
+        profitSharingEnabled: values.profitSharingEnabled || false,
+        profitSharingRatio: values.profitSharingRatio || 0
       });
       message.success(t("contracts.created", "创建成功"));
       navigate("/contracts", { state: { refresh: true } });
@@ -396,6 +400,55 @@ function CreateFinancingContractPage() {
                   </Space>
                 </Card>
 
+                {/* 利润分配配置 */}
+                <Card style={{ marginBottom: 24 }}>
+                  <Title level={5} style={{ marginBottom: 16 }}>
+                    {t("contracts.profit_sharing_config", "利润分配设置")}
+                  </Title>
+                  
+                  <Form.Item
+                    name="profitSharingEnabled"
+                    label={t("contracts.profit_sharing_enabled", "启用利润分配")}
+                    valuePropName="checked"
+                    initialValue={false}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t("contracts.profit_sharing_enabled_desc", "开启后，平台将按比例参与利润分成")}</Text>}
+                  >
+                    <Switch />
+                  </Form.Item>
+
+                  <Form.Item
+                    noStyle
+                    shouldUpdate={(prevValues, currentValues) => 
+                      prevValues.profitSharingEnabled !== currentValues.profitSharingEnabled
+                    }
+                  >
+                    {({ getFieldValue }) => {
+                      const enabled = getFieldValue("profitSharingEnabled");
+                      return enabled ? (
+                        <Form.Item
+                          name="profitSharingRatio"
+                          label={t("contracts.profit_sharing_ratio", "平台分成比例")}
+                          initialValue={50}
+                          rules={[
+                            { required: true, message: t("contracts.profit_sharing_ratio_required", "请输入分成比例") },
+                            { type: "number", min: 0, max: 100, message: t("contracts.profit_sharing_ratio_range", "比例须在0-100之间") }
+                          ]}
+                          extra={<Text type="secondary" style={{ fontSize: 12 }}>{t("contracts.profit_sharing_ratio_desc", "平台从结算利润中获得的分成百分比")}</Text>}
+                        >
+                          <InputNumber
+                            min={0}
+                            max={100}
+                            precision={2}
+                            addonAfter="%"
+                            style={{ width: 160 }}
+                            placeholder="50"
+                          />
+                        </Form.Item>
+                      ) : null;
+                    }}
+                  </Form.Item>
+                </Card>
+
                 <Form.Item
                   name="autoSettlement"
                   label={t("contracts.auto_settlement", "自动结算开关")}
@@ -407,15 +460,64 @@ function CreateFinancingContractPage() {
                   </div>
                 </Form.Item>
 
-                <Card style={{ marginTop: 24, backgroundColor: "#fafafa" }}>
-                  <Title level={5}>{t("contracts.profit_example", "分润示例")}</Title>
-                  <Space direction="vertical" size="small">
-                    <Text>{t("contracts.example_total_profit", "业务总利润:")} ¥100,000</Text>
-                    <Text>{t("contracts.example_interest", "累计资金利息:")} ¥10,000</Text>
-                    <Text>{t("contracts.example_settlement_profit", "结算利润:")} ¥90,000</Text>
-                    <Text strong>{t("contracts.example_platform_share", "平台分成(50%):")} ¥45,000</Text>
-                  </Space>
-                </Card>
+                {/* 动态分润示例 */}
+                <Form.Item
+                  noStyle
+                  shouldUpdate={(prevValues, currentValues) => 
+                    prevValues.profitSharingEnabled !== currentValues.profitSharingEnabled ||
+                    prevValues.profitSharingRatio !== currentValues.profitSharingRatio
+                  }
+                >
+                  {({ getFieldValue }) => {
+                    const enabled = getFieldValue("profitSharingEnabled");
+                    const ratio = getFieldValue("profitSharingRatio") || 0;
+                    
+                    // 示例数据
+                    const exampleTotalProfit = 100000;
+                    const exampleInterest = 10000;
+                    const exampleSettlementProfit = exampleTotalProfit - exampleInterest;
+                    const examplePlatformShare = enabled ? exampleSettlementProfit * (ratio / 100) : 0;
+                    const examplePartnerShare = exampleSettlementProfit - examplePlatformShare;
+
+                    return (
+                      <Card style={{ marginTop: 24, backgroundColor: "#fafafa" }}>
+                        <Title level={5}>{t("contracts.profit_example", "分润示例")}</Title>
+                        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+                            <Text>{t("contracts.example_total_profit", "业务总利润")}</Text>
+                            <Text>¥{exampleTotalProfit.toLocaleString()}</Text>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+                            <Text>{t("contracts.example_interest", "累计资金利息")}</Text>
+                            <Text style={{ color: "#ff4d4f" }}>- ¥{exampleInterest.toLocaleString()}</Text>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "1px solid #e8e8e8" }}>
+                            <Text strong>{t("contracts.example_settlement_profit", "结算利润")}</Text>
+                            <Text strong>¥{exampleSettlementProfit.toLocaleString()}</Text>
+                          </div>
+                          {enabled ? (
+                            <>
+                              <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", marginTop: 8 }}>
+                                <Text type="secondary">{t("contracts.example_platform_share", "平台分成")} ({ratio}%)</Text>
+                                <Text style={{ color: "#1890ff" }}>¥{examplePlatformShare.toLocaleString()}</Text>
+                              </div>
+                              <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+                                <Text type="secondary">{t("contracts.example_partner_share", "合作方分成")} ({100 - ratio}%)</Text>
+                                <Text style={{ color: "#52c41a" }}>¥{examplePartnerShare.toLocaleString()}</Text>
+                              </div>
+                            </>
+                          ) : (
+                            <div style={{ padding: "8px 0", marginTop: 8 }}>
+                              <Text type="secondary" style={{ fontStyle: "italic" }}>
+                                {t("contracts.no_profit_sharing", "未启用利润分配，全部利润归合作方")}
+                              </Text>
+                            </div>
+                          )}
+                        </Space>
+                      </Card>
+                    );
+                  }}
+                </Form.Item>
               </div>
 
             {/* Buttons */}

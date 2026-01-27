@@ -205,7 +205,7 @@ function NewContractsPage() {
     try {
       await deleteCommissionContractApi(token, contract.id);
       message.success("合同已删除");
-      refresh();
+      await refresh();
     } catch (err) {
       message.error(getErrorMessage(err));
     }
@@ -218,7 +218,7 @@ function NewContractsPage() {
       const newStatus: CommissionContractStatus = contract.status === "disabled" ? "active" : "disabled";
       await updateCommissionContractApi(token, contract.id, { status: newStatus });
       message.success(newStatus === "disabled" ? "合同已停用" : "合同已启用");
-      refresh();
+      await refresh();
     } catch (err) {
       message.error(getErrorMessage(err));
     }
@@ -445,7 +445,6 @@ function NewContractsPage() {
         <Switch
           checked={record.status !== "disabled"}
           onChange={() => handleToggleStatus(record)}
-          disabled={!record.id.startsWith("cc-")}
           size="small"
         />
       )
@@ -464,34 +463,30 @@ function NewContractsPage() {
           >
             查看
           </Button>
-          {record.id.startsWith("cc-") && (
-            <>
-              <Button
-                type="link"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => handleOpenEditModal(record)}
-              >
-                编辑
-              </Button>
-              <Popconfirm
-                title="确认删除"
-                description="确定要删除这个抽成合同吗？"
-                onConfirm={() => handleDeleteContract(record)}
-                okText="确定"
-                cancelText="取消"
-              >
-                <Button
-                  type="link"
-                  size="small"
-                  danger
-                  icon={<DeleteOutlined />}
-                >
-                  删除
-                </Button>
-              </Popconfirm>
-            </>
-          )}
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => handleOpenEditModal(record)}
+          >
+            编辑
+          </Button>
+          <Popconfirm
+            title="确认删除"
+            description="确定要删除这个抽成合同吗？"
+            onConfirm={() => handleDeleteContract(record)}
+            okText="确定"
+            cancelText="取消"
+          >
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+            >
+              删除
+            </Button>
+          </Popconfirm>
         </Space>
       )
     }
@@ -635,17 +630,15 @@ function NewContractsPage() {
                   <Tag color={statusMap[viewingContract.status].color}>
                     {statusMap[viewingContract.status].label}
                   </Tag>
-                  {viewingContract.id.startsWith("cc-") && (
-                    <Switch
-                      checked={viewingContract.status !== "disabled"}
-                      onChange={() => {
-                        handleToggleStatus(viewingContract);
-                        setDetailModalOpen(false);
-                      }}
-                      size="small"
-                      style={{ marginLeft: 8 }}
-                    />
-                  )}
+                  <Switch
+                    checked={viewingContract.status !== "disabled"}
+                    onChange={() => {
+                      handleToggleStatus(viewingContract);
+                      setDetailModalOpen(false);
+                    }}
+                    size="small"
+                    style={{ marginLeft: 8 }}
+                  />
                 </Col>
                 <Col span={12}>
                   <Text type="secondary">结算周期：</Text>

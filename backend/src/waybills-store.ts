@@ -295,7 +295,8 @@ export async function getWaybills(filters?: {
     }
   }
 
-  query += ` ORDER BY created_at DESC`;
+  // 优先按发车时间降序排列（最新在前），发车时间为空的按创建时间排序
+  query += ` ORDER BY COALESCE(departure_time, created_at) DESC, created_at DESC`;
 
   const [rows] = await pool.query<WaybillRow[]>(query, params);
   return rows.map(mapWaybillRow);

@@ -165,6 +165,10 @@ export interface Contract {
   status: ContractStatus;
   createdAt: string;
   updatedAt: string;
+  // 放款相关
+  usedAmount?: number; // 已用额度
+  outstandingPrincipal?: number; // 剩余本金
+  accruedInterest?: number; // 待还利息
 }
 
 // 资金方相关类型（枚举已从共享文件导入）

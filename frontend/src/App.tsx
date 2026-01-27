@@ -43,6 +43,7 @@ import DirectedPaySettlementsPage from "./pages/DirectedPaySettlements";
 import FinancierExpensePage from "./pages/FinancierExpense";
 import FunderRevenuePage from "./pages/FunderRevenue";
 import PlatformRevenuePage from "./pages/PlatformRevenue";
+import SettlementDashboardPage from "./pages/SettlementDashboard";
 
 function ProtectedRoute() {
   const { user, loading } = useAuth();
@@ -97,6 +98,7 @@ function App() {
                 <Route path="/payment-approval" element={<PaymentApprovalPage />} />
                 <Route path="/payment-ledger" element={<PaymentLedgerPage />} />
                 <Route path="/payment-waybill-ledger" element={<PaymentWaybillLedgerPage />} />
+                <Route path="/settlement-dashboard" element={<SettlementDashboardPage />} />
                 <Route path="/pending-settlements" element={<PendingSettlementsPage />} />
                 <Route path="/financing-repayment-settlement" element={<FinancingRepaymentSettlementPage />} />
                 <Route path="/profit-sharing-settlement" element={<ProfitSharingSettlementPage />} />

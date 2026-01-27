@@ -1224,7 +1224,9 @@ router.post(
         settlementTriggerDay,
         settlementTriggerQuarterEnd,
         settlementTriggerBiweekly,
-        autoSettlement
+        autoSettlement,
+        profitSharingEnabled,
+        profitSharingRatio
       } = req.body ?? {};
 
       // 跳过必填字段验证
@@ -1243,7 +1245,9 @@ router.post(
         settlementTriggerDay,
         settlementTriggerQuarterEnd,
         settlementTriggerBiweekly,
-        autoSettlement: autoSettlement !== false
+        autoSettlement: autoSettlement !== false,
+        profitSharingEnabled: profitSharingEnabled === true,
+        profitSharingRatio: profitSharingEnabled ? Number(profitSharingRatio) || 0 : undefined
       });
       res.status(201).json({ contract });
     } catch (err) {
@@ -3616,6 +3620,31 @@ router.post(
       res.json(result);
     } catch (err) {
       handleError(res, req, 400, err);
+    }
+  }
+);
+
+// =============================================
+// 结算调度器 API
+// =============================================
+
+import { triggerSettlementManually } from "./settlement-scheduler.js";
+
+// 手动触发结算任务
+router.post(
+  "/settlements/trigger-scheduler",
+  authenticate,
+  requirePermissions("manage_settlements"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const result = await triggerSettlementManually();
+      res.json({ 
+        success: true, 
+        message: "结算任务执行完成",
+        result 
+      });
+    } catch (err) {
+      handleError(res, req, 500, err);
     }
   }
 );

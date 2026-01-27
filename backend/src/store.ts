@@ -3225,6 +3225,9 @@ interface ContractRow extends RowDataPacket {
   status: string;
   created_at: string;
   updated_at: string;
+  total_disbursed: number | null;
+  outstanding_principal: number | null;
+  accrued_interest: number | null;
 }
 
 function mapContractRow(row: ContractRow): Contract {
@@ -3263,7 +3266,10 @@ function mapContractRow(row: ContractRow): Contract {
     autoSettlement: row.auto_settlement === 1,
     status,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    usedAmount: row.total_disbursed ? Number(row.total_disbursed) : 0,
+    outstandingPrincipal: row.outstanding_principal ? Number(row.outstanding_principal) : 0,
+    accruedInterest: row.accrued_interest ? Number(row.accrued_interest) : 0
   };
 }
 
@@ -3277,7 +3283,8 @@ export async function getContracts(filters?: {
            credit_limit, start_date, end_date, annual_interest_rate, interest_calculation_mode,
            sharing_mode, profit_sharing_ratio, fixed_sharing_amount, commission_config,
            settlement_cycle, settlement_trigger_day, settlement_trigger_quarter_end, 
-           settlement_trigger_biweekly, auto_settlement, status, created_at, updated_at
+           settlement_trigger_biweekly, auto_settlement, status, created_at, updated_at,
+           total_disbursed, outstanding_principal, accrued_interest
     FROM contracts
     WHERE deleted_at IS NULL
   `;
@@ -3310,7 +3317,8 @@ export async function getContractById(id: string): Promise<Contract | undefined>
             credit_limit, start_date, end_date, annual_interest_rate, interest_calculation_mode,
             sharing_mode, profit_sharing_ratio, fixed_sharing_amount, commission_config,
             settlement_cycle, settlement_trigger_day, settlement_trigger_quarter_end, 
-            settlement_trigger_biweekly, auto_settlement, status, created_at, updated_at
+            settlement_trigger_biweekly, auto_settlement, status, created_at, updated_at,
+            total_disbursed, outstanding_principal, accrued_interest
      FROM contracts WHERE id = ? AND deleted_at IS NULL LIMIT 1`,
     [id]
   );
@@ -3332,6 +3340,8 @@ export async function createFinancingContract(input: {
   settlementTriggerQuarterEnd?: boolean;
   settlementTriggerBiweekly?: boolean;
   autoSettlement: boolean;
+  profitSharingEnabled?: boolean;
+  profitSharingRatio?: number;
 }): Promise<Contract> {
   const id = randomUUID();
 
@@ -3340,8 +3350,8 @@ export async function createFinancingContract(input: {
      (id, type, funder_id, funder_name, logistics_provider_id, logistics_provider_name,
       credit_limit, start_date, end_date, annual_interest_rate, interest_calculation_mode,
       settlement_cycle, settlement_trigger_day, settlement_trigger_quarter_end,
-      settlement_trigger_biweekly, auto_settlement, status)
-     VALUES (?, 'financing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      settlement_trigger_biweekly, auto_settlement, sharing_mode, profit_sharing_ratio, status)
+     VALUES (?, 'financing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
     [
       id,
       input.funderId,
@@ -3357,7 +3367,9 @@ export async function createFinancingContract(input: {
       input.settlementTriggerDay || null,
       input.settlementTriggerQuarterEnd ? 1 : 0,
       input.settlementTriggerBiweekly ? 1 : 0,
-      input.autoSettlement ? 1 : 0
+      input.autoSettlement ? 1 : 0,
+      input.profitSharingEnabled ? "percentage" : null,
+      input.profitSharingEnabled ? (input.profitSharingRatio || 0) : null
     ]
   );
 

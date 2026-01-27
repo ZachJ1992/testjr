@@ -14,6 +14,7 @@ import {
   Card,
   Col,
   Modal,
+  Drawer,
   Progress,
   Result,
   Row,
@@ -31,6 +32,9 @@ import {
   DatePicker,
   Divider
 } from "antd";
+import ContractLoanManager from "../components/ContractLoanManager";
+import DisbursementModal from "../components/DisbursementModal";
+import RepaymentModal from "../components/RepaymentModal";
 import {
   EyeOutlined,
   PlusOutlined,
@@ -59,12 +63,15 @@ function ContractsPage() {
   const [editingContract, setEditingContract] = useState<Contract | null>(null);
   const [editForm] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
+  const [disbursementModalOpen, setDisbursementModalOpen] = useState(false);
+  const [repaymentModalOpen, setRepaymentModalOpen] = useState(false);
+  const [selectedContractForAction, setSelectedContractForAction] = useState<Contract | null>(null);
 
   const refresh = async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const res = await fetchContracts(token, "financing");
+      const res = await fetchContracts(token, { type: "financing" });
       // 按创建时间降序排列（最新的在前面）
       const sortedContracts = [...res.contracts].sort((a, b) => 
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -95,6 +102,16 @@ function ContractsPage() {
     setDetailModalOpen(true);
   };
 
+  const handleOpenDisbursement = (contract: Contract) => {
+    setSelectedContractForAction(contract);
+    setDisbursementModalOpen(true);
+  };
+
+  const handleOpenRepayment = (contract: Contract) => {
+    setSelectedContractForAction(contract);
+    setRepaymentModalOpen(true);
+  };
+
   const handleEdit = (contract: Contract) => {
     setEditingContract(contract);
     editForm.setFieldsValue({
@@ -107,7 +124,9 @@ function ContractsPage() {
       interestCalculationMode: contract.interestCalculationMode || "daily_balance",
       settlementCycle: contract.settlementCycle,
       settlementTriggerDay: contract.settlementTriggerDay,
-      autoSettlement: contract.autoSettlement
+      autoSettlement: contract.autoSettlement,
+      profitSharingEnabled: contract.sharingMode === "percentage",
+      profitSharingRatio: contract.profitSharingRatio || 0
     });
     setEditModalOpen(true);
   };
@@ -127,11 +146,13 @@ function ContractsPage() {
         interestCalculationMode: values.interestCalculationMode,
         settlementCycle: values.settlementCycle,
         settlementTriggerDay: values.settlementTriggerDay,
-        autoSettlement: values.autoSettlement
+        autoSettlement: values.autoSettlement,
+        sharingMode: values.profitSharingEnabled ? "percentage" : undefined,
+        profitSharingRatio: values.profitSharingEnabled ? values.profitSharingRatio : undefined
       });
       message.success("合同更新成功");
       setEditModalOpen(false);
-      refresh();
+      await refresh();
     } catch (err) {
       message.error(getErrorMessage(err));
     } finally {
@@ -144,7 +165,7 @@ function ContractsPage() {
     try {
       await deleteContractApi(token, contract.id);
       message.success("合同删除成功");
-      refresh();
+      await refresh();
     } catch (err) {
       message.error(getErrorMessage(err));
     }
@@ -167,11 +188,12 @@ function ContractsPage() {
   // 计算统计数据
   const stats = useMemo(() => {
     const totalCreditLimit = contracts.reduce((sum, c) => sum + c.creditLimit, 0);
-    // 使用合同中的实际已用额度（如果有的话），默认为0
-    const usedAmount = contracts.reduce((sum, c) => sum + ((c as any).usedAmount || 0), 0);
+    // 已占用额度 = 剩余本金（还款后会减少），而不是累计放款
+    const usedAmount = contracts.reduce((sum, c) => sum + (c.outstandingPrincipal || 0), 0);
     const utilizationRate = totalCreditLimit > 0 ? (usedAmount / totalCreditLimit) * 100 : 0;
-    // 待还款总额假设等于已占用额度
-    const totalDue = usedAmount;
+    // 待还款总额 = 剩余本金 + 待还利息
+    const totalInterest = contracts.reduce((sum, c) => sum + (c.accruedInterest || 0), 0);
+    const totalDue = usedAmount + totalInterest;
     const remainingLimit = totalCreditLimit - usedAmount;
 
     return {
@@ -184,10 +206,9 @@ function ContractsPage() {
     };
   }, [contracts]);
 
-  // 获取单个合同的已用额度
+  // 获取单个合同的已用额度（剩余本金，还款后会减少）
   const getContractUsedAmount = (contract: Contract): number => {
-    // 使用合同中的实际已用额度，默认为0
-    return (contract as any).usedAmount || 0;
+    return contract.outstandingPrincipal || 0;
   };
 
   const statusMap: Record<ContractStatus, { label: string; color: string }> = useMemo(() => ({
@@ -204,7 +225,7 @@ function ContractsPage() {
       const newStatus = contract.status === "disabled" ? "active" : "disabled";
       await updateContractStatusApi(token, contract.id, newStatus);
       message.success(newStatus === "disabled" ? "合同已停用" : "合同已启用");
-      refresh();
+      await refresh();
     } catch (err) {
       message.error(getErrorMessage(err));
     }
@@ -306,13 +327,15 @@ function ContractsPage() {
       key: "profitSharing",
       width: 150,
       render: (_: any, record: Contract) => {
-        // 三方融资合同可能没有分润规则，使用默认值或显示"-"
-        // 如果有profitSharingRatio，显示它
-        if (record.profitSharingRatio) {
-          return `${record.profitSharingRatio.toFixed(0)}%${t("contracts.net_profit_sharing", "净利润分成")}`;
+        // 根据 sharingMode 判断是否启用了分润
+        if (record.sharingMode === "percentage" && record.profitSharingRatio != null) {
+          return `${record.profitSharingRatio}%${t("contracts.net_profit_sharing", "净利润分成")}`;
         }
-        // 默认显示5%
-        return `5%${t("contracts.net_profit_sharing", "净利润分成")}`;
+        if (record.sharingMode === "fixed" && record.fixedSharingAmount != null) {
+          return `${t("contracts.fixed_amount", "固定")} ¥${record.fixedSharingAmount.toLocaleString()}`;
+        }
+        // 未配置分润
+        return <Text type="secondary">{t("contracts.no_profit_sharing", "无分润")}</Text>;
       }
     },
     {
@@ -341,7 +364,7 @@ function ContractsPage() {
     {
       title: t("contracts.operations", "操作"),
       key: "actions",
-      width: 200,
+      width: 280,
       render: (_: any, record: Contract) => (
         <Space size="small">
           <Button
@@ -351,6 +374,22 @@ function ContractsPage() {
             onClick={() => handleView(record)}
           >
             查看
+          </Button>
+          <Button 
+            type="link" 
+            size="small" 
+            style={{ color: "#52c41a" }}
+            onClick={() => handleOpenDisbursement(record)}
+          >
+            放款
+          </Button>
+          <Button 
+            type="link" 
+            size="small" 
+            style={{ color: "#faad14" }}
+            onClick={() => handleOpenRepayment(record)}
+          >
+            还款
           </Button>
           <Button
             type="link"
@@ -487,133 +526,103 @@ function ContractsPage() {
         />
       </Card>
 
-      {/* Detail Modal */}
-      <Modal
+      {/* Detail Drawer */}
+      <Drawer
         title={t("contracts.contract_detail", "合同详情")}
         open={detailModalOpen}
-        onCancel={() => setDetailModalOpen(false)}
-        footer={[
-          <Button key="edit" type="primary" onClick={() => {
-            setDetailModalOpen(false);
-            if (viewingContract) handleEdit(viewingContract);
-          }}>
-            编辑
-          </Button>,
-          <Button key="close" onClick={() => setDetailModalOpen(false)}>
-            {t("common.close", "关闭")}
-          </Button>
-        ]}
-        width={800}
+        onClose={() => setDetailModalOpen(false)}
+        width={1000}
+        extra={
+          <Space>
+            <Button type="primary" onClick={() => {
+              setDetailModalOpen(false);
+              if (viewingContract) handleEdit(viewingContract);
+            }}>
+              编辑
+            </Button>
+          </Space>
+        }
       >
         {viewingContract && (
           <div>
-            <Divider orientation="left">基本信息</Divider>
-            <Row gutter={[16, 16]}>
-              <Col span={12}>
-                <Text type="secondary">合同编号：</Text>
-                <div style={{ fontWeight: 500 }}>{generateContractNumber(viewingContract)}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">合同名称：</Text>
-                <div style={{ fontWeight: 500 }}>{generateContractName(viewingContract)}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">合同类型：</Text>
-                <div>{t("contracts.financing_contracts", "三方融资合同")}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">合同状态：</Text>
-                <div>
-                  <Tag color={statusMap[viewingContract.status].color}>
-                    {statusMap[viewingContract.status].label}
-                  </Tag>
-                  <Switch
-                    checked={viewingContract.status !== "disabled"}
-                    onChange={() => {
-                      handleToggleStatus(viewingContract);
-                      setDetailModalOpen(false);
-                    }}
-                    size="small"
-                    style={{ marginLeft: 8 }}
-                  />
-                </div>
-              </Col>
-            </Row>
+            {/* 基本信息卡片 */}
+            <Card size="small" style={{ marginBottom: 16 }}>
+              <Row gutter={[16, 12]}>
+                <Col span={8}>
+                  <Text type="secondary">合同编号：</Text>
+                  <div style={{ fontWeight: 500 }}>{generateContractNumber(viewingContract)}</div>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary">合同名称：</Text>
+                  <div style={{ fontWeight: 500 }}>{generateContractName(viewingContract)}</div>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary">合同状态：</Text>
+                  <div>
+                    <Tag color={statusMap[viewingContract.status].color}>
+                      {statusMap[viewingContract.status].label}
+                    </Tag>
+                    <Switch
+                      checked={viewingContract.status !== "disabled"}
+                      onChange={() => {
+                        handleToggleStatus(viewingContract);
+                      }}
+                      size="small"
+                      style={{ marginLeft: 8 }}
+                    />
+                  </div>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary">资金方：</Text>
+                  <div style={{ fontWeight: 500 }}>{viewingContract.funderName || "-"}</div>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary">融资方/物流商：</Text>
+                  <div style={{ fontWeight: 500 }}>{viewingContract.logisticsProviderName || "-"}</div>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary">授信总额度：</Text>
+                  <div style={{ fontWeight: 500, color: "#1890ff" }}>{formatAmount(viewingContract.creditLimit)}</div>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary">合同有效期：</Text>
+                  <div>{dayjs(viewingContract.startDate).format('YYYY-MM-DD')} ~ {dayjs(viewingContract.endDate).format('YYYY-MM-DD')}</div>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary">年化利率：</Text>
+                  <div style={{ fontWeight: 500 }}>{viewingContract.annualInterestRate ? `${viewingContract.annualInterestRate}%` : "-"}</div>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary">结算周期：</Text>
+                  <div>{viewingContract.settlementCycle === "monthly" ? "每月结算" : viewingContract.settlementCycle === "quarterly" ? "每季度结算" : "每两周结算"}</div>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary">利润分配：</Text>
+                  <div style={{ fontWeight: 500 }}>
+                    {viewingContract.sharingMode === "percentage" && viewingContract.profitSharingRatio != null 
+                      ? <Tag color="blue">{viewingContract.profitSharingRatio}% 净利润分成</Tag>
+                      : <Tag>无分润</Tag>
+                    }
+                  </div>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary">自动结算：</Text>
+                  <div>{viewingContract.autoSettlement ? <Tag color="green">已开启</Tag> : <Tag>未开启</Tag>}</div>
+                </Col>
+              </Row>
+            </Card>
 
-            <Divider orientation="left">签约方信息</Divider>
-            <Row gutter={[16, 16]}>
-              <Col span={12}>
-                <Text type="secondary">资金方：</Text>
-                <div style={{ fontWeight: 500 }}>{viewingContract.funderName || "-"}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">融资方/物流商：</Text>
-                <div style={{ fontWeight: 500 }}>{viewingContract.logisticsProviderName || "-"}</div>
-              </Col>
-            </Row>
-
-            <Divider orientation="left">授信配置</Divider>
-            <Row gutter={[16, 16]}>
-              <Col span={12}>
-                <Text type="secondary">授信总额度：</Text>
-                <div style={{ fontWeight: 500, color: "#1890ff" }}>{formatAmount(viewingContract.creditLimit)}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">已使用额度：</Text>
-                <div style={{ fontWeight: 500 }}>{formatAmount(getContractUsedAmount(viewingContract))}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">合同开始日期：</Text>
-                <div>{viewingContract.startDate}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">合同结束日期：</Text>
-                <div>{viewingContract.endDate}</div>
-              </Col>
-            </Row>
-
-            <Divider orientation="left">利率配置</Divider>
-            <Row gutter={[16, 16]}>
-              <Col span={12}>
-                <Text type="secondary">年化利率：</Text>
-                <div style={{ fontWeight: 500 }}>{viewingContract.annualInterestRate ? `${viewingContract.annualInterestRate}%` : "-"}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">计息模式：</Text>
-                <div>{viewingContract.interestCalculationMode === "daily_balance" ? "日终余额计息" : viewingContract.interestCalculationMode || "-"}</div>
-              </Col>
-            </Row>
-
-            <Divider orientation="left">结算配置</Divider>
-            <Row gutter={[16, 16]}>
-              <Col span={12}>
-                <Text type="secondary">结算周期：</Text>
-                <div>{viewingContract.settlementCycle === "monthly" ? "每月结算" : viewingContract.settlementCycle === "quarterly" ? "每季度结算" : "每两周结算"}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">结算触发日：</Text>
-                <div>{viewingContract.settlementTriggerDay ? `每月${viewingContract.settlementTriggerDay}日` : "-"}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">自动结算：</Text>
-                <div>{viewingContract.autoSettlement ? <Tag color="green">已开启</Tag> : <Tag>已关闭</Tag>}</div>
-              </Col>
-            </Row>
-
-            <Divider orientation="left">时间信息</Divider>
-            <Row gutter={[16, 16]}>
-              <Col span={12}>
-                <Text type="secondary">创建时间：</Text>
-                <div>{new Date(viewingContract.createdAt).toLocaleString()}</div>
-              </Col>
-              <Col span={12}>
-                <Text type="secondary">更新时间：</Text>
-                <div>{new Date(viewingContract.updatedAt).toLocaleString()}</div>
-              </Col>
-            </Row>
+            {/* 放款管理组件 */}
+            <ContractLoanManager
+              contractId={viewingContract.id}
+              creditLimit={viewingContract.creditLimit}
+              annualInterestRate={viewingContract.annualInterestRate || 0}
+              contractEndDate={viewingContract.endDate}
+              onUpdate={() => fetchData()}
+            />
           </div>
         )}
-      </Modal>
+      </Drawer>
 
       {/* Edit Modal */}
       <Modal
@@ -702,8 +711,75 @@ function ContractsPage() {
               </Form.Item>
             </Col>
           </Row>
+          
+          {/* 利润分配配置 */}
+          <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 16, marginTop: 8 }}>
+            <Text strong style={{ display: "block", marginBottom: 12 }}>利润分配配置</Text>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="profitSharingEnabled" label="启用利润分配" valuePropName="checked">
+                  <Switch checkedChildren="是" unCheckedChildren="否" />
+                </Form.Item>
+              </Col>
+              <Form.Item
+                noStyle
+                shouldUpdate={(prevValues, currentValues) => 
+                  prevValues.profitSharingEnabled !== currentValues.profitSharingEnabled
+                }
+              >
+                {({ getFieldValue }) => {
+                  const enabled = getFieldValue("profitSharingEnabled");
+                  return enabled ? (
+                    <Col span={12}>
+                      <Form.Item 
+                        name="profitSharingRatio" 
+                        label="平台分成比例"
+                        rules={[
+                          { required: true, message: "请输入分成比例" },
+                          { type: "number", min: 0, max: 100, message: "比例须在0-100之间" }
+                        ]}
+                      >
+                        <InputNumber
+                          min={0}
+                          max={100}
+                          precision={2}
+                          addonAfter="%"
+                          style={{ width: "100%" }}
+                          placeholder="50"
+                        />
+                      </Form.Item>
+                    </Col>
+                  ) : null;
+                }}
+              </Form.Item>
+            </Row>
+          </div>
         </Form>
       </Modal>
+
+      {/* Disbursement & Repayment Modals */}
+      {selectedContractForAction && (
+        <>
+          <DisbursementModal
+            open={disbursementModalOpen}
+            contractId={selectedContractForAction.id}
+            contractName={generateContractName(selectedContractForAction)}
+            creditLimit={selectedContractForAction.creditLimit}
+            availableCredit={selectedContractForAction.creditLimit - (selectedContractForAction.outstandingPrincipal || 0)}
+            onClose={() => setDisbursementModalOpen(false)}
+            onSuccess={() => refresh()}
+          />
+          <RepaymentModal
+            open={repaymentModalOpen}
+            contractId={selectedContractForAction.id}
+            contractName={generateContractName(selectedContractForAction)}
+            outstandingPrincipal={selectedContractForAction.outstandingPrincipal || 0}
+            accruedInterest={selectedContractForAction.accruedInterest || 0}
+            onClose={() => setRepaymentModalOpen(false)}
+            onSuccess={() => refresh()}
+          />
+        </>
+      )}
     </div>
   );
 }

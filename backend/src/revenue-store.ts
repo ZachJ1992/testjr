@@ -327,12 +327,154 @@ export async function getRevenueStats(filters: {
     beneficiaryId: filters.beneficiaryId,
   });
 
+  // 计算环比增长率
+  let growthRate: number | undefined;
+  if (filters.startDate && filters.endDate) {
+    const start = new Date(filters.startDate);
+    const end = new Date(filters.endDate);
+    const periodDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    
+    const prevStart = new Date(start);
+    prevStart.setDate(prevStart.getDate() - periodDays);
+    const prevEnd = new Date(start);
+    prevEnd.setDate(prevEnd.getDate() - 1);
+    
+    const prevStartStr = prevStart.toISOString().split('T')[0];
+    const prevEndStr = prevEnd.toISOString().split('T')[0];
+    
+    const prevConditions = [...conditions, "revenue_date >= ?", "revenue_date <= ?"];
+    const [prevRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(amount), 0) as total FROM revenue_records WHERE ${prevConditions.join(" AND ")}`,
+      [...params, prevStartStr, prevEndStr]
+    );
+    const prevPeriodRevenue = Number(prevRows[0].total);
+    
+    if (prevPeriodRevenue > 0) {
+      growthRate = ((periodRevenue - prevPeriodRevenue) / prevPeriodRevenue) * 100;
+    }
+  }
+
+  // 计算日均收益
+  let dailyAverage: number | undefined;
+  if (filters.startDate && filters.endDate) {
+    const start = new Date(filters.startDate);
+    const end = new Date(filters.endDate);
+    const periodDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    dailyAverage = periodDays > 0 ? periodRevenue / periodDays : 0;
+  }
+
+  // 业务指标 - 只有平台看板需要
+  let totalInvestment: number | undefined;
+  let activeContracts: number | undefined;
+  let newContractsPeriod: number | undefined;
+  let activeFunders: number | undefined;
+  let activeFinanciers: number | undefined;
+  let periodWaybills: number | undefined;
+
+  // 如果不是按受益方过滤，则计算业务指标（平台看板）
+  if (!filters.beneficiaryType && !filters.beneficiaryId) {
+    // 在投总额 (有效合同的剩余本金总和)
+    const [investmentRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(outstanding_principal), 0) as total 
+       FROM contracts 
+       WHERE status = 'active' AND type = 'financing' AND deleted_at IS NULL`
+    );
+    totalInvestment = Number(investmentRows[0].total);
+
+    // 有效合同数 (四种合同类型总和)
+    // 1. contracts 表 (三方融资、撮合业务等)
+    const [contractCountRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM contracts 
+       WHERE status = 'active' AND deleted_at IS NULL`
+    );
+    const mainContractCount = Number(contractCountRows[0].count);
+    
+    // 2. commission_contracts 表 (抽成合同)
+    const [commissionContractRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM commission_contracts 
+       WHERE status = 'active'`
+    );
+    const commissionContractCount = Number(commissionContractRows[0].count);
+    
+    // 3. directed_pay_contracts 表 (定向支付合同)
+    const [directedPayRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM directed_pay_contracts 
+       WHERE status = 'active' AND deleted_at IS NULL`
+    );
+    const directedPayCount = Number(directedPayRows[0].count);
+    
+    activeContracts = mainContractCount + commissionContractCount + directedPayCount;
+
+    // 本期新增合同 (统计三个表的新增)
+    if (filters.startDate && filters.endDate) {
+      const [newContractRows] = await pool.query<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM contracts 
+         WHERE created_at >= ? AND created_at <= DATE_ADD(?, INTERVAL 1 DAY)
+         AND deleted_at IS NULL`,
+        [filters.startDate, filters.endDate]
+      );
+      const [newCommissionRows] = await pool.query<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM commission_contracts 
+         WHERE created_at >= ? AND created_at <= DATE_ADD(?, INTERVAL 1 DAY)`,
+        [filters.startDate, filters.endDate]
+      );
+      const [newDirectedPayRows] = await pool.query<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM directed_pay_contracts 
+         WHERE created_at >= ? AND created_at <= DATE_ADD(?, INTERVAL 1 DAY)`,
+        [filters.startDate, filters.endDate]
+      );
+      newContractsPeriod = Number(newContractRows[0].count) + Number(newCommissionRows[0].count) + Number(newDirectedPayRows[0].count);
+    }
+
+    // 活跃资金方数量 (在有效合同中出现过的资金方)
+    const [funderRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM (
+         SELECT DISTINCT funder_id FROM contracts 
+         WHERE status = 'active' AND deleted_at IS NULL AND funder_id IS NOT NULL AND funder_id != ''
+         UNION
+         SELECT DISTINCT funder_id FROM directed_pay_contracts 
+         WHERE status = 'active' AND deleted_at IS NULL AND funder_id IS NOT NULL AND funder_id != ''
+       ) AS all_funders`
+    );
+    activeFunders = Number(funderRows[0].count);
+
+    // 活跃融资方数量 (在有效合同中出现过的融资方)
+    const [financierRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM (
+         SELECT DISTINCT logistics_provider_id FROM contracts 
+         WHERE status = 'active' AND deleted_at IS NULL AND logistics_provider_id IS NOT NULL AND logistics_provider_id != ''
+         UNION
+         SELECT DISTINCT financier_id FROM directed_pay_contracts 
+         WHERE status = 'active' AND deleted_at IS NULL AND financier_id IS NOT NULL AND financier_id != ''
+       ) AS all_financiers`
+    );
+    activeFinanciers = Number(financierRows[0].count);
+
+    // 本期运单数 (与运单管理页面保持一致的查询条件)
+    if (filters.startDate && filters.endDate) {
+      const [waybillRows] = await pool.query<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM waybills 
+         WHERE waybill_date >= ? AND waybill_date <= ? AND deleted_at IS NULL`,
+        [filters.startDate, filters.endDate]
+      );
+      periodWaybills = Number(waybillRows[0].count);
+    }
+  }
+
   return {
     totalRevenue: Number(totalRows[0].total),
     confirmedRevenue: Number(confirmedRows[0].total),
     pendingRevenue: Number(pendingRows[0].total),
     estimatedRevenue,
     periodRevenue,
+    growthRate,
+    dailyAverage,
+    totalInvestment,
+    activeContracts,
+    newContractsPeriod,
+    activeFunders,
+    activeFinanciers,
+    periodWaybills,
   };
 }
 
