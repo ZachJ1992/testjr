@@ -50,11 +50,38 @@ import {
   ReceiverType,
   WaybillStatus
 } from "../types";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import type { ColumnsType } from "antd/es/table";
+import { Resizable } from "react-resizable";
+import "react-resizable/css/styles.css";
 import dayjs from "dayjs";
 
 const { RangePicker } = DatePicker;
+
+const ResizableTitle = (props: any) => {
+  const { onResize, width, ...restProps } = props;
+  if (!width || !onResize) return <th {...restProps} />;
+  return (
+    <Resizable
+      width={width}
+      height={0}
+      handle={
+        <span
+          className="react-resizable-handle"
+          style={{
+            position: 'absolute', right: -5, bottom: 0, top: 0, width: 10,
+            cursor: 'col-resize', zIndex: 1,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      }
+      onResize={onResize}
+      draggableOpts={{ enableUserSelectHack: false }}
+    >
+      <th {...restProps} />
+    </Resizable>
+  );
+};
 
 // 运单数据类型 - 匹配CSV字段
 interface WaybillData {
@@ -114,6 +141,7 @@ interface WaybillData {
   profitRate?: number; // 任务毛利率
   etcFee?: number; // ETC过路费
   // 兼容旧字段
+  waybillDate?: string; // 运单日期（发车时间）
   customerId?: string;  // 融资方ID
   status?: string;
   createdAt: string;
@@ -181,6 +209,9 @@ function WaybillsPage() {
   // 融资方列表（平台用户导入时选择）
   const [financiers, setFinanciers] = useState<Financier[]>([]);
   const [selectedFinancierId, setSelectedFinancierId] = useState<string>();
+
+  // 列宽拖动状态
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
 
   const refresh = async () => {
     if (!token) return;
@@ -1067,12 +1098,29 @@ function WaybillsPage() {
         </Dropdown>
       </Space>
 
-      {/* 数据表格 - 支持横向滚动查看更多金额字段 */}
+      {/* 数据表格 - 支持列拖拽调宽 + 横向滚动 */}
       <Table<WaybillData>
         rowKey="id"
         loading={loading}
         dataSource={waybills}
-        columns={columns}
+        columns={columns.map((col: any, index: number) => {
+          // 固定列和分组列（有children）不参与拖拽resize
+          if (col.fixed || col.children) return col;
+          const key = col.dataIndex || col.title || index;
+          const w = columnWidths[key] || col.width;
+          if (!w) return col;
+          return {
+            ...col,
+            width: w,
+            onHeaderCell: () => ({
+              width: w,
+              onResize: (_: any, { size }: any) => {
+                setColumnWidths(prev => ({ ...prev, [key]: size.width }));
+              },
+            }),
+          };
+        })}
+        components={{ header: { cell: ResizableTitle } }}
         pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
         scroll={{ x: 2800 }}
         size="small"
