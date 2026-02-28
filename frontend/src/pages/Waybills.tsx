@@ -558,12 +558,11 @@ function WaybillsPage() {
       // ========== 固定左侧：融资方标识 + 批次号 ==========
       {
         title: "融资方",
-        dataIndex: "financierName",
+        key: "financier",
         width: 100,
         fixed: 'left',
-        render: (name: string, record: WaybillData) => {
-          // 优先显示融资方名称（从后端 JOIN 获取），其次客户名称
-          const displayName = name || record.customerName;
+        render: (_: any, record: WaybillData) => {
+          const displayName = record.financierName || record.customerName;
           if (!displayName) {
             return <Tag color="default" style={{ margin: 0 }}>未指定</Tag>;
           }

@@ -24,14 +24,40 @@ const TARGET_ORG_NAME = '北京登途网联车队';
 async function switchOrganization(page: Page): Promise<boolean> {
   console.log(`[zo-cloud] 开始切换组织到: ${TARGET_ORG_NAME}`);
 
-  const baseUrl = page.url().split('/').slice(0, 3).join('/');
+  const baseUrl = page.url().split('/').slice(0, 3).join('/') || 'https://tms25.zo-cloud.cn';
   console.log(`[zo-cloud] 导航到主页: ${baseUrl}/Index/Home`);
   try {
-    await page.goto(baseUrl + '/Index/Home', { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.goto(baseUrl + '/Index/Home', { waitUntil: 'networkidle2', timeout: 60000 });
   } catch (e: any) {
     console.log(`[zo-cloud] 导航到主页超时，继续: ${e.message}`);
   }
-  await new Promise(resolve => setTimeout(resolve, 6000));
+  // tms25 在服务器上加载非常慢（截图显示停在99%进度条），需要等待实际页面内容渲染
+  console.log('[zo-cloud] 等待页面内容渲染...');
+  for (let w = 0; w < 30; w++) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    const pageState = await page.evaluate(() => {
+      const bodyText = document.body.textContent || '';
+      // 检查页面是否有实际业务内容（不只是加载进度条）
+      const hasNav = bodyText.includes('首页') || bodyText.includes('订单管理') || bodyText.includes('运单管理');
+      const hasUser = bodyText.includes('我的信息') || bodyText.includes('退出');
+      const hasSidebar = document.querySelectorAll('[class*="sidebar"], [class*="menu"], [class*="nav"]').length > 0;
+      return { hasNav, hasUser, hasSidebar, bodyLen: bodyText.length };
+    });
+    if (pageState.hasNav || pageState.hasUser) {
+      console.log(`[zo-cloud] 页面已加载 (等待${(w+1)*3}秒): nav=${pageState.hasNav}, user=${pageState.hasUser}, bodyLen=${pageState.bodyLen}`);
+      break;
+    }
+    if (w % 5 === 4) {
+      console.log(`[zo-cloud] 页面仍在加载... (${(w+1)*3}秒), bodyLen=${pageState.bodyLen}`);
+    }
+    if (w === 29) {
+      console.log(`[zo-cloud] 等待90秒仍未渲染，尝试刷新...`);
+      try {
+        await page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      } catch (e) {}
+    }
+  }
 
   const alreadyOnTarget = await page.evaluate((orgName: string) => {
     return (document.body.textContent || '').substring(0, 2000).includes(orgName);
@@ -92,62 +118,74 @@ async function switchOrganization(page: Page): Promise<boolean> {
   }
 
   await new Promise(resolve => setTimeout(resolve, 2000));
-
-  // 步骤1b: 找"切换组织"菜单项并点击
-  console.log('[zo-cloud] 步骤1b: 查找"切换组织"菜单项...');
   try { await page.screenshot({ path: '/tmp/zocloud_after_user_click.png', fullPage: true }); } catch (e) {}
 
-  const switchMenuClicked = await page.evaluate(() => {
-    const allElements = document.querySelectorAll('div, span, a, button, li');
-    for (const el of allElements) {
-      const text = (el.textContent || '').trim();
-      if (text === '切换组织') {
-        const rect = (el as HTMLElement).getBoundingClientRect();
-        if (rect.width > 10 && rect.height > 5) {
-          (el as HTMLElement).click();
-          return `found at [${rect.left.toFixed(0)},${rect.top.toFixed(0)}]`;
-        }
+  // 检查点击用户名后弹窗是否已直接打开（tms25 上点用户名直接弹出切换组织弹窗）
+  // 多等一会，弹窗可能有动画
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  const modalCheckResult = await page.evaluate(() => {
+    const bodyText = document.body.textContent || '';
+    const has切换 = bodyText.includes('切换组织');
+    // tms25 的弹窗可能不用 <table>，用 div 表格或 layui 组件
+    // 检查任何包含"组织名称"或"筛选"文字且高度>100 的可见弹层
+    const allEls = document.querySelectorAll('[class*="layer"], [class*="modal"], [class*="dialog"], [class*="popup"], [class*="layui"], [class*="content"]');
+    let layerWithOrg = false;
+    for (const el of allEls) {
+      const h = (el as HTMLElement).offsetHeight;
+      if (h < 100) continue;
+      const text = (el.textContent || '');
+      if (text.includes('组织名称') || (text.includes('筛选') && text.includes('负责人'))) {
+        layerWithOrg = true;
+        break;
       }
     }
-    for (const el of allElements) {
-      const text = (el.textContent || '').trim();
-      if (text.length < 15 && text.includes('切换') && text !== '切换组织') {
-        const rect = (el as HTMLElement).getBoundingClientRect();
-        if (rect.width > 10 && rect.height > 5) {
-          (el as HTMLElement).click();
-          return `partial: "${text}" at [${rect.left.toFixed(0)},${rect.top.toFixed(0)}]`;
-        }
-      }
+    // 也直接检查 table
+    const tables = document.querySelectorAll('table');
+    let tableWithOrg = false;
+    for (const table of tables) {
+      const text = table.textContent || '';
+      if (text.includes('组织名称') || text.includes('筛选')) { tableWithOrg = true; break; }
     }
-    return null;
+    // 最宽松检查：页面上同时有"切换组织"和"筛选"和列表行
+    const hasFilterAndRows = has切换 && bodyText.includes('筛选') && (
+      document.querySelectorAll('tr').length > 3 || 
+      document.querySelectorAll('[class*="row"], [class*="item"]').length > 5
+    );
+    return { has切换, tableWithOrg, layerWithOrg, hasFilterAndRows };
   });
 
-  if (switchMenuClicked) {
-    console.log(`[zo-cloud] 已点击切换组织菜单: ${switchMenuClicked}`);
-    await new Promise(resolve => setTimeout(resolve, 3000));
+  console.log(`[zo-cloud] 弹窗检测: ${JSON.stringify(modalCheckResult)}`);
+  const modalAlreadyOpen = modalCheckResult.has切换 && (
+    modalCheckResult.tableWithOrg || modalCheckResult.layerWithOrg || modalCheckResult.hasFilterAndRows
+  );
+
+  if (modalAlreadyOpen) {
+    console.log('[zo-cloud] 点击用户名后弹窗已直接打开，跳过步骤1b');
   } else {
-    // 备用：尝试点击侧栏组织名
-    console.log('[zo-cloud] 下拉菜单未找到"切换组织"，尝试侧栏组织名...');
-    const sidebarClicked = await page.evaluate(() => {
-      const allElements = document.querySelectorAll('div, span, a');
+    // 步骤1b: 弹窗未直接打开，在下拉菜单中找"切换组织"并点击
+    console.log('[zo-cloud] 步骤1b: 查找"切换组织"菜单项...');
+
+    const switchMenuClicked = await page.evaluate(() => {
+      const allElements = document.querySelectorAll('div, span, a, button, li');
       for (const el of allElements) {
-        const rect = (el as HTMLElement).getBoundingClientRect();
-        if (rect.left > 200 || rect.top > 120 || rect.top < 40) continue;
-        if (rect.width < 30 || rect.height < 10 || rect.height > 30) continue;
         const text = (el.textContent || '').trim();
-        if (text.length > 2 && text.length < 30 &&
-            (text.includes('车队') || text.includes('物流') || text.includes('AC') || text.includes('网联'))) {
-          (el as HTMLElement).click();
-          return `org: "${text}"`;
+        if (text === '切换组织') {
+          const rect = (el as HTMLElement).getBoundingClientRect();
+          if (rect.width > 10 && rect.height > 5) {
+            (el as HTMLElement).click();
+            return `found at [${rect.left.toFixed(0)},${rect.top.toFixed(0)}]`;
+          }
         }
       }
       return null;
     });
-    if (sidebarClicked) {
-      console.log(`[zo-cloud] 已点击侧栏: ${sidebarClicked}`);
+
+    if (switchMenuClicked) {
+      console.log(`[zo-cloud] 已点击切换组织菜单: ${switchMenuClicked}`);
       await new Promise(resolve => setTimeout(resolve, 3000));
     } else {
-      console.log('[zo-cloud] 未找到任何切换入口');
+      console.log('[zo-cloud] 未找到切换组织菜单项');
       try { await page.screenshot({ path: '/tmp/zocloud_no_switch_entry.png', fullPage: true }); } catch (e) {}
       return false;
     }
@@ -160,9 +198,13 @@ async function switchOrganization(page: Page): Promise<boolean> {
     const hasModal = await page.evaluate(() => {
       const bodyText = document.body.textContent || '';
       if (!bodyText.includes('切换组织')) return false;
-      const tables = document.querySelectorAll('table');
-      for (const table of tables) {
-        if ((table.textContent || '').includes('组织名称')) return true;
+      // 宽松检测：只要页面同时包含"切换组织"和"筛选"就认为弹窗已打开
+      if (bodyText.includes('筛选') && (bodyText.includes('组织名称') || bodyText.includes('负责人'))) return true;
+      // 检查 table 或 layer 中有列表数据
+      if (document.querySelectorAll('tr').length > 3) return true;
+      const layers = document.querySelectorAll('[class*="layer"], [class*="modal"], [class*="dialog"]');
+      for (const l of layers) {
+        if ((l as HTMLElement).offsetHeight > 100 && (l.textContent || '').includes('筛选')) return true;
       }
       return false;
     });
@@ -186,38 +228,43 @@ async function switchOrganization(page: Page): Promise<boolean> {
   console.log(`[zo-cloud] 步骤3: 在筛选框输入: ${TARGET_ORG_NAME}`);
 
   const filterInputFound = await page.evaluate(() => {
-    const rows = document.querySelectorAll('tr, [class*="row"]');
+    // 查找"筛选"行中的输入框（支持 table tr 和 div 布局）
+    const rows = document.querySelectorAll('tr, [class*="row"], [class*="filter"]');
     for (const row of rows) {
       if (!(row.textContent || '').includes('筛选')) continue;
       const inputs = row.querySelectorAll('input');
       if (inputs.length > 0) {
         (inputs[0] as HTMLInputElement).focus();
-        return true;
+        return 'filter-row';
       }
     }
+    // 备用：弹窗/layer 中可见的输入框
     const allInputs = document.querySelectorAll('input[type="text"], input:not([type])');
     for (const input of allInputs) {
       const rect = (input as HTMLElement).getBoundingClientRect();
-      if (rect.width > 40 && rect.height > 10 && rect.top > 100) {
-        const parent = input.closest('table, [class*="modal"], [class*="dialog"]');
-        if (parent && (parent.textContent || '').includes('组织名称')) {
+      if (rect.width > 40 && rect.height > 10 && rect.top > 100 && rect.top < 600) {
+        const parent = input.closest('[class*="layer"], [class*="modal"], [class*="dialog"], [class*="content"], table');
+        if (parent && ((parent.textContent || '').includes('组织名称') || (parent.textContent || '').includes('筛选'))) {
           (input as HTMLInputElement).focus();
-          return true;
+          return 'modal-input';
         }
       }
     }
-    return false;
+    return null;
   });
 
   if (filterInputFound) {
     await page.keyboard.type(TARGET_ORG_NAME, { delay: 30 });
-    console.log('[zo-cloud] 已输入筛选文本');
+    console.log(`[zo-cloud] 已输入筛选文本 (${filterInputFound})`);
   } else {
-    const inputs = await page.$$('table input, [class*="modal"] input');
+    console.log('[zo-cloud] 未找到筛选框，尝试备用选择器...');
+    const inputs = await page.$$('[class*="layer"] input, [class*="modal"] input, [class*="dialog"] input, table input');
     if (inputs.length > 0) {
       await inputs[0].click();
       await inputs[0].type(TARGET_ORG_NAME, { delay: 30 });
       console.log('[zo-cloud] 已通过备用方式输入筛选');
+    } else {
+      console.log('[zo-cloud] 警告：未找到任何筛选输入框');
     }
   }
 
@@ -226,7 +273,8 @@ async function switchOrganization(page: Page): Promise<boolean> {
   // 步骤4: 选中匹配行
   console.log('[zo-cloud] 步骤4: 选中目标网点行...');
   const rowSelected = await page.evaluate((orgName: string) => {
-    const rows = document.querySelectorAll('table tbody tr');
+    // 搜索 table 行
+    const rows = document.querySelectorAll('table tbody tr, tr');
     for (const row of rows) {
       const text = (row.textContent || '').trim();
       if (text.includes(orgName)) {
@@ -236,13 +284,15 @@ async function switchOrganization(page: Page): Promise<boolean> {
         return text.substring(0, 60);
       }
     }
-    const cells = document.querySelectorAll('td');
-    for (const cell of cells) {
-      if ((cell.textContent || '').trim().includes(orgName)) {
-        (cell as HTMLElement).click();
-        const parentRow = cell.closest('tr');
+    // 搜索任何包含目标名称的可点击元素（支持 div 表格）
+    const allEls = document.querySelectorAll('td, [class*="cell"], [class*="row"], div, span');
+    for (const el of allEls) {
+      const t = (el.textContent || '').trim();
+      if (t === orgName || (t.includes(orgName) && t.length < orgName.length + 20)) {
+        (el as HTMLElement).click();
+        const parentRow = el.closest('tr, [class*="row"]');
         if (parentRow) (parentRow as HTMLElement).click();
-        return (cell.textContent || '').substring(0, 60);
+        return t.substring(0, 60);
       }
     }
     return null;
@@ -283,17 +333,100 @@ async function switchOrganization(page: Page): Promise<boolean> {
   }
 
   console.log('[zo-cloud] 已点击切换组织确认按钮');
-  await new Promise(resolve => setTimeout(resolve, 5000));
+
+  // 不主动导航，等待页面自动刷新（切换组织会触发页面 reload）
+  console.log('[zo-cloud] 等待页面自动刷新...');
+
+  // 轮询等待：检测页面是否发生变化（内容或URL改变）
+  let switchSuccess = false;
+  for (let w = 0; w < 30; w++) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    const state = await page.evaluate((orgName: string) => {
+      const bodyText = document.body.textContent || '';
+      const bodyLen = bodyText.length;
+      const hasOrgName = bodyText.includes(orgName);
+      // 检查切换弹窗是否已关闭（弹窗消失说明操作完成）
+      const modalStillOpen = bodyText.includes('切换组织') && bodyText.includes('筛选');
+      return { bodyLen, hasOrgName, modalStillOpen, url: window.location.href };
+    }, TARGET_ORG_NAME);
+
+    console.log(`[zo-cloud] 等待中(${(w+1)*3}秒): bodyLen=${state.bodyLen}, hasOrg=${state.hasOrgName}, modal=${state.modalStillOpen}`);
+
+    if (state.hasOrgName) {
+      console.log(`[zo-cloud] 组织切换已确认: ${TARGET_ORG_NAME}`);
+      switchSuccess = true;
+      break;
+    }
+
+    // 如果弹窗已关闭但组织名还没出现，可能页面在刷新中
+    if (!state.modalStillOpen && state.bodyLen < 500) {
+      console.log('[zo-cloud] 弹窗已关闭，页面正在刷新...');
+      continue;
+    }
+
+    // 如果等了15秒弹窗仍然开着，说明点击没生效
+    if (state.modalStillOpen && w >= 5) {
+      console.log('[zo-cloud] 弹窗仍然打开，尝试重新点击切换按钮...');
+      await page.evaluate(() => {
+        const buttons = document.querySelectorAll('button, a, span, div');
+        const candidates: { el: HTMLElement; y: number }[] = [];
+        for (const btn of buttons) {
+          const text = (btn.textContent || '').trim();
+          if (text !== '切换组织') continue;
+          const rect = (btn as HTMLElement).getBoundingClientRect();
+          if (rect.width < 40 || rect.height < 15) continue;
+          candidates.push({ el: btn as HTMLElement, y: rect.top });
+        }
+        if (candidates.length > 0) {
+          candidates.sort((a, b) => b.y - a.y);
+          candidates[0].el.click();
+        }
+      });
+    }
+  }
+
+  if (!switchSuccess) {
+    // 最后尝试：手动导航到主页看是否已切换
+    console.log('[zo-cloud] 轮询超时，手动导航主页做最终检查...');
+    try {
+      await page.goto(baseUrl + '/Index/Home', { waitUntil: 'networkidle2', timeout: 60000 });
+    } catch (e) {}
+    for (let w = 0; w < 10; w++) {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      const hasNav = await page.evaluate(() => {
+        return (document.body.textContent || '').includes('首页');
+      });
+      if (hasNav) break;
+    }
+
+    switchSuccess = await page.evaluate((orgName: string) => {
+      return (document.body.textContent || '').includes(orgName);
+    }, TARGET_ORG_NAME);
+  }
 
   try { await page.screenshot({ path: '/tmp/zocloud_after_switch.png', fullPage: true }); } catch (e) {}
 
-  const verified = await page.evaluate((orgName: string) => {
-    return (document.body.textContent || '').substring(0, 1000).includes(orgName);
-  }, TARGET_ORG_NAME);
-
-  console.log(verified
-    ? `[zo-cloud] 组织切换成功: ${TARGET_ORG_NAME}`
-    : '[zo-cloud] 警告：无法确认组织切换结果，继续执行');
+  if (switchSuccess) {
+    console.log(`[zo-cloud] 组织切换最终确认成功: ${TARGET_ORG_NAME}`);
+  } else {
+    console.log('[zo-cloud] 组织切换失败，停止执行防止抓错数据');
+    const sidebarText = await page.evaluate(() => {
+      const els = document.querySelectorAll('div, span');
+      const texts: string[] = [];
+      for (const el of els) {
+        const rect = (el as HTMLElement).getBoundingClientRect();
+        if (rect.left < 200 && rect.top > 40 && rect.top < 120) {
+          const t = (el.textContent || '').trim();
+          if (t.length > 1 && t.length < 30) texts.push(t);
+        }
+      }
+      return texts.slice(0, 5);
+    });
+    console.log(`[zo-cloud] 侧栏内容: ${JSON.stringify(sidebarText)}`);
+    try { await page.screenshot({ path: '/tmp/zocloud_switch_not_verified.png', fullPage: true }); } catch (e) {}
+    return false;
+  }
 
   return true;
 }

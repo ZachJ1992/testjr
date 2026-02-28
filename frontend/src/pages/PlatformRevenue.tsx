@@ -34,6 +34,7 @@ const SOURCE_TYPE_MAP: Record<string, string> = {
   directed_pay_interest: '定向支付利息',
   brokerage_commission: '撮合抽成',
   commission_fee: '抽成费用',
+  waybill_commission: '运单抽成',
 };
 
 const PlatformRevenue: React.FC = () => {
@@ -288,21 +289,47 @@ const PlatformRevenue: React.FC = () => {
       width: 120,
       render: (type: string) => SOURCE_TYPE_MAP[type] || type,
     },
-    { title: '合同编号', dataIndex: 'contractNumber', key: 'contractNumber', width: 150 },
-    { title: '资金方', dataIndex: 'funderName', key: 'funderName', width: 120 },
-    { title: '融资方', dataIndex: 'financierName', key: 'financierName', width: 120 },
     { 
-      title: '金额', 
+      title: '关联单号',
+      key: 'refNumber',
+      width: 180,
+      render: (_: any, record: any) => record.contractNumber || '-',
+    },
+    { title: '融资方', dataIndex: 'financierName', key: 'financierName', width: 100 },
+    {
+      title: '应收金额',
+      dataIndex: 'principalAmount',
+      key: 'principalAmount',
+      width: 100,
+      align: 'right' as const,
+      render: (v: number, record: any) => {
+        if (record.sourceType !== 'waybill_commission' || !v) return '-';
+        return <span style={{ whiteSpace: 'nowrap' }}>¥{v.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}</span>;
+      },
+    },
+    {
+      title: '抽成规则',
+      key: 'rule',
+      width: 90,
+      render: (_: any, record: any) => {
+        if (record.sourceType !== 'waybill_commission') return '-';
+        if (record.rate && record.rate > 0) return `${(record.rate * 100).toFixed(0)}%`;
+        return '固定200元';
+      },
+    },
+    { 
+      title: '收益金额', 
       dataIndex: 'amount', 
       key: 'amount',
-      width: 120,
+      width: 110,
       align: 'right' as const,
       render: (amount: number) => (
-        <span style={{ color: '#1890ff', fontWeight: 500 }}>
+        <span style={{ color: '#52c41a', fontWeight: 500, whiteSpace: 'nowrap' }}>
           ¥{amount?.toLocaleString('zh-CN', { minimumFractionDigits: 2 }) || '0.00'}
         </span>
       ),
     },
+    { title: '资金方', dataIndex: 'funderName', key: 'funderName', width: 100 },
     { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true },
   ];
 
