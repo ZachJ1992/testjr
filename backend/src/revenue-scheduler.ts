@@ -35,13 +35,17 @@ export async function calculateDailyRevenue(targetDate?: string): Promise<{
   // 3. 撮合业务抽成 (在结算时生成，这里不处理)
   // 4. 抽成合同费用 (在结算时生成，这里不处理)
 
+  // 5. 运单平台抽成（按融资方规则：融满20%应收，金罗200元/单）
+  const waybillCommissionRecords = await calculateWaybillPlatformRevenue();
+  totalRecords += waybillCommissionRecords;
+
   console.log(`${date} 收益计算完成，共生成 ${totalRecords} 条记录`);
 
   return {
     financingInterest: financingRecords,
     directedPayInterest: directedPayRecords,
     brokerageCommission: 0,
-    commissionFee: 0,
+    commissionFee: waybillCommissionRecords,
     totalRecords,
   };
 }
@@ -327,6 +331,109 @@ export async function createCommissionFeeRecord(params: {
     status: "pending",
     settlementId: params.settlementId,
   });
+}
+
+/**
+ * 计算运单平台抽成收益
+ * 融满: 每单应收合计 * 20%
+ * 金罗: 每单固定 200 元
+ * 遍历所有未计算过收益的运单，按融资方规则生成 revenue_records
+ */
+async function calculateWaybillPlatformRevenue(): Promise<number> {
+  try {
+    // 融资方规则配置
+    const FINANCIER_RULES: Record<string, { type: 'percentage' | 'fixed'; value: number; name: string }> = {};
+
+    // 动态查询融资方 ID
+    const [financiers] = await pool.query<RowDataPacket[]>(
+      `SELECT id, enterprise_name FROM financiers WHERE enterprise_name IN ('金罗', '融满') AND deleted_at IS NULL`
+    );
+
+    for (const f of financiers) {
+      if (f.enterprise_name === '融满') {
+        FINANCIER_RULES[f.id] = { type: 'percentage', value: 0.20, name: '融满' };
+      } else if (f.enterprise_name === '金罗') {
+        FINANCIER_RULES[f.id] = { type: 'fixed', value: 200, name: '金罗' };
+      }
+    }
+
+    if (Object.keys(FINANCIER_RULES).length === 0) {
+      console.log("[WaybillRevenue] 未找到金罗/融满融资方配置，跳过");
+      return 0;
+    }
+
+    const financierIds = Object.keys(FINANCIER_RULES);
+    const placeholders = financierIds.map(() => '?').join(',');
+
+    // 查询未计算过收益的运单（通过 LEFT JOIN 排除已有记录的运单）
+    const [waybills] = await pool.query<RowDataPacket[]>(
+      `SELECT w.id, w.waybill_number, w.customer_id, w.receivable_total, w.waybill_date,
+              f.enterprise_name as financier_name
+       FROM waybills w
+       LEFT JOIN financiers f ON w.customer_id = f.id
+       LEFT JOIN revenue_records rr ON rr.waybill_id = w.id AND rr.source_type = 'waybill_commission'
+       WHERE w.deleted_at IS NULL
+         AND w.customer_id IN (${placeholders})
+         AND rr.id IS NULL`,
+      financierIds
+    );
+
+    if (waybills.length === 0) {
+      console.log("[WaybillRevenue] 无新运单需要计算收益");
+      return 0;
+    }
+
+    const records: CreateRevenueRecordInput[] = [];
+
+    for (const w of waybills) {
+      const rule = FINANCIER_RULES[w.customer_id];
+      if (!rule) continue;
+
+      let amount: number;
+      let rate: number;
+      const receivableTotal = Number(w.receivable_total) || 0;
+
+      if (rule.type === 'percentage') {
+        if (receivableTotal <= 0) continue;
+        amount = Math.round(receivableTotal * rule.value * 100) / 100;
+        rate = rule.value;
+      } else {
+        amount = rule.value;
+        rate = 0;
+      }
+
+      const revenueDate = w.waybill_date
+        ? (w.waybill_date instanceof Date ? w.waybill_date.toISOString().split('T')[0] : String(w.waybill_date).split('T')[0])
+        : new Date().toISOString().split('T')[0];
+
+      records.push({
+        recordType: "revenue",
+        beneficiaryType: "platform",
+        sourceType: "waybill_commission",
+        contractId: w.customer_id,
+        contractNumber: w.waybill_number,
+        contractType: "waybill",
+        financierId: w.customer_id,
+        financierName: w.financier_name || rule.name,
+        amount,
+        principalAmount: receivableTotal,
+        rate,
+        revenueDate,
+        status: "confirmed",
+        waybillId: w.id,
+      });
+    }
+
+    if (records.length > 0) {
+      await revenueStore.batchCreateRevenueRecords(records);
+      console.log(`[WaybillRevenue] 生成 ${records.length} 条运单平台抽成记录`);
+    }
+
+    return records.length;
+  } catch (err) {
+    console.error("[WaybillRevenue] 计算运单平台抽成失败:", err);
+    return 0;
+  }
 }
 
 // 辅助函数

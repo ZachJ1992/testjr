@@ -23,6 +23,7 @@ const SOURCE_TYPE_NAMES: Record<RevenueSourceType, string> = {
   directed_pay_interest: "定向支付利息",
   brokerage_commission: "撮合业务抽成",
   commission_fee: "抽成合同费用",
+  waybill_commission: "运单平台抽成",
 };
 
 // 数据库行转换为 RevenueRecord

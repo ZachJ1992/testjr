@@ -79,6 +79,27 @@ export async function createRevenueTables(): Promise<void> {
   `);
   console.log("   ✓ revenue_records 表创建完成");
 
+  // 扩展 source_type 枚举，添加 waybill_commission
+  try {
+    await pool.query(`
+      ALTER TABLE revenue_records 
+      MODIFY COLUMN source_type ENUM(
+        'financing_interest',
+        'directed_pay_interest',
+        'brokerage_commission',
+        'commission_fee',
+        'waybill_commission'
+      ) NOT NULL
+    `);
+    console.log("   ✓ source_type 枚举已扩展（新增 waybill_commission）");
+  } catch (err: any) {
+    if (err.code === 'ER_DUPLICATED_VALUE_IN_TYPE') {
+      console.log("   - source_type 枚举已包含 waybill_commission，跳过");
+    } else {
+      console.log("   ✓ source_type 枚举更新完成");
+    }
+  }
+
   console.log("\n=== 收益管理数据库表创建完成 ===");
 }
 

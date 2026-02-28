@@ -1193,6 +1193,8 @@ export async function fetchWaybills(
     contractNumber?: string;
     businessMode?: BusinessMode;
     status?: WaybillStatus;
+    batchStatus?: string;
+    batchSource?: string;
     startDate?: string;
     endDate?: string;
     waybillNumber?: string;
@@ -1204,6 +1206,8 @@ export async function fetchWaybills(
   if (filters?.contractNumber) params.append("contractNumber", filters.contractNumber);
   if (filters?.businessMode) params.append("businessMode", filters.businessMode);
   if (filters?.status) params.append("status", filters.status);
+  if (filters?.batchStatus) params.append("batchStatus", filters.batchStatus);
+  if (filters?.batchSource) params.append("batchSource", filters.batchSource);
   if (filters?.startDate) params.append("startDate", filters.startDate);
   if (filters?.endDate) params.append("endDate", filters.endDate);
   if (filters?.waybillNumber) params.append("waybillNumber", filters.waybillNumber);

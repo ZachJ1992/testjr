@@ -632,11 +632,12 @@ export type PaymentChannel =
 export type RevenueRecordType = 'revenue' | 'expense';
 
 // 收益来源类型
-export type RevenueSourceType = 
+export type RevenueSourceType =
   | 'financing_interest'      // 三方融资利息
   | 'directed_pay_interest'   // 定向支付利息
   | 'brokerage_commission'    // 撮合业务抽成
-  | 'commission_fee';         // 抽成合同费用
+  | 'commission_fee'          // 抽成合同费用
+  | 'waybill_commission';     // 运单平台抽成（按融资方规则）
 
 // 收益状态
 export type RevenueStatus = 'pending' | 'confirmed' | 'settled';
