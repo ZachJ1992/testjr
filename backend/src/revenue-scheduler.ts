@@ -51,23 +51,23 @@ export async function calculateDailyRevenue(targetDate?: string): Promise<{
  */
 async function calculateFinancingInterest(date: string): Promise<number> {
   try {
-    // 查询所有 active 状态的融资合同，且有在贷金额
+    // 查询所有 active 状态的融资合同，且有在贷金额（使用 outstanding_principal 剩余本金）
     const [contracts] = await pool.query<RowDataPacket[]>(`
       SELECT 
         c.id,
-        c.contract_number,
+        CONCAT('RZ', DATE_FORMAT(c.created_at, '%Y%m%d'), LEFT(c.id, 4)) as contract_number,
         c.funder_id,
-        c.financier_id,
-        c.used_amount,
+        c.logistics_provider_id as financier_id,
+        c.outstanding_principal as used_amount,
         c.annual_interest_rate,
         f.institution_name as funder_name,
         fn.enterprise_name as financier_name
       FROM contracts c
       LEFT JOIN funders f ON c.funder_id = f.id
-      LEFT JOIN financiers fn ON c.financier_id = fn.id
+      LEFT JOIN financiers fn ON c.logistics_provider_id = fn.id
       WHERE c.type = 'financing' 
       AND c.status = 'active'
-      AND c.used_amount > 0
+      AND c.outstanding_principal > 0
     `);
 
     let count = 0;
@@ -82,9 +82,9 @@ async function calculateFinancingInterest(date: string): Promise<number> {
       );
       if (exists) continue;
 
-      // 日利息 = 本金 × 年化利率 / 360
+      // 日利息 = 本金 × (年化利率/100) / 360
       const dailyInterest =
-        (Number(contract.used_amount) * Number(contract.annual_interest_rate)) / 360;
+        (Number(contract.used_amount) * Number(contract.annual_interest_rate) / 100) / 360;
 
       // 资金方收益
       records.push({
@@ -181,9 +181,9 @@ async function calculateDirectedPayInterest(date: string): Promise<number> {
       );
       if (existingRows[0].count > 0) continue;
 
-      // 日利息 = 本金 × 年化利率 / 360
+      // 日利息 = 本金 × (年化利率/100) / 360
       const dailyInterest =
-        (Number(request.payment_amount) * Number(request.annual_interest_rate)) / 360;
+        (Number(request.payment_amount) * Number(request.annual_interest_rate) / 100) / 360;
 
       // 资金方收益
       records.push({

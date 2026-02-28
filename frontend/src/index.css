@@ -136,6 +136,37 @@ a:hover {
   transform: translateY(0);
 }
 
+/* 分页简洁风格 */
+.ant-pagination .ant-pagination-item {
+  border: none !important;
+  background: transparent;
+}
+
+.ant-pagination .ant-pagination-item-active {
+  background: #F1F5F9 !important;
+  border: none !important;
+}
+
+.ant-pagination .ant-pagination-item a {
+  color: #64748B;
+}
+
+.ant-pagination .ant-pagination-item-active a {
+  color: #0F172A;
+  font-weight: 500;
+}
+
+.ant-pagination .ant-pagination-prev,
+.ant-pagination .ant-pagination-next {
+  border: none !important;
+}
+
+.ant-pagination .ant-pagination-prev button,
+.ant-pagination .ant-pagination-next button {
+  border: none !important;
+  background: transparent;
+}
+
 /* 统计数字样式增强 */
 .ant-statistic-content-value {
   font-weight: 600;

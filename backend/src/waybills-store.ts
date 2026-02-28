@@ -72,6 +72,8 @@ interface Waybill {
   status?: string;
   createdAt: string;
   updatedAt: string;
+  // JOIN 融资方表的字段
+  financierName?: string;
 }
 
 interface WaybillStats {
@@ -153,6 +155,8 @@ interface WaybillRow extends RowDataPacket {
   status: string | null;
   created_at: string;
   updated_at: string;
+  // JOIN 融资方表的字段
+  financier_name: string | null;
 }
 
 function mapWaybillRow(row: WaybillRow): Waybill {
@@ -224,7 +228,9 @@ function mapWaybillRow(row: WaybillRow): Waybill {
     waybillDate: row.waybill_date || undefined,
     status: row.status || undefined,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    // 融资方名称（从 JOIN 获取）
+    financierName: row.financier_name || undefined
   };
 }
 
@@ -232,6 +238,7 @@ export async function getWaybills(filters?: {
   customerName?: string;
   vehiclePlate?: string;
   batchStatus?: string;
+  batchSource?: string;
   startDate?: string;
   endDate?: string;
   customerId?: string;  // 融资方ID过滤（单个）
@@ -243,60 +250,68 @@ export async function getWaybills(filters?: {
   );
   const columnNames = new Set(columns.map((c: any) => c.COLUMN_NAME));
   
-  let query = `SELECT * FROM waybills WHERE deleted_at IS NULL`;
+  // JOIN 融资方表获取融资方名称
+  let query = `SELECT w.*, f.enterprise_name as financier_name 
+    FROM waybills w 
+    LEFT JOIN financiers f ON w.customer_id = f.id 
+    WHERE w.deleted_at IS NULL`;
   const params: any[] = [];
 
   // 单个融资方ID过滤（数据隔离）
   if (filters?.customerId) {
-    query += ` AND customer_id = ?`;
+    query += ` AND w.customer_id = ?`;
     params.push(filters.customerId);
   }
   
   // 多个融资方ID过滤（资金方用）
   if (filters?.customerIds && filters.customerIds.length > 0) {
     const placeholders = filters.customerIds.map(() => '?').join(',');
-    query += ` AND customer_id IN (${placeholders})`;
+    query += ` AND w.customer_id IN (${placeholders})`;
     params.push(...filters.customerIds);
   }
 
   if (filters?.customerName) {
     if (columnNames.has('project_name')) {
-      query += ` AND (customer_name LIKE ? OR project_name LIKE ?)`;
-      params.push(`%${filters.customerName}%`, `%${filters.customerName}%`);
+      query += ` AND (w.customer_name LIKE ? OR w.project_name LIKE ? OR f.enterprise_name LIKE ?)`;
+      params.push(`%${filters.customerName}%`, `%${filters.customerName}%`, `%${filters.customerName}%`);
     } else {
-      query += ` AND customer_name LIKE ?`;
-      params.push(`%${filters.customerName}%`);
+      query += ` AND (w.customer_name LIKE ? OR f.enterprise_name LIKE ?)`;
+      params.push(`%${filters.customerName}%`, `%${filters.customerName}%`);
     }
   }
   if (filters?.vehiclePlate) {
-    query += ` AND vehicle_plate LIKE ?`;
+    query += ` AND w.vehicle_plate LIKE ?`;
     params.push(`%${filters.vehiclePlate}%`);
   }
   if (filters?.batchStatus && columnNames.has('batch_status')) {
-    query += ` AND batch_status = ?`;
+    query += ` AND w.batch_status = ?`;
     params.push(filters.batchStatus);
+  }
+  if (filters?.batchSource && columnNames.has('batch_source')) {
+    query += ` AND w.batch_source = ?`;
+    params.push(filters.batchSource);
   }
   if (filters?.startDate) {
     if (columnNames.has('departure_time')) {
-      query += ` AND (DATE(departure_time) >= ? OR waybill_date >= ?)`;
+      query += ` AND (DATE(w.departure_time) >= ? OR w.waybill_date >= ?)`;
       params.push(filters.startDate, filters.startDate);
     } else {
-      query += ` AND waybill_date >= ?`;
+      query += ` AND w.waybill_date >= ?`;
       params.push(filters.startDate);
     }
   }
   if (filters?.endDate) {
     if (columnNames.has('departure_time')) {
-      query += ` AND (DATE(departure_time) <= ? OR waybill_date <= ?)`;
+      query += ` AND (DATE(w.departure_time) <= ? OR w.waybill_date <= ?)`;
       params.push(filters.endDate, filters.endDate);
     } else {
-      query += ` AND waybill_date <= ?`;
+      query += ` AND w.waybill_date <= ?`;
       params.push(filters.endDate);
     }
   }
 
   // 优先按发车时间降序排列（最新在前），发车时间为空的按创建时间排序
-  query += ` ORDER BY COALESCE(departure_time, created_at) DESC, created_at DESC`;
+  query += ` ORDER BY COALESCE(w.departure_time, w.created_at) DESC, w.created_at DESC`;
 
   const [rows] = await pool.query<WaybillRow[]>(query, params);
   return rows.map(mapWaybillRow);

@@ -50,6 +50,10 @@ function FinancingRepaymentSettlementPage() {
   const [stats, setStats] = useState<SettlementStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState("");
+
+  // 权限检查 - 新增功能需要 manage_contracts 权限来加载融资方和合同
+  const canAddSettlement = user?.permissions?.includes("*") || 
+    user?.permissions?.includes("manage_contracts");
   
   // 新增弹窗相关状态
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -435,9 +439,11 @@ function FinancingRepaymentSettlementPage() {
             <Button icon={<ReloadOutlined />} onClick={loadSettlements} loading={loading}>
               {t("common.refresh", "刷新")}
             </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenAddModal}>
-              {t("financing_repayment.add", "新增")}
-            </Button>
+            {canAddSettlement && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenAddModal}>
+                {t("financing_repayment.add", "新增")}
+              </Button>
+            )}
           </Space>
         </Col>
       </Row>

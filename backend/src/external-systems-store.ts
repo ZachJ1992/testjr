@@ -1,7 +1,42 @@
 import { pool } from "./db.js";
-import { ExternalSystemConfig } from "./types.js";
+import { ExternalSystemConfig, IntegrationType, CrawlerConfigParams } from "./types.js";
 import { v4 as uuidv4 } from "uuid";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
+
+// 将数据库行转换为 ExternalSystemConfig 对象
+function rowToExternalSystemConfig(row: RowDataPacket): ExternalSystemConfig {
+  let crawlerConfig: CrawlerConfigParams | undefined = undefined;
+  if (row.crawler_config) {
+    try {
+      crawlerConfig = typeof row.crawler_config === 'string' 
+        ? JSON.parse(row.crawler_config) 
+        : row.crawler_config;
+    } catch (e) {
+      crawlerConfig = undefined;
+    }
+  }
+
+  return {
+    id: row.id,
+    financierId: row.financier_id,
+    systemName: row.system_name,
+    systemId: row.system_id,
+    apiEndpoint: row.api_endpoint || undefined,
+    apiKey: row.api_key || undefined,
+    syncEnabled: !!row.sync_enabled,
+    lastSyncTime: row.last_sync_time
+      ? new Date(row.last_sync_time).toISOString()
+      : undefined,
+    integrationType: (row.integration_type as IntegrationType) || 'manual',
+    crawlerType: row.crawler_type || undefined,
+    crawlerConfig,
+    syncIntervalMinutes: row.sync_interval_minutes ?? 360,
+    lastSyncStatus: row.last_sync_status || undefined,
+    lastSyncError: row.last_sync_error || undefined,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
 
 // 获取融资方的所有外部系统配置
 export async function getExternalSystemsByFinancierId(
@@ -14,20 +49,7 @@ export async function getExternalSystemsByFinancierId(
     [financierId]
   );
 
-  return rows.map((row) => ({
-    id: row.id,
-    financierId: row.financier_id,
-    systemName: row.system_name,
-    systemId: row.system_id,
-    apiEndpoint: row.api_endpoint || undefined,
-    apiKey: row.api_key || undefined,
-    syncEnabled: !!row.sync_enabled,
-    lastSyncTime: row.last_sync_time
-      ? new Date(row.last_sync_time).toISOString()
-      : undefined,
-    createdAt: new Date(row.created_at).toISOString(),
-    updatedAt: new Date(row.updated_at).toISOString(),
-  }));
+  return rows.map(rowToExternalSystemConfig);
 }
 
 // 获取单个外部系统配置
@@ -41,22 +63,7 @@ export async function getExternalSystemById(
   );
 
   if (rows.length === 0) return null;
-
-  const row = rows[0];
-  return {
-    id: row.id,
-    financierId: row.financier_id,
-    systemName: row.system_name,
-    systemId: row.system_id,
-    apiEndpoint: row.api_endpoint || undefined,
-    apiKey: row.api_key || undefined,
-    syncEnabled: !!row.sync_enabled,
-    lastSyncTime: row.last_sync_time
-      ? new Date(row.last_sync_time).toISOString()
-      : undefined,
-    createdAt: new Date(row.created_at).toISOString(),
-    updatedAt: new Date(row.updated_at).toISOString(),
-  };
+  return rowToExternalSystemConfig(rows[0]);
 }
 
 // 创建外部系统配置
@@ -67,14 +74,22 @@ export async function createExternalSystem(data: {
   apiEndpoint?: string;
   apiKey?: string;
   syncEnabled?: boolean;
+  integrationType?: IntegrationType;
+  crawlerType?: string;
+  crawlerConfig?: CrawlerConfigParams;
+  syncIntervalMinutes?: number;
 }): Promise<ExternalSystemConfig> {
   const id = uuidv4();
   const syncEnabled = data.syncEnabled ?? false;
+  const integrationType = data.integrationType ?? 'manual';
+  const syncIntervalMinutes = data.syncIntervalMinutes ?? 360;
+  const crawlerConfigJson = data.crawlerConfig ? JSON.stringify(data.crawlerConfig) : null;
 
   await pool.query(
     `INSERT INTO financier_external_systems 
-     (id, financier_id, system_name, system_id, api_endpoint, api_key, sync_enabled)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+     (id, financier_id, system_name, system_id, api_endpoint, api_key, sync_enabled,
+      integration_type, crawler_type, crawler_config, sync_interval_minutes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       data.financierId,
@@ -83,6 +98,10 @@ export async function createExternalSystem(data: {
       data.apiEndpoint || null,
       data.apiKey || null,
       syncEnabled,
+      integrationType,
+      data.crawlerType || null,
+      crawlerConfigJson,
+      syncIntervalMinutes,
     ]
   );
 
@@ -103,10 +122,16 @@ export async function updateExternalSystem(
     apiKey?: string;
     syncEnabled?: boolean;
     lastSyncTime?: string;
+    integrationType?: IntegrationType;
+    crawlerType?: string;
+    crawlerConfig?: CrawlerConfigParams;
+    syncIntervalMinutes?: number;
+    lastSyncStatus?: string;
+    lastSyncError?: string;
   }
 ): Promise<ExternalSystemConfig | null> {
   const updates: string[] = [];
-  const values: (string | boolean | null)[] = [];
+  const values: (string | boolean | number | null)[] = [];
 
   if (data.systemName !== undefined) {
     updates.push("system_name = ?");
@@ -131,6 +156,30 @@ export async function updateExternalSystem(
   if (data.lastSyncTime !== undefined) {
     updates.push("last_sync_time = ?");
     values.push(data.lastSyncTime);
+  }
+  if (data.integrationType !== undefined) {
+    updates.push("integration_type = ?");
+    values.push(data.integrationType);
+  }
+  if (data.crawlerType !== undefined) {
+    updates.push("crawler_type = ?");
+    values.push(data.crawlerType || null);
+  }
+  if (data.crawlerConfig !== undefined) {
+    updates.push("crawler_config = ?");
+    values.push(data.crawlerConfig ? JSON.stringify(data.crawlerConfig) : null);
+  }
+  if (data.syncIntervalMinutes !== undefined) {
+    updates.push("sync_interval_minutes = ?");
+    values.push(data.syncIntervalMinutes);
+  }
+  if (data.lastSyncStatus !== undefined) {
+    updates.push("last_sync_status = ?");
+    values.push(data.lastSyncStatus || null);
+  }
+  if (data.lastSyncError !== undefined) {
+    updates.push("last_sync_error = ?");
+    values.push(data.lastSyncError || null);
   }
 
   if (updates.length === 0) {
@@ -170,4 +219,47 @@ export async function findFinancierByExternalSystem(
 
   if (rows.length === 0) return null;
   return rows[0].financier_id;
+}
+
+// 获取所有启用爬虫同步的外部系统配置（供调度器使用）
+export async function getActiveCrawlerConfigs(): Promise<ExternalSystemConfig[]> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT es.*, f.enterprise_name as financier_name
+     FROM financier_external_systems es
+     LEFT JOIN financiers f ON es.financier_id = f.id
+     WHERE es.integration_type = 'crawler' 
+       AND es.sync_enabled = TRUE 
+       AND es.crawler_type IS NOT NULL
+       AND es.deleted_at IS NULL
+     ORDER BY es.created_at ASC`
+  );
+
+  return rows.map(rowToExternalSystemConfig);
+}
+
+// 更新同步状态
+export async function updateSyncStatus(
+  id: string,
+  status: 'running' | 'success' | 'failed',
+  error?: string
+): Promise<void> {
+  const updates: string[] = ['last_sync_status = ?'];
+  const values: (string | null)[] = [status];
+
+  if (status === 'success' || status === 'failed') {
+    updates.push('last_sync_time = NOW()');
+  }
+
+  if (error !== undefined) {
+    updates.push('last_sync_error = ?');
+    values.push(error || null);
+  } else if (status === 'success') {
+    updates.push('last_sync_error = NULL');
+  }
+
+  values.push(id);
+  await pool.query(
+    `UPDATE financier_external_systems SET ${updates.join(', ')} WHERE id = ?`,
+    values
+  );
 }

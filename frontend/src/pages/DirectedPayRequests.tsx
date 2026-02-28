@@ -112,6 +112,15 @@ function DirectedPayRequestsPage() {
   const [approvalForm] = Form.useForm();
 
   const isAdmin = user?.username === "admin";
+  
+  // 用户类型判断
+  const isPlatformUser = user?.permissions?.includes("*") || 
+                         user?.orgContext?.orgType === 'platform';
+  const isFunderUser = user?.orgContext?.orgType === 'funder';
+  const isFinancierUser = user?.orgContext?.orgType === 'financier';
+  
+  // 是否有执行支付权限（平台用户或资金方用户）
+  const canExecutePayment = isPlatformUser || isFunderUser;
 
   const refresh = async () => {
     if (!token) return;
@@ -415,8 +424,8 @@ function DirectedPayRequestsPage() {
           );
         }
         
-        // 执行支付
-        if (record.status === "approved") {
+        // 执行支付 - 只有平台用户或资金方用户可以执行
+        if (record.status === "approved" && canExecutePayment) {
           actions.push(
             <Tooltip key="execute" title="执行支付">
               <Popconfirm

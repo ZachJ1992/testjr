@@ -157,6 +157,111 @@ await refresh();  // 等待刷新完成
 
 ### [日期]: [错误简述]
 
+---
+
+## 2026-01-28: 资金方访问结算仪表板报"未授权"
+
+### 错误现象
+- 资金方用户登录后访问结算仪表板页面
+- 页面弹出"未授权"错误提示
+- 页面无法正常加载数据
+
+### 错误原因
+
+**问题**：结算仪表板页面同时调用了两组 API：
+
+1. `/settlements/stats` 和 `/settlements` - 需要 `manage_settlements` 权限
+2. `/directed-pay/settlements/stats` 和 `/directed-pay/settlements` - 需要 `view_directed_pay_settlements` 权限
+
+资金方用户只有 `view_directed_pay_settlements` 权限，但页面使用 `Promise.all` 同时调用了两组 API，导致第一组 API 返回 403 未授权错误，整个请求失败。
+
+```typescript
+// 原代码 - 无条件调用所有 API
+const [generalStatsData, generalSettlementsData, dpStatsData, dpSettlementsData] = 
+  await Promise.all([
+    fetchSettlementStats(token),        // 需要 manage_settlements
+    fetchSettlements(token, ...),       // 需要 manage_settlements
+    fetchDirectedPaySettlementStats(token),  // 需要 view_directed_pay_settlements
+    fetchDirectedPaySettlements(token, ...)  // 需要 view_directed_pay_settlements
+  ]);
+```
+
+### 解决方案
+
+**修改 `frontend/src/pages/SettlementDashboard.tsx`**：
+
+1. **添加权限检查变量**：
+```typescript
+const canManageSettlements = user?.permissions?.includes("*") || 
+  user?.permissions?.includes("manage_settlements");
+const canViewDirectedPaySettlements = user?.permissions?.includes("*") || 
+  user?.permissions?.includes("manage_directed_pay_settlements") || 
+  user?.permissions?.includes("view_directed_pay_settlements");
+```
+
+2. **按权限动态调用 API**：
+```typescript
+const promises: Promise<any>[] = [];
+if (canManageSettlements) {
+  promises.push(fetchSettlementStats(token));
+  promises.push(fetchSettlements(token, { status: "pending" }));
+}
+if (canViewDirectedPaySettlements) {
+  promises.push(fetchDirectedPaySettlementStats(token));
+  promises.push(fetchDirectedPaySettlements(token, { status: "pending" }));
+}
+const results = await Promise.all(promises);
+```
+
+3. **按权限显示 UI 内容**：
+- 分类统计卡片根据权限条件渲染
+- Tabs 标签页根据权限动态生成
+
+### 经验总结
+
+- 前端页面在调用 API 前应先检查用户权限
+- 不同权限的 API 调用应该分开处理，避免一个失败导致全部失败
+- 菜单可见性和页面实际权限检查应保持一致
+- 使用条件渲染只显示用户有权限访问的内容
+
+---
+
+## 2026-01-28: 融资还款结算页面权限优化
+
+### 问题描述
+
+融资还款结算页面的"新增"功能需要调用 `fetchFinanciers` 和 `fetchContracts` API，这些 API 需要 `manage_contracts` 权限。但菜单仅要求 `manage_settlements` 权限，导致权限不匹配。
+
+### 解决方案
+
+在 `frontend/src/pages/FinancingRepaymentSettlement.tsx` 中添加权限检查：
+
+```typescript
+// 权限检查 - 新增功能需要 manage_contracts 权限
+const canAddSettlement = user?.permissions?.includes("*") || 
+  user?.permissions?.includes("manage_contracts");
+```
+
+根据权限控制"新增"按钮的显示：
+
+```typescript
+{canAddSettlement && (
+  <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenAddModal}>
+    {t("financing_repayment.add", "新增")}
+  </Button>
+)}
+```
+
+### 经验总结
+
+- 功能按钮的显示应该与其依赖的 API 权限匹配
+- 不要假设有菜单权限就一定有所有子功能的权限
+- 按钮级别的权限控制可以提供更好的用户体验
+
+---
+
+### 模板：新错误记录
+
 #### 错误现象
 - 具体表现
 - 复现步骤

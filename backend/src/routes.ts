@@ -1691,9 +1691,19 @@ router.post(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { financierId } = req.params;
-      const { systemName, systemId, apiEndpoint, apiKey, syncEnabled } = req.body ?? {};
+      const { 
+        systemName, 
+        systemId, 
+        apiEndpoint, 
+        apiKey, 
+        syncEnabled,
+        integrationType,
+        crawlerType,
+        crawlerConfig,
+        syncIntervalMinutes,
+      } = req.body ?? {};
 
-      if (!systemName || !systemId) {
+      if (!systemName) {
         sendError(res, req, 400, "error.external_systems.required_fields");
         return;
       }
@@ -1701,10 +1711,14 @@ router.post(
       const system = await createExternalSystem({
         financierId,
         systemName,
-        systemId,
+        systemId: systemId || '',  // systemId 现在是可选的
         apiEndpoint,
         apiKey,
         syncEnabled: syncEnabled ?? false,
+        integrationType: integrationType ?? 'manual',
+        crawlerType,
+        crawlerConfig,
+        syncIntervalMinutes: syncIntervalMinutes ?? 360,
       });
       res.status(201).json({ system });
     } catch (err) {
@@ -1720,7 +1734,17 @@ router.put(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { systemId } = req.params;
-      const { systemName, systemId: newSystemId, apiEndpoint, apiKey, syncEnabled } = req.body ?? {};
+      const { 
+        systemName, 
+        systemId: newSystemId, 
+        apiEndpoint, 
+        apiKey, 
+        syncEnabled,
+        integrationType,
+        crawlerType,
+        crawlerConfig,
+        syncIntervalMinutes,
+      } = req.body ?? {};
 
       const system = await updateExternalSystem(systemId, {
         systemName,
@@ -1728,6 +1752,10 @@ router.put(
         apiEndpoint,
         apiKey,
         syncEnabled,
+        integrationType,
+        crawlerType,
+        crawlerConfig,
+        syncIntervalMinutes,
       });
 
       if (!system) {
@@ -1841,7 +1869,7 @@ router.get(
   // requirePermissions("manage_waybills"), // 暂时移除权限检查
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { customerName, contractNumber, businessMode, status, startDate, endDate, waybillNumber, vehiclePlate } = req.query ?? {};
+      const { customerName, contractNumber, businessMode, status, startDate, endDate, waybillNumber, vehiclePlate, batchSource } = req.query ?? {};
       
       // 数据权限过滤：非平台用户只能看到自己组织关联的运单
       const orgContext = req.orgContext;
@@ -1872,6 +1900,7 @@ router.get(
         endDate: endDate as string,
         waybillNumber: waybillNumber as string,
         vehiclePlate: vehiclePlate as string,
+        batchSource: batchSource as string,
         customerId,
         customerIds  // 新增参数
       });

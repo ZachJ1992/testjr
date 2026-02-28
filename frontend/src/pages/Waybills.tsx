@@ -16,8 +16,10 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Col,
   DatePicker,
+  Dropdown,
   Form,
   Input,
   Modal,
@@ -38,7 +40,8 @@ import {
   FileExcelOutlined,
   SearchOutlined,
   ReloadOutlined,
-  DollarOutlined
+  DollarOutlined,
+  SettingOutlined
 } from "@ant-design/icons";
 import {
   PAYMENT_CATEGORY_TEMPLATES,
@@ -115,6 +118,8 @@ interface WaybillData {
   status?: string;
   createdAt: string;
   updatedAt: string;
+  // 融资方名称（从后端 JOIN 获取）
+  financierName?: string;
 }
 
 function WaybillsPage() {
@@ -136,9 +141,32 @@ function WaybillsPage() {
     customerName?: string;
     vehiclePlate?: string;
     batchStatus?: string;
+    batchSource?: string;
     startDate?: string;
     endDate?: string;
   }>({});
+  
+  // 获取数据来源选项（从现有数据中提取）
+  const batchSourceOptions = useMemo(() => {
+    const sources = new Set<string>();
+    waybills.forEach(w => {
+      if (w.batchSource) sources.add(w.batchSource);
+    });
+    return Array.from(sources).map(s => ({ label: s, value: s }));
+  }, [waybills]);
+
+  // 列分组可见性控制
+  const columnGroups = [
+    { key: 'summary', label: '金额汇总' },
+    { key: 'receivable', label: '应收明细' },
+    { key: 'payable', label: '应付明细' },
+    { key: 'otherFees', label: '其他费用' },
+    { key: 'basicInfo', label: '基础信息' },
+    { key: 'sourceInfo', label: '来源信息' },
+  ];
+  const [visibleGroups, setVisibleGroups] = useState<string[]>(
+    columnGroups.map(g => g.key) // 默认全部显示
+  );
   
   // 定向支付弹窗
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
@@ -481,140 +509,335 @@ function WaybillsPage() {
     return <span style={{ whiteSpace: 'nowrap' }}>{showSign && v > 0 ? '+' : ''}¥{formatted}</span>;
   };
 
-  // 表格列定义 - 金额列前置，紧凑布局
-  const columns: ColumnsType<WaybillData> = [
-    {
-      title: "批次号",
-      dataIndex: "waybillNumber",
-      width: 140,
-      fixed: 'left',
-      ellipsis: true,
-    },
-    {
-      title: "状态",
-      dataIndex: "batchStatus",
-      width: 60,
-      render: (status: string) => {
-        if (!status) return "-";
-        // 简化状态显示
-        const shortStatus = status === "10" ? "待" : status === "20" ? "运" : status === "30" ? "完" : status.slice(0, 2);
-        const colorMap: Record<string, string> = {
-          "10": "default", "20": "blue", "30": "green",
-          "已到达": "green", "已发车": "blue", "已完成": "green", "已取消": "default",
-        };
-        return <Tag color={colorMap[status] || "default"} style={{ margin: 0, padding: '0 4px' }}>{shortStatus}</Tag>;
-      }
-    },
-    // ========== 金额相关列 - 前置 ==========
-    {
-      title: "应收",
-      dataIndex: "receivableTotal",
-      width: 90,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: "应付",
-      dataIndex: "payableTotal",
-      width: 90,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: "毛利",
-      dataIndex: "profit",
-      width: 90,
-      align: 'right',
-      render: (v: number) => {
-        if (v === undefined || v === null) return "-";
-        const color = v >= 0 ? "#52c41a" : "#ff4d4f";
-        const formatted = Math.abs(v) >= 10000 
-          ? `${(v / 10000).toFixed(1)}万` 
-          : v.toLocaleString();
-        return <span style={{ color, fontWeight: 500, whiteSpace: 'nowrap' }}>¥{formatted}</span>;
+  // 格式化利润率显示
+  const formatProfitRate = (v: number | undefined | null) => {
+    if (v === undefined || v === null) return "-";
+    const color = v >= 0 ? "#52c41a" : "#ff4d4f";
+    return <span style={{ color, whiteSpace: 'nowrap' }}>{(v * 100).toFixed(0)}%</span>;
+  };
+
+  // 格式化毛利显示
+  const formatProfit = (v: number | undefined | null) => {
+    if (v === undefined || v === null) return "-";
+    const color = v >= 0 ? "#52c41a" : "#ff4d4f";
+    const formatted = Math.abs(v) >= 10000 
+      ? `${(v / 10000).toFixed(1)}万` 
+      : v.toLocaleString();
+    return <span style={{ color, fontWeight: 500, whiteSpace: 'nowrap' }}>¥{formatted}</span>;
+  };
+
+  // 表格列定义 - 使用 column group 分组，金额优先
+  // 使用 useMemo 根据 visibleGroups 动态过滤列
+  const columns: ColumnsType<WaybillData> = useMemo(() => {
+    const fixedLeftColumns: ColumnsType<WaybillData> = [
+      // ========== 固定左侧：融资方标识 + 批次号 ==========
+      {
+        title: "融资方",
+        dataIndex: "financierName",
+        width: 100,
+        fixed: 'left',
+        render: (name: string, record: WaybillData) => {
+          // 优先显示融资方名称（从后端 JOIN 获取），其次客户名称
+          const displayName = name || record.customerName;
+          if (!displayName) {
+            return <Tag color="default" style={{ margin: 0 }}>未指定</Tag>;
+          }
+          return <Tag color="blue" style={{ margin: 0 }}>{displayName}</Tag>;
+        }
       },
-    },
-    {
-      title: "利率",
-      dataIndex: "profitRate",
-      width: 55,
-      align: 'right',
-      render: (v: number) => {
-        if (v === undefined || v === null) return "-";
-        const color = v >= 0 ? "#52c41a" : "#ff4d4f";
-        return <span style={{ color, whiteSpace: 'nowrap' }}>{(v * 100).toFixed(0)}%</span>;
+      {
+        title: "批次号",
+        dataIndex: "waybillNumber",
+        width: 130,
+        fixed: 'left',
+        ellipsis: true,
       },
-    },
-    {
-      title: "油卡",
-      dataIndex: "payableOilCard",
-      width: 75,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: "ETC",
-      dataIndex: "etcFee",
-      width: 75,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    // ========== 基础信息列 ==========
-    {
-      title: "车牌",
-      dataIndex: "vehiclePlate",
-      width: 90,
-    },
-    {
-      title: "司机",
-      dataIndex: "driverName",
-      width: 70,
-      ellipsis: true,
-    },
-    {
-      title: "发站",
-      dataIndex: "departurePlace",
-      width: 80,
-      ellipsis: true,
-    },
-    {
-      title: "到站",
-      dataIndex: "arrivalPlace",
-      width: 80,
-      ellipsis: true,
-    },
-    {
-      title: "时间",
-      dataIndex: "createdTime",
-      width: 90,
-      render: (v: string, record: WaybillData) => {
-        const time = record.departureTime || v;
-        return time ? <span style={{ whiteSpace: 'nowrap' }}>{dayjs(time).format('MM-DD HH:mm')}</span> : '-';
+      {
+        title: "状态",
+        dataIndex: "batchStatus",
+        width: 60,
+        render: (status: string) => {
+          if (!status) return "-";
+          const shortStatus = status === "10" ? "待" : status === "20" ? "运" : status === "30" ? "完" : status.slice(0, 2);
+          const colorMap: Record<string, string> = {
+            "10": "default", "20": "blue", "30": "green",
+            "已到达": "green", "已发车": "blue", "已完成": "green", "已取消": "default",
+          };
+          return <Tag color={colorMap[status] || "default"} style={{ margin: 0, padding: '0 4px' }}>{shortStatus}</Tag>;
+        }
       },
-    },
-    {
-      title: "客户",
-      dataIndex: "customerName",
-      width: 80,
-      ellipsis: true,
-    },
-    {
-      title: "来源",
-      dataIndex: "batchSource",
-      width: 50,
-      ellipsis: true,
-    },
-    {
-      title: "备注",
-      dataIndex: "remark",
-      width: 100,
-      ellipsis: true,
-    },
-    {
+    ];
+
+    // 金额汇总组
+    const summaryGroup = {
+      key: 'summary',
+      title: "金额汇总",
+      children: [
+        {
+          title: "应收合计",
+          dataIndex: "receivableTotal",
+          width: 90,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "应付合计",
+          dataIndex: "payableTotal",
+          width: 90,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "毛利",
+          dataIndex: "profit",
+          width: 85,
+          align: 'right' as const,
+          render: (v: number) => formatProfit(v),
+        },
+        {
+          title: "利率",
+          dataIndex: "profitRate",
+          width: 55,
+          align: 'right' as const,
+          render: (v: number) => formatProfitRate(v),
+        },
+      ]
+    };
+
+    // 应收明细组
+    const receivableGroup = {
+      key: 'receivable',
+      title: "应收明细",
+      children: [
+        {
+          title: "运输费",
+          dataIndex: "receivableTransport",
+          width: 80,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "点位费",
+          dataIndex: "receivablePointFee",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "上楼费",
+          dataIndex: "receivableUpstairsFee",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "装卸费",
+          dataIndex: "receivableLoadingFee",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "现付",
+          dataIndex: "receivableCash",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "到付",
+          dataIndex: "receivableCollect",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "回付",
+          dataIndex: "receivableReturn",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "其它",
+          dataIndex: "receivableOther",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+      ]
+    };
+
+    // 应付明细组
+    const payableGroup = {
+      key: 'payable',
+      title: "应付明细",
+      children: [
+        {
+          title: "现付",
+          dataIndex: "payableCash",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "到付",
+          dataIndex: "payableCollect",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "油卡",
+          dataIndex: "payableOilCard",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "回付",
+          dataIndex: "payableReturn",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "拼车费",
+          dataIndex: "carpoolFee",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "外调车",
+          dataIndex: "externalVehicleFee",
+          width: 75,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "ETC",
+          dataIndex: "etcFee",
+          width: 70,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+      ]
+    };
+
+    // 其他费用组
+    const otherFeesGroup = {
+      key: 'otherFees',
+      title: "其他费用",
+      children: [
+        {
+          title: "月度分摊",
+          dataIndex: "monthlyCost",
+          width: 80,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "主驾计件",
+          dataIndex: "driverPieceRate",
+          width: 80,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+        {
+          title: "副驾计件",
+          dataIndex: "coDriverPieceRate",
+          width: 80,
+          align: 'right' as const,
+          render: (v: number) => formatMoney(v),
+        },
+      ]
+    };
+    // 基础信息组
+    const basicInfoGroup = {
+      key: 'basicInfo',
+      title: "基础信息",
+      children: [
+        {
+          title: "车牌",
+          dataIndex: "vehiclePlate",
+          width: 90,
+          ellipsis: true,
+          render: (v: string) => v || "-",
+        },
+        {
+          title: "司机",
+          dataIndex: "driverName",
+          width: 70,
+          ellipsis: true,
+          render: (v: string) => v || "-",
+        },
+        {
+          title: "发站",
+          dataIndex: "departurePlace",
+          width: 80,
+          ellipsis: true,
+          render: (v: string) => v || "-",
+        },
+        {
+          title: "到站",
+          dataIndex: "arrivalPlace",
+          width: 80,
+          ellipsis: true,
+          render: (v: string) => v || "-",
+        },
+        {
+          title: "发车时间",
+          dataIndex: "waybillDate",
+          width: 100,
+          sorter: (a: WaybillData, b: WaybillData) => {
+            const ta = a.waybillDate || a.departureTime || '';
+            const tb = b.waybillDate || b.departureTime || '';
+            return ta.localeCompare(tb);
+          },
+          render: (_: string, record: WaybillData) => {
+            const time = record.waybillDate || record.departureTime || (record as any).createdTime;
+            return time ? <span style={{ whiteSpace: 'nowrap' }}>{dayjs(time).format('YY-MM-DD')}</span> : '-';
+          },
+        },
+      ]
+    };
+
+    // 来源信息组
+    const sourceInfoGroup = {
+      key: 'sourceInfo',
+      title: "来源信息",
+      children: [
+        {
+          title: "数据来源",
+          dataIndex: "batchSource",
+          width: 80,
+          ellipsis: true,
+          render: (v: string) => v ? <Tag color="cyan" style={{ margin: 0 }}>{v}</Tag> : "-",
+        },
+        {
+          title: "项目名称",
+          dataIndex: "projectName",
+          width: 100,
+          ellipsis: true,
+          render: (v: string) => v || "-",
+        },
+        {
+          title: "备注",
+          dataIndex: "remark",
+          width: 100,
+          ellipsis: true,
+          render: (v: string) => v || "-",
+        },
+      ]
+    };
+
+    // 固定右侧操作列
+    const actionColumn = {
       title: "操作",
       width: 130,
-      fixed: 'right',
-      render: (_, record) => (
+      fixed: 'right' as const,
+      render: (_: any, record: WaybillData) => (
         <Space size={0}>
           <Button
             type="link"
@@ -634,8 +857,29 @@ function WaybillsPage() {
           </Button>
         </Space>
       )
-    }
-  ];
+    };
+
+    // 所有可配置的列组
+    const allColumnGroups = [
+      { key: 'summary', column: summaryGroup },
+      { key: 'receivable', column: receivableGroup },
+      { key: 'payable', column: payableGroup },
+      { key: 'otherFees', column: otherFeesGroup },
+      { key: 'basicInfo', column: basicInfoGroup },
+      { key: 'sourceInfo', column: sourceInfoGroup },
+    ];
+
+    // 根据 visibleGroups 过滤列
+    const visibleColumnGroups = allColumnGroups
+      .filter(g => visibleGroups.includes(g.key))
+      .map(g => g.column);
+
+    return [
+      ...fixedLeftColumns,
+      ...visibleColumnGroups,
+      actionColumn,
+    ] as ColumnsType<WaybillData>;
+  }, [visibleGroups]);
 
   return (
     <div style={{ padding: 16 }}>
@@ -718,6 +962,15 @@ function WaybillsPage() {
               onChange={(value) => setFilters(prev => ({ ...prev, batchStatus: value }))}
             />
           </Form.Item>
+          <Form.Item label="数据来源">
+            <Select
+              style={{ width: 120 }}
+              placeholder="全部来源"
+              allowClear
+              options={batchSourceOptions}
+              onChange={(value) => setFilters(prev => ({ ...prev, batchSource: value }))}
+            />
+          </Form.Item>
           <Form.Item label="日期范围">
             <RangePicker
               onChange={(dates) => {
@@ -770,16 +1023,58 @@ function WaybillsPage() {
         >
           下载模板
         </Button>
+        <Dropdown
+          trigger={['click']}
+          dropdownRender={() => (
+            <div style={{ 
+              background: '#fff', 
+              borderRadius: 8, 
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              padding: '8px 0'
+            }}>
+              <div style={{ padding: '4px 12px', color: '#999', fontSize: 12 }}>显示列组</div>
+              {columnGroups.map(group => (
+                <div 
+                  key={group.key} 
+                  style={{ padding: '6px 12px', cursor: 'pointer' }}
+                  onClick={() => {
+                    setVisibleGroups(prev => 
+                      prev.includes(group.key) 
+                        ? prev.filter(k => k !== group.key) 
+                        : [...prev, group.key]
+                    );
+                  }}
+                >
+                  <Checkbox checked={visibleGroups.includes(group.key)}>
+                    {group.label}
+                  </Checkbox>
+                </div>
+              ))}
+              <div style={{ borderTop: '1px solid #f0f0f0', marginTop: 4, paddingTop: 4 }}>
+                <div 
+                  style={{ padding: '6px 12px', cursor: 'pointer', color: '#1890ff' }}
+                  onClick={() => setVisibleGroups(columnGroups.map(g => g.key))}
+                >
+                  全部显示
+                </div>
+              </div>
+            </div>
+          )}
+        >
+          <Button icon={<SettingOutlined />}>
+            列配置
+          </Button>
+        </Dropdown>
       </Space>
 
-      {/* 数据表格 */}
+      {/* 数据表格 - 支持横向滚动查看更多金额字段 */}
       <Table<WaybillData>
         rowKey="id"
         loading={loading}
         dataSource={waybills}
         columns={columns}
         pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
-        scroll={{ x: 1400 }}
+        scroll={{ x: 2800 }}
         size="small"
         bordered
       />

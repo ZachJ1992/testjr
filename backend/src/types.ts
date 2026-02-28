@@ -229,15 +229,33 @@ export interface Funder {
 // 融资方相关类型（枚举已从共享文件导入）
 
 // 外部系统配置
+// 集成类型：爬虫、API、手动
+export type IntegrationType = 'crawler' | 'api' | 'manual';
+
+// 爬虫配置参数（存储在 crawler_config JSON 字段中）
+export interface CrawlerConfigParams {
+  loginUrl?: string;       // 登录地址
+  companyId?: string;      // 公司ID
+  username?: string;       // 用户名
+  password?: string;       // 密码
+  [key: string]: any;      // 其他自定义参数
+}
+
 export interface ExternalSystemConfig {
   id: string;
-  financierId: string;     // 融资方ID
-  systemName: string;      // 外部系统名称
-  systemId: string;        // 在外部系统中的ID
-  apiEndpoint?: string;    // API地址（可选）
-  apiKey?: string;         // API密钥（可选）
-  syncEnabled: boolean;    // 是否启用同步
-  lastSyncTime?: string;   // 最后同步时间
+  financierId: string;           // 融资方ID
+  systemName: string;            // 外部系统名称
+  systemId: string;              // 在外部系统中的ID
+  apiEndpoint?: string;          // API地址（可选）
+  apiKey?: string;               // API密钥（可选）
+  syncEnabled: boolean;          // 是否启用同步
+  lastSyncTime?: string;         // 最后同步时间
+  integrationType: IntegrationType; // 集成类型：crawler/api/manual
+  crawlerType?: string;          // 爬虫模板ID（当 integrationType='crawler' 时使用）
+  crawlerConfig?: CrawlerConfigParams; // 爬虫配置参数
+  syncIntervalMinutes: number;   // 同步间隔（分钟）
+  lastSyncStatus?: string;       // 上次同步状态：success/failed/running
+  lastSyncError?: string;        // 上次同步错误信息
   createdAt: string;
   updatedAt: string;
 }

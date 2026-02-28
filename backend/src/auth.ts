@@ -94,6 +94,13 @@ export function requirePermissions(required: Permission | Permission[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const lang = req.lang || getLangFromRequest(req);
     const userPermissions = req.currentPermissions ?? [];
+    
+    // 超级管理员（拥有 * 权限）可以访问任何资源
+    if (userPermissions.includes("*")) {
+      next();
+      return;
+    }
+    
     const hasAll = requiredList.every((perm) => userPermissions.includes(perm));
 
     if (!hasAll) {
@@ -113,6 +120,13 @@ export function requireAnyPermission(required: Permission[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const lang = req.lang || getLangFromRequest(req);
     const userPermissions = req.currentPermissions ?? [];
+    
+    // 超级管理员（拥有 * 权限）可以访问任何资源
+    if (userPermissions.includes("*")) {
+      next();
+      return;
+    }
+    
     const hasAny = required.some((perm) => userPermissions.includes(perm));
 
     if (!hasAny) {

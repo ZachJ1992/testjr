@@ -2,17 +2,21 @@
  * 爬虫调度器 - 定时执行同步任务
  * 
  * 功能：
- * 1. 定时检查需要执行的同步任务
- * 2. 文件锁机制防止并发执行
- * 3. 优雅关闭处理
+ * 1. 从 financier_external_systems 表读取爬虫配置
+ * 2. 根据 crawler_type 选择对应模板执行
+ * 3. 文件锁机制防止并发执行
+ * 4. 优雅关闭处理
  */
 
 import fs from 'fs';
-import path from 'path';
-import os from 'os';
-import { getCrawlerConfigs, updateCrawlerConfig } from './crawler-store.js';
-import { syncWithPuppeteer, cleanupOldTempDirectories } from './puppeteer-crawler.js';
-import type { CrawlerConfig } from './crawler-types.js';
+import { getActiveCrawlerConfigs, updateSyncStatus } from '../external-systems-store.js';
+import { getCrawlerTemplate } from './crawler-templates.js';
+import { runCrawlerWithTemplate, cleanupStaleCrawlerProcesses } from './crawler-engine.js';
+import { cleanupOldTempDirectories } from './puppeteer-crawler.js';
+import type { ExternalSystemConfig } from '../types.js';
+
+// 加载所有模板
+import './templates/index.js';
 
 // 锁文件路径
 const LOCK_FILE = '/tmp/crawler-scheduler.lock';
@@ -110,8 +114,10 @@ function releaseLock(): void {
 /**
  * 检查配置是否需要同步
  */
-function shouldSync(config: CrawlerConfig): boolean {
-  if (!config.enabled) return false;
+function shouldSync(config: ExternalSystemConfig): boolean {
+  if (!config.syncEnabled) return false;
+  if (config.integrationType !== 'crawler') return false;
+  if (!config.crawlerType) return false;
   
   const now = new Date();
   const lastSync = config.lastSyncTime ? new Date(config.lastSyncTime) : null;
@@ -122,7 +128,7 @@ function shouldSync(config: CrawlerConfig): boolean {
   }
   
   // 检查是否超过同步间隔（默认6小时）
-  const syncIntervalMs = (config.syncInterval || 360) * 60 * 1000;
+  const syncIntervalMs = (config.syncIntervalMinutes || 360) * 60 * 1000;
   const timeSinceLastSync = now.getTime() - lastSync.getTime();
   
   return timeSinceLastSync >= syncIntervalMs;
@@ -131,25 +137,41 @@ function shouldSync(config: CrawlerConfig): boolean {
 /**
  * 执行同步任务
  */
-async function executeSyncTask(config: CrawlerConfig): Promise<void> {
-  console.log(`[Scheduler] 开始执行同步任务: ${config.name}`);
+async function executeSyncTask(config: ExternalSystemConfig): Promise<void> {
+  const configName = `${config.systemName}(${config.crawlerType})`;
+  console.log(`[Scheduler] 开始执行同步任务: ${configName}`);
+  
+  // 获取模板
+  const template = getCrawlerTemplate(config.crawlerType!);
+  if (!template) {
+    console.error(`[Scheduler] 未找到爬虫模板: ${config.crawlerType}`);
+    await updateSyncStatus(config.id, 'failed', `未找到爬虫模板: ${config.crawlerType}`);
+    return;
+  }
   
   try {
-    // 执行同步（增加到150页以覆盖6个月数据）
-    const result = await syncWithPuppeteer(config.id, 150);
+    // 更新状态为运行中
+    await updateSyncStatus(config.id, 'running');
+    
+    // 执行同步
+    const result = await runCrawlerWithTemplate(config, template, 150);
     
     if (state.isShuttingDown) {
-      console.log(`[Scheduler] 进程正在关闭，任务中断: ${config.name}`);
+      console.log(`[Scheduler] 进程正在关闭，任务中断: ${configName}`);
+      await updateSyncStatus(config.id, 'failed', '进程关闭，任务中断');
       return;
     }
     
     if (result.success) {
-      console.log(`[Scheduler] 同步任务完成: ${config.name}，新增 ${result.newCount} 条，跳过 ${result.skippedCount} 条`);
+      console.log(`[Scheduler] 同步任务完成: ${configName}，新增 ${result.newCount} 条，更新 ${result.updatedCount} 条，跳过 ${result.skippedCount} 条`);
+      await updateSyncStatus(config.id, 'success');
     } else {
-      console.log(`[Scheduler] 同步任务失败: ${config.name}，错误: ${result.errors.join(', ')}`);
+      console.log(`[Scheduler] 同步任务失败: ${configName}，错误: ${result.error}`);
+      await updateSyncStatus(config.id, 'failed', result.error);
     }
   } catch (error: any) {
-    console.error(`[Scheduler] 同步任务异常: ${config.name}，${error.message}`);
+    console.error(`[Scheduler] 同步任务异常: ${configName}，${error.message}`);
+    await updateSyncStatus(config.id, 'failed', error.message);
   }
 }
 
@@ -171,8 +193,11 @@ async function checkAndExecuteTasks(): Promise<void> {
   }
   
   try {
-    const configs = await getCrawlerConfigs();
-    const tasksToRun: CrawlerConfig[] = [];
+    // 从 financier_external_systems 表获取启用的爬虫配置
+    const configs = await getActiveCrawlerConfigs();
+    const tasksToRun: ExternalSystemConfig[] = [];
+    
+    console.log(`[Scheduler] 发现 ${configs.length} 个爬虫配置`);
     
     for (const config of configs) {
       if (shouldSync(config)) {
@@ -180,7 +205,7 @@ async function checkAndExecuteTasks(): Promise<void> {
         const minutesSinceLastSync = lastSync 
           ? Math.floor((Date.now() - lastSync.getTime()) / 60000) 
           : Infinity;
-        console.log(`[Scheduler] 配置 ${config.name} 距上次同步已过 ${minutesSinceLastSync.toFixed(1)} 分钟，需要执行`);
+        console.log(`[Scheduler] 配置 ${config.systemName}(${config.crawlerType}) 距上次同步已过 ${minutesSinceLastSync} 分钟，需要执行`);
         tasksToRun.push(config);
       }
     }
@@ -219,8 +244,9 @@ export function startScheduler(intervalMs: number = DEFAULT_CHECK_INTERVAL): voi
   
   console.log(`[Scheduler] 启动调度器，检查间隔: ${intervalMs / 1000} 秒`);
   
-  // 清理旧的临时目录
+  // 清理旧的临时目录和残留进程
   cleanupOldTempDirectories();
+  cleanupStaleCrawlerProcesses();
   
   // 延迟5秒后首次检查
   setTimeout(() => {

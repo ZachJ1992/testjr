@@ -1,4 +1,4 @@
-import { Investment, InvestmentStats, InvestmentStatus, OrgUnit, PermissionNode, SafeUser, UserGroupDetail, Supervision, SupervisionStats, SupervisionStatus, SupervisionType, ContractCommission, CommissionStats, CommissionStatus, Contract, ContractType, Funder, FunderType, FunderStatus, Financier, FinancierScale, FinancierStatus, FundPoolMonitoring, SystemParameters, Waybill, WaybillStats, WaybillStatus, BusinessMode, ExternalSystemConfig, DirectedPaymentRequest, PaymentRequestStatus, PaymentRequestStats, ReceiverType, CrawlerConfig, CrawlerSyncLog, CrawlerTestResult, CrawlerSyncResult } from "./types";
+import { Investment, InvestmentStats, InvestmentStatus, OrgUnit, PermissionNode, SafeUser, UserGroupDetail, Supervision, SupervisionStats, SupervisionStatus, SupervisionType, ContractCommission, CommissionStats, CommissionStatus, Contract, ContractType, Funder, FunderType, FunderStatus, Financier, FinancierScale, FinancierStatus, FundPoolMonitoring, SystemParameters, Waybill, WaybillStats, WaybillStatus, BusinessMode, ExternalSystemConfig, DirectedPaymentRequest, PaymentRequestStatus, PaymentRequestStats, ReceiverType, CrawlerConfig, CrawlerSyncLog, CrawlerTestResult, CrawlerSyncResult, CrawlerTemplateMeta } from "./types";
 
 // 自动检测后端地址：如果是本地访问用localhost，否则用当前主机名
 export const getApiBase = () => {
@@ -1063,6 +1063,10 @@ export async function createExternalSystemApi(
     apiEndpoint?: string;
     apiKey?: string;
     syncEnabled?: boolean;
+    integrationType?: 'crawler' | 'api' | 'manual';
+    crawlerType?: string;
+    crawlerConfig?: Record<string, any>;
+    syncIntervalMinutes?: number;
   }
 ): Promise<{ system: ExternalSystemConfig }> {
   return request(`/financiers/${financierId}/external-systems`, {
@@ -1082,12 +1086,47 @@ export async function updateExternalSystemApi(
     apiEndpoint?: string;
     apiKey?: string;
     syncEnabled?: boolean;
+    integrationType?: 'crawler' | 'api' | 'manual';
+    crawlerType?: string;
+    crawlerConfig?: Record<string, any>;
+    syncIntervalMinutes?: number;
   }
 ): Promise<{ system: ExternalSystemConfig }> {
   return request(`/financiers/${financierId}/external-systems/${systemId}`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload)
+  });
+}
+
+// Crawler Template APIs
+export async function fetchCrawlerTemplates(
+  token: string
+): Promise<CrawlerTemplateMeta[]> {
+  return request("/crawler-templates", {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+// Trigger sync for external system
+export async function triggerExternalSystemSync(
+  token: string,
+  externalSystemId: string
+): Promise<{ success: boolean; message: string }> {
+  return request(`/external-systems/${externalSystemId}/sync`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+// Test connection for external system
+export async function testExternalSystemConnection(
+  token: string,
+  externalSystemId: string
+): Promise<{ success: boolean; message: string }> {
+  return request(`/external-systems/${externalSystemId}/test-connection`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }
   });
 }
 

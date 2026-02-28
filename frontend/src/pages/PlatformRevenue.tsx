@@ -40,9 +40,9 @@ const PlatformRevenue: React.FC = () => {
   const { token } = useAuth();
   
   // 状态
-  const [timeRange, setTimeRange] = useState<TimeRange>('month');
+  const [timeRange, setTimeRange] = useState<TimeRange>('year');
   const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null);
-  const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month' | 'year'>('day');
+  const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month' | 'year'>('month');
   
   const [stats, setStats] = useState<RevenueStats | null>(null);
   const [trend, setTrend] = useState<RevenueTrendPoint[]>([]);
@@ -145,79 +145,122 @@ const PlatformRevenue: React.FC = () => {
 
   // 初始化趋势图 - 只显示总收益
   useEffect(() => {
-    if (!trendChartRef.current || trend.length === 0) return;
+    if (!trendChartRef.current) return;
     
-    if (!trendChartInstance.current) {
-      trendChartInstance.current = echarts.init(trendChartRef.current);
+    // 获取或创建实例
+    let chart = echarts.getInstanceByDom(trendChartRef.current);
+    if (!chart) {
+      chart = echarts.init(trendChartRef.current);
+    }
+    trendChartInstance.current = chart;
+    
+    // 数据为空时清除图表
+    if (trend.length === 0) {
+      chart.clear();
+      return;
     }
     
-    trendChartInstance.current.setOption({
-      tooltip: { 
-        trigger: 'axis',
-        formatter: (params: any) => {
-          const date = params[0]?.axisValue || '';
-          let result = `${date}<br/>`;
-          params.forEach((p: any) => {
-            result += `${p.marker} ${p.seriesName}: ¥${p.value?.toLocaleString() || 0}<br/>`;
-          });
-          return result;
-        }
-      },
-      legend: { data: ['收益金额'], bottom: 0 },
-      grid: { left: '3%', right: '4%', bottom: '15%', top: '10%', containLabel: true },
-      xAxis: { type: 'category', data: trend.map(t => t.date), boundaryGap: false },
-      yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `¥${(v / 1000).toFixed(0)}k` } },
-      series: [
-        { 
-          name: '收益金额', 
-          type: 'line', 
-          data: trend.map(t => t.amount), 
-          smooth: true, 
-          areaStyle: { opacity: 0.3 },
-          itemStyle: { color: '#1890ff' },
+    // 延迟执行以确保容器已可见（从 display:none 变为 display:block）
+    const timer = setTimeout(() => {
+      if (!trendChartInstance.current) return;
+      
+      // 确保尺寸正确
+      trendChartInstance.current.resize();
+    
+      // 使用 notMerge: true 强制完全刷新图表
+      trendChartInstance.current.setOption({
+        tooltip: { 
+          trigger: 'axis',
+          formatter: (params: any) => {
+            const date = params[0]?.axisValue || '';
+            let result = `${date}<br/>`;
+            params.forEach((p: any) => {
+              result += `${p.marker} ${p.seriesName}: ¥${p.value?.toLocaleString() || 0}<br/>`;
+            });
+            return result;
+          }
         },
-      ],
-    });
+        legend: { data: ['收益金额'], bottom: 0 },
+        grid: { left: '3%', right: '4%', bottom: '15%', top: '10%', containLabel: true },
+        xAxis: { type: 'category', data: trend.map(t => t.date), boundaryGap: false },
+        yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `¥${(v / 1000).toFixed(0)}k` } },
+        series: [
+          { 
+            name: '收益金额', 
+            type: 'line', 
+            data: trend.map(t => t.amount), 
+            smooth: true, 
+            areaStyle: { opacity: 0.3 },
+            itemStyle: { color: '#1890ff' },
+          },
+        ],
+      }, { notMerge: true });
+    }, 50);
 
     const handleResize = () => trendChartInstance.current?.resize();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleResize);
+    };
   }, [trend]);
 
   // 初始化饼图
   useEffect(() => {
-    if (!compositionChartRef.current || composition.length === 0) return;
+    if (!compositionChartRef.current) return;
     
-    if (!compositionChartInstance.current) {
-      compositionChartInstance.current = echarts.init(compositionChartRef.current);
+    // 获取或创建实例
+    let chart = echarts.getInstanceByDom(compositionChartRef.current);
+    if (!chart) {
+      chart = echarts.init(compositionChartRef.current);
     }
+    compositionChartInstance.current = chart;
     
-    compositionChartInstance.current.setOption({
-      tooltip: { 
-        trigger: 'item', 
-        formatter: (params: any) => `${params.name}: ¥${params.value?.toLocaleString() || 0} (${params.percent}%)`
-      },
-      legend: { bottom: 0, type: 'scroll' },
-      series: [{
-        type: 'pie',
-        radius: ['40%', '70%'],
-        center: ['50%', '45%'],
-        avoidLabelOverlap: true,
-        label: { show: false },
-        emphasis: {
-          label: { show: true, fontSize: 14, fontWeight: 'bold' }
+    // 数据为空时清除图表
+    if (composition.length === 0) {
+      chart.clear();
+      return;
+    }
+  
+    // 延迟执行以确保容器已可见
+    const timer = setTimeout(() => {
+      if (!compositionChartInstance.current) return;
+      
+      compositionChartInstance.current.resize();
+      
+      // 使用 notMerge: true 强制完全刷新图表
+      compositionChartInstance.current.setOption({
+        tooltip: { 
+          trigger: 'item', 
+          formatter: (params: any) => `${params.name}: ¥${params.value?.toLocaleString() || 0} (${params.percent}%)`
         },
-        data: composition.map(c => ({ 
-          name: c.sourceName || SOURCE_TYPE_MAP[c.sourceType] || c.sourceType, 
-          value: c.amount 
-        })),
-      }],
-      color: ['#1890ff', '#52c41a', '#faad14', '#f5222d'],
-    });
+        legend: { bottom: 0, type: 'scroll' },
+        series: [{
+          type: 'pie',
+          radius: ['40%', '70%'],
+          center: ['50%', '45%'],
+          avoidLabelOverlap: true,
+          label: { show: false },
+          emphasis: {
+            label: { show: true, fontSize: 14, fontWeight: 'bold' }
+          },
+          data: composition.map(c => ({ 
+            name: c.sourceName || SOURCE_TYPE_MAP[c.sourceType] || c.sourceType, 
+            value: c.amount 
+          })),
+        }],
+        color: ['#1890ff', '#52c41a', '#faad14', '#f5222d'],
+      }, { notMerge: true });
+    }, 50);
 
     const handleResize = () => compositionChartInstance.current?.resize();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleResize);
+    };
   }, [composition]);
 
   // 销毁图表
@@ -397,20 +440,18 @@ const PlatformRevenue: React.FC = () => {
                 </Select>
               }
             >
-              {trend.length > 0 ? (
-                <div ref={trendChartRef} style={{ height: 300 }} />
-              ) : (
-                <Empty description="暂无趋势数据" style={{ height: 300, paddingTop: 100 }} />
-              )}
+              <div style={{ height: 300, position: 'relative' }}>
+                <div ref={trendChartRef} style={{ height: '100%', display: trend.length > 0 ? 'block' : 'none' }} />
+                {trend.length === 0 && <Empty description="暂无趋势数据" style={{ paddingTop: 100 }} />}
+              </div>
             </Card>
           </Col>
           <Col span={10}>
             <Card title="收益构成">
-              {composition.length > 0 ? (
-                <div ref={compositionChartRef} style={{ height: 300 }} />
-              ) : (
-                <Empty description="暂无构成数据" style={{ height: 300, paddingTop: 100 }} />
-              )}
+              <div style={{ height: 300, position: 'relative' }}>
+                <div ref={compositionChartRef} style={{ height: '100%', display: composition.length > 0 ? 'block' : 'none' }} />
+                {composition.length === 0 && <Empty description="暂无构成数据" style={{ paddingTop: 100 }} />}
+              </div>
             </Card>
           </Col>
         </Row>

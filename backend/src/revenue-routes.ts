@@ -628,16 +628,44 @@ router.get(
 
 // ==================== 管理接口 ====================
 
-// 手动触发收益计算 (仅admin)
+// 手动触发收益计算 (仅平台管理员)
 router.post(
   "/revenue/calculate",
   authenticate,
-  requirePermissions("admin"),
+  requirePermissions("revenue_management"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { date } = req.body ?? {};
       const result = await calculateDailyRevenue(date);
       res.json({ success: true, ...result });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+// 清理并重新计算指定日期的收益（仅平台管理员）
+router.post(
+  "/revenue/recalculate",
+  authenticate,
+  requirePermissions("revenue_management"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { date } = req.body ?? {};
+      if (!date) {
+        return sendError(res, 400, "日期参数必填");
+      }
+      
+      // 删除指定日期的融资利息和定向支付利息记录
+      const { pool } = await import("./db.js");
+      await pool.query(
+        `DELETE FROM revenue_records WHERE revenue_date = ? AND source_type IN ('financing_interest', 'directed_pay_interest')`,
+        [date]
+      );
+      
+      // 重新计算
+      const result = await calculateDailyRevenue(date);
+      res.json({ success: true, message: `已清理并重新计算 ${date} 的收益`, ...result });
     } catch (err) {
       handleError(res, req, 500, err);
     }

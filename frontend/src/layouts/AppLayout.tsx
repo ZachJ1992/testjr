@@ -66,7 +66,7 @@ import FunderRevenuePage from "../pages/FunderRevenue";
 import FinancierExpensePage from "../pages/FinancierExpense";
 import SettlementDashboardPage from "../pages/SettlementDashboard";
 
-const { Header, Sider, Content } = Layout;
+const { Header, Sider, Content, Footer } = Layout;
 
 // 辅助函数：检查用户是否有指定权限（支持 * 通配符）
 function hasPermission(permissions: string[] | undefined, permissionCode: string): boolean {
@@ -256,9 +256,15 @@ function AppLayout() {
            label: <Link to="/fund-income-settlement">{t("menu.fund_income_settlement", "资金收益结算")}</Link>
          });
        }
-       // 定向支付结算菜单
-       if (user?.permissions?.includes("manage_directed_pay_settlements") || 
-           user?.permissions?.includes("view_directed_pay_settlements")) {
+       // 定向支付结算菜单 - 平台用户和资金方可见，融资方不可见
+       const canViewDirectedPaySettlements = 
+         user?.permissions?.includes("*") ||
+         user?.permissions?.includes("manage_directed_pay_settlements") || 
+         user?.permissions?.includes("view_directed_pay_settlements") ||
+         user?.orgContext?.orgType === 'platform' ||
+         user?.orgContext?.orgType === 'funder';
+       
+       if (canViewDirectedPaySettlements) {
          settlementChildren.push({
            key: "/directed-pay-settlements",
            label: <Link to="/directed-pay-settlements">{t("menu.directed_pay_settlements", "定向支付结算")}</Link>
@@ -638,9 +644,15 @@ function AppLayout() {
       });
     }
 
-    // 定向支付结算页面
-    if (user?.permissions?.includes("manage_directed_pay_settlements") ||
-        user?.permissions?.includes("view_directed_pay_settlements")) {
+    // 定向支付结算页面 - 平台用户和资金方可见，融资方不可见
+    const canViewDirectedPaySettlementsTab = 
+      user?.permissions?.includes("*") ||
+      user?.permissions?.includes("manage_directed_pay_settlements") || 
+      user?.permissions?.includes("view_directed_pay_settlements") ||
+      user?.orgContext?.orgType === 'platform' ||
+      user?.orgContext?.orgType === 'funder';
+    
+    if (canViewDirectedPaySettlementsTab) {
       configs.push({
         key: "/directed-pay-settlements",
         path: "/directed-pay-settlements",
@@ -755,11 +767,9 @@ function AppLayout() {
         >
           <div
             style={{
-              height: 56,
-              margin: "12px 12px 8px 12px",
-              background: `linear-gradient(135deg, ${designColors.primary} 0%, ${designColors.primaryActive} 100%)`,
-              borderRadius: 8,
-              color: "#fff",
+              height: 48,
+              margin: 12,
+              color: "rgba(255, 255, 255, 0.9)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -767,7 +777,6 @@ function AppLayout() {
               fontSize: collapsed ? 16 : 18,
               flexShrink: 0,
               letterSpacing: collapsed ? 0 : 2,
-              boxShadow: "0 2px 8px rgba(8, 145, 178, 0.3)",
               transition: "all 0.2s ease",
             }}
           >
@@ -854,6 +863,17 @@ function AppLayout() {
           </div>
           <AIDrawerComponent {...ai} />
         </Content>
+        {/* 页脚版权信息 */}
+        <Footer style={{ 
+          textAlign: "center", 
+          padding: "12px 24px",
+          background: "transparent",
+          color: "#CBD5E1",
+          fontSize: 12,
+          flexShrink: 0
+        }}>
+          Copyright © 2024-{new Date().getFullYear()} 北京登途云物流科技有限公司. All Rights Reserved.
+        </Footer>
       </Layout>
       <Modal
         title={t("users.change_password", "修改密码")}

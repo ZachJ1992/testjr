@@ -75,6 +75,12 @@ function SettlementDashboardPage() {
   const [dpStats, setDpStats] = useState<DirectedPaySettlementStats | null>(null);
   const [dpSettlements, setDpSettlements] = useState<DirectedPaySettlement[]>([]);
   
+  // 权限检查
+  const canManageSettlements = user?.permissions?.includes("*") || user?.permissions?.includes("manage_settlements");
+  const canViewDirectedPaySettlements = user?.permissions?.includes("*") || 
+    user?.permissions?.includes("manage_directed_pay_settlements") || 
+    user?.permissions?.includes("view_directed_pay_settlements");
+
   // 加载数据
   const loadData = useCallback(async () => {
     const token = getToken();
@@ -82,28 +88,44 @@ function SettlementDashboardPage() {
     
     setLoading(true);
     try {
-      const [
-        generalStatsData,
-        generalSettlementsData,
-        dpStatsData,
-        dpSettlementsData
-      ] = await Promise.all([
-        fetchSettlementStats(token),
-        fetchSettlements(token, { status: "pending" }),
-        fetchDirectedPaySettlementStats(token),
-        fetchDirectedPaySettlements(token, { status: "pending" })
-      ]);
+      // 根据权限决定调用哪些 API
+      const promises: Promise<any>[] = [];
+      const promiseLabels: string[] = [];
+
+      if (canManageSettlements) {
+        promises.push(fetchSettlementStats(token));
+        promiseLabels.push("generalStats");
+        promises.push(fetchSettlements(token, { status: "pending" }));
+        promiseLabels.push("generalSettlements");
+      }
+
+      if (canViewDirectedPaySettlements) {
+        promises.push(fetchDirectedPaySettlementStats(token));
+        promiseLabels.push("dpStats");
+        promises.push(fetchDirectedPaySettlements(token, { status: "pending" }));
+        promiseLabels.push("dpSettlements");
+      }
+
+      const results = await Promise.all(promises);
       
-      setGeneralStats(generalStatsData);
-      setGeneralSettlements(generalSettlementsData.settlements);
-      setDpStats(dpStatsData);
-      setDpSettlements(dpSettlementsData.settlements);
+      // 根据返回结果设置状态
+      promiseLabels.forEach((label, index) => {
+        if (label === "generalStats") {
+          setGeneralStats(results[index]);
+        } else if (label === "generalSettlements") {
+          setGeneralSettlements(results[index].settlements);
+        } else if (label === "dpStats") {
+          setDpStats(results[index]);
+        } else if (label === "dpSettlements") {
+          setDpSettlements(results[index].settlements);
+        }
+      });
     } catch (err) {
       message.error(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canManageSettlements, canViewDirectedPaySettlements]);
 
   useEffect(() => {
     loadData();
@@ -276,9 +298,8 @@ function SettlementDashboardPage() {
     }
   ];
 
-  // 权限检查
-  if (!user?.permissions?.includes("manage_settlements") && 
-      !user?.permissions?.includes("view_directed_pay_settlements")) {
+  // 权限检查 - 使用已定义的权限变量
+  if (!canManageSettlements && !canViewDirectedPaySettlements) {
     return (
       <Result
         status="403"
@@ -388,113 +409,119 @@ function SettlementDashboardPage() {
         </Col>
       </Row>
 
-      {/* 分类统计卡片 */}
+      {/* 分类统计卡片 - 根据权限显示 */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={8}>
-          <Card 
-            title={
-              <Space>
-                <BankOutlined style={{ color: "#1890ff" }} />
-                融资还款结算
-              </Space>
-            }
-            size="small"
-          >
-            <Row gutter={16}>
-              <Col span={12}>
-                <Statistic
-                  title="待处理"
-                  value={generalStats?.pendingAmount || 0}
-                  precision={2}
-                  prefix="¥"
-                  valueStyle={{ fontSize: 16 }}
-                />
-              </Col>
-              <Col span={12}>
-                <Statistic
-                  title="已结算"
-                  value={generalStats?.settledAmount || 0}
-                  precision={2}
-                  prefix="¥"
-                  valueStyle={{ fontSize: 16, color: "#52c41a" }}
-                />
-              </Col>
-            </Row>
-          </Card>
-        </Col>
-        <Col span={8}>
-          <Card 
-            title={
-              <Space>
-                <DollarOutlined style={{ color: "#13c2c2" }} />
-                定向支付结算
-              </Space>
-            }
-            size="small"
-          >
-            <Row gutter={16}>
-              <Col span={12}>
-                <Statistic
-                  title="待处理"
-                  value={dpStats?.pendingAmount || 0}
-                  precision={2}
-                  prefix="¥"
-                  valueStyle={{ fontSize: 16 }}
-                />
-              </Col>
-              <Col span={12}>
-                <Statistic
-                  title="已结清"
-                  value={dpStats?.totalPaidAmount || 0}
-                  precision={2}
-                  prefix="¥"
-                  valueStyle={{ fontSize: 16, color: "#52c41a" }}
-                />
-              </Col>
-            </Row>
-          </Card>
-        </Col>
-        <Col span={8}>
-          <Card 
-            title={
-              <Space>
-                <RiseOutlined style={{ color: "#722ed1" }} />
-                抽成/分润结算
-              </Space>
-            }
-            size="small"
-          >
-            <Row gutter={16}>
-              <Col span={12}>
-                <Statistic
-                  title="待处理笔数"
-                  value={generalSettlements.filter(s => s.type === "commission" || s.type === "profit_sharing").length}
-                  suffix="笔"
-                  valueStyle={{ fontSize: 16 }}
-                />
-              </Col>
-              <Col span={12}>
-                <Statistic
-                  title="待处理金额"
-                  value={generalSettlements
-                    .filter(s => s.type === "commission" || s.type === "profit_sharing")
-                    .reduce((sum, s) => sum + (s.totalAmount || 0), 0)}
-                  precision={2}
-                  prefix="¥"
-                  valueStyle={{ fontSize: 16 }}
-                />
-              </Col>
-            </Row>
-          </Card>
-        </Col>
+        {canManageSettlements && (
+          <Col span={canViewDirectedPaySettlements ? 8 : 12}>
+            <Card 
+              title={
+                <Space>
+                  <BankOutlined style={{ color: "#1890ff" }} />
+                  融资还款结算
+                </Space>
+              }
+              size="small"
+            >
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Statistic
+                    title="待处理"
+                    value={generalStats?.pendingAmount || 0}
+                    precision={2}
+                    prefix="¥"
+                    valueStyle={{ fontSize: 16 }}
+                  />
+                </Col>
+                <Col span={12}>
+                  <Statistic
+                    title="已结算"
+                    value={generalStats?.settledAmount || 0}
+                    precision={2}
+                    prefix="¥"
+                    valueStyle={{ fontSize: 16, color: "#52c41a" }}
+                  />
+                </Col>
+              </Row>
+            </Card>
+          </Col>
+        )}
+        {canViewDirectedPaySettlements && (
+          <Col span={canManageSettlements ? 8 : 12}>
+            <Card 
+              title={
+                <Space>
+                  <DollarOutlined style={{ color: "#13c2c2" }} />
+                  定向支付结算
+                </Space>
+              }
+              size="small"
+            >
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Statistic
+                    title="待处理"
+                    value={dpStats?.pendingAmount || 0}
+                    precision={2}
+                    prefix="¥"
+                    valueStyle={{ fontSize: 16 }}
+                  />
+                </Col>
+                <Col span={12}>
+                  <Statistic
+                    title="已结清"
+                    value={dpStats?.totalPaidAmount || 0}
+                    precision={2}
+                    prefix="¥"
+                    valueStyle={{ fontSize: 16, color: "#52c41a" }}
+                  />
+                </Col>
+              </Row>
+            </Card>
+          </Col>
+        )}
+        {canManageSettlements && (
+          <Col span={canViewDirectedPaySettlements ? 8 : 12}>
+            <Card 
+              title={
+                <Space>
+                  <RiseOutlined style={{ color: "#722ed1" }} />
+                  抽成/分润结算
+                </Space>
+              }
+              size="small"
+            >
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Statistic
+                    title="待处理笔数"
+                    value={generalSettlements.filter(s => s.type === "commission" || s.type === "profit_sharing").length}
+                    suffix="笔"
+                    valueStyle={{ fontSize: 16 }}
+                  />
+                </Col>
+                <Col span={12}>
+                  <Statistic
+                    title="待处理金额"
+                    value={generalSettlements
+                      .filter(s => s.type === "commission" || s.type === "profit_sharing")
+                      .reduce((sum, s) => sum + (s.totalAmount || 0), 0)}
+                    precision={2}
+                    prefix="¥"
+                    valueStyle={{ fontSize: 16 }}
+                  />
+                </Col>
+              </Row>
+            </Card>
+          </Col>
+        )}
       </Row>
 
-      {/* 待处理结算单列表 */}
+      {/* 待处理结算单列表 - 根据权限显示 */}
       <Card title="待处理结算单">
         <Tabs
-          defaultActiveKey="general"
+          defaultActiveKey={canManageSettlements ? "general" : "directed_pay"}
           items={[
-            {
+            ...(canManageSettlements ? [{
               key: "general",
               label: (
                 <Space>
@@ -516,8 +543,8 @@ function SettlementDashboardPage() {
                   locale={{ emptyText: "暂无待处理结算单" }}
                 />
               )
-            },
-            {
+            }] : []),
+            ...(canViewDirectedPaySettlements ? [{
               key: "directed_pay",
               label: (
                 <Space>
@@ -539,7 +566,7 @@ function SettlementDashboardPage() {
                   locale={{ emptyText: "暂无待处理结算单" }}
                 />
               )
-            }
+            }] : [])
           ]}
         />
       </Card>

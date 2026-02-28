@@ -116,11 +116,11 @@ export const antdTheme: ThemeConfig = {
     // 菜单
     Menu: {
       darkItemBg: designColors.bgSider,
-      darkSubMenuItemBg: 'rgba(0, 0, 0, 0.2)',
-      darkItemSelectedBg: designColors.primary,
-      darkItemHoverBg: 'rgba(255, 255, 255, 0.08)',
-      darkItemColor: 'rgba(255, 255, 255, 0.85)',
-      darkItemSelectedColor: '#FFFFFF',
+      darkSubMenuItemBg: 'rgba(0, 0, 0, 0.15)',
+      darkItemSelectedBg: 'rgba(8, 145, 178, 0.25)',  // 主色半透明，更柔和
+      darkItemHoverBg: 'rgba(255, 255, 255, 0.06)',
+      darkItemColor: 'rgba(255, 255, 255, 0.75)',
+      darkItemSelectedColor: '#22D3EE',  // 选中文字用亮青色
       itemHeight: 44,
       subMenuItemBorderRadius: 6,
       itemBorderRadius: 6,
@@ -240,10 +240,15 @@ export const antdTheme: ThemeConfig = {
       linkHoverColor: designColors.primary,
     },
     
-    // 分页
+    // 分页 - 简洁无边框风格
     Pagination: {
-      borderRadius: 6,
-      itemActiveBg: designColors.primary,
+      borderRadius: 4,
+      itemActiveBg: '#F1F5F9',           // 非常浅的灰色背景
+      itemActiveColorDisabled: '#94A3B8',
+      colorPrimary: '#475569',           // 文字用深灰色
+      colorPrimaryHover: '#0F172A',
+      colorBgTextHover: '#F8FAFC',       // 悬浮背景
+      colorBorder: 'transparent',        // 去掉边框
     },
     
     // 步骤条

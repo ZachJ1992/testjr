@@ -1402,14 +1402,135 @@ async function getWaybillDataRange(financierId: string): Promise<{
 }
 
 /**
- * 检查运单是否存在
+ * 需要比较和更新的关键字段
  */
-async function waybillExists(waybillNumber: string): Promise<boolean> {
+const UPDATEABLE_FIELDS = [
+  'receivable_total',
+  'receivable_transport', 
+  'payable_total',
+  'payable_oil_card',
+  'etc_fee',
+  'profit',
+  'profit_rate',
+  'receivable_return',
+  'driver_piece_rate',
+  'co_driver_piece_rate',
+  'monthly_cost',
+  'remark',
+] as const;
+
+/**
+ * 已存在运单的数据结构
+ */
+interface ExistingWaybill {
+  id: string;
+  receivable_total: number;
+  receivable_transport: number;
+  payable_total: number;
+  payable_oil_card: number;
+  etc_fee: number;
+  profit: number;
+  profit_rate: number;
+  receivable_return: number;
+  driver_piece_rate: number;
+  co_driver_piece_rate: number;
+  monthly_cost: number;
+  remark: string;
+}
+
+/**
+ * 检查运单是否存在，如果存在则返回关键字段用于比较
+ */
+async function getExistingWaybill(waybillNumber: string): Promise<ExistingWaybill | null> {
   const [rows] = await pool.query<any[]>(
-    'SELECT 1 FROM waybills WHERE waybill_number = ? LIMIT 1',
+    `SELECT id, receivable_total, receivable_transport, payable_total,
+            payable_oil_card, etc_fee, profit, profit_rate, receivable_return,
+            driver_piece_rate, co_driver_piece_rate, monthly_cost, remark
+     FROM waybills WHERE waybill_number = ? LIMIT 1`,
     [waybillNumber]
   );
-  return rows.length > 0;
+  return rows.length > 0 ? rows[0] : null;
+}
+
+/**
+ * 比较两个数值是否有显著差异（考虑浮点数精度）
+ */
+function hasNumericChange(oldVal: number | null, newVal: number | null, precision: number = 2): boolean {
+  const old = oldVal ?? 0;
+  const curr = newVal ?? 0;
+  return Math.abs(old - curr) > Math.pow(10, -precision);
+}
+
+/**
+ * 检查运单是否需要更新
+ */
+function shouldUpdateWaybill(existing: ExistingWaybill, newData: TmsRowData): boolean {
+  // 比较数值字段
+  if (hasNumericChange(existing.receivable_total, newData.receivableTotal)) return true;
+  if (hasNumericChange(existing.receivable_transport, newData.receivableTransport)) return true;
+  if (hasNumericChange(existing.payable_total, newData.payableTotal)) return true;
+  if (hasNumericChange(existing.payable_oil_card, newData.payableOilCard)) return true;
+  if (hasNumericChange(existing.etc_fee, newData.etcFee)) return true;
+  if (hasNumericChange(existing.profit, newData.profit)) return true;
+  if (hasNumericChange(existing.profit_rate, newData.profitRate)) return true;
+  if (hasNumericChange(existing.receivable_return, newData.receivableReturn)) return true;
+  if (hasNumericChange(existing.driver_piece_rate, newData.driverPieceRate)) return true;
+  if (hasNumericChange(existing.co_driver_piece_rate, newData.coDriverPieceRate)) return true;
+  if (hasNumericChange(existing.monthly_cost, newData.monthlyCost)) return true;
+  
+  // 比较备注字段
+  const oldRemark = (existing.remark || '').trim();
+  const newRemark = (newData.remark || '').trim();
+  if (oldRemark !== newRemark) return true;
+  
+  return false;
+}
+
+/**
+ * 更新已存在的运单
+ */
+async function updateWaybill(id: string, data: TmsRowData): Promise<boolean> {
+  try {
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    
+    await pool.query(
+      `UPDATE waybills SET
+        receivable_total = ?,
+        receivable_transport = ?,
+        payable_total = ?,
+        payable_oil_card = ?,
+        etc_fee = ?,
+        profit = ?,
+        profit_rate = ?,
+        receivable_return = ?,
+        driver_piece_rate = ?,
+        co_driver_piece_rate = ?,
+        monthly_cost = ?,
+        remark = ?,
+        updated_at = ?
+      WHERE id = ?`,
+      [
+        data.receivableTotal || 0,
+        data.receivableTransport || 0,
+        data.payableTotal || 0,
+        data.payableOilCard || 0,
+        data.etcFee || 0,
+        data.profit || 0,
+        data.profitRate || 0,
+        data.receivableReturn || 0,
+        data.driverPieceRate || 0,
+        data.coDriverPieceRate || 0,
+        data.monthlyCost || 0,
+        data.remark || '',
+        now,
+        id
+      ]
+    );
+    return true;
+  } catch (error: any) {
+    console.error('[Puppeteer] 更新运单失败:', error.message);
+    return false;
+  }
 }
 
 /**
@@ -1487,6 +1608,7 @@ export async function syncWithPuppeteer(
       success: false,
       totalFetched: 0,
       newCount: 0,
+      updatedCount: 0,
       skippedCount: 0,
     errorCount: 0,
     errors: [],
@@ -1669,25 +1791,47 @@ export async function syncWithPuppeteer(
 
         result.totalFetched++;
           
-          // 检查是否已存在
-        const exists = await waybillExists(row.waybillNumber);
+        // 检查运单是否已存在，并获取现有数据用于比较
+        const existingWaybill = await getExistingWaybill(row.waybillNumber);
+        
         // 调试: 前5条记录输出详细信息
         if (result.totalFetched <= 5) {
-          console.log(`[Puppeteer] 调试: 运单号=${row.waybillNumber}, 已存在=${exists}, 创建时间=${row.createdTime}`);
+          console.log(`[Puppeteer] 调试: 运单号=${row.waybillNumber}, 已存在=${!!existingWaybill}, 创建时间=${row.createdTime}`);
         }
-          if (exists) {
-            result.skippedCount++;
-          consecutiveExistingCount++;
+        
+        if (existingWaybill) {
+          // 运单已存在，检查是否需要更新
+          const needsUpdate = shouldUpdateWaybill(existingWaybill, row);
           
-          if (consecutiveExistingCount >= STOP_THRESHOLD) {
-            console.log(`[Puppeteer] 连续 ${STOP_THRESHOLD} 条记录已存在，停止增量同步`);
-            reachedExistingData = true;
-            break;
+          if (needsUpdate) {
+            // 数据有变化，执行更新
+            const updated = await updateWaybill(existingWaybill.id, row);
+            if (updated) {
+              result.updatedCount = (result.updatedCount || 0) + 1;
+              if (result.updatedCount <= 5 || result.updatedCount % 50 === 0) {
+                console.log(`[Puppeteer] 更新第 ${result.updatedCount} 条: ${row.waybillNumber}`);
+              }
+              // 有更新说明数据有变化，重置连续无变化计数
+              consecutiveExistingCount = 0;
+            } else {
+              result.errorCount++;
+            }
+          } else {
+            // 数据无变化，跳过
+            result.skippedCount++;
+            consecutiveExistingCount++;
+            
+            // 只有连续"无变化跳过"才触发停止
+            if (consecutiveExistingCount >= STOP_THRESHOLD) {
+              console.log(`[Puppeteer] 连续 ${STOP_THRESHOLD} 条记录无变化，停止增量同步`);
+              reachedExistingData = true;
+              break;
+            }
           }
-            continue;
-          }
+          continue;
+        }
 
-        // 重置连续计数
+        // 重置连续计数（新增记录）
         consecutiveExistingCount = 0;
 
         // 保存新记录
@@ -1704,7 +1848,7 @@ export async function syncWithPuppeteer(
       
       // 每页处理完后输出统计
       if (pageNum % 10 === 0 || pageNum === 1) {
-        console.log(`[Puppeteer] 进度: 页${pageNum}, 总获取${result.totalFetched}, 新增${result.newCount}, 跳过${result.skippedCount}`);
+        console.log(`[Puppeteer] 进度: 页${pageNum}, 总获取${result.totalFetched}, 新增${result.newCount}, 更新${result.updatedCount || 0}, 跳过${result.skippedCount}`);
       }
 
       if (reachedExistingData) {
@@ -1753,12 +1897,13 @@ export async function syncWithPuppeteer(
       status: 'success',
       totalFetched: result.totalFetched,
       newCount: result.newCount,
+      updatedCount: result.updatedCount || 0,
       skippedCount: result.skippedCount,
       errorCount: result.errorCount,
     });
 
     const syncMode = reachedExistingData ? '增量同步(到达历史边界)' : '全量同步';
-    console.log(`[Puppeteer] ${syncMode}完成! 获取: ${result.totalFetched}, 新增: ${result.newCount}, 跳过: ${result.skippedCount}`);
+    console.log(`[Puppeteer] ${syncMode}完成! 获取: ${result.totalFetched}, 新增: ${result.newCount}, 更新: ${result.updatedCount || 0}, 跳过: ${result.skippedCount}`);
 
   } catch (error: any) {
     console.error('[Puppeteer] 同步失败:', error.message);

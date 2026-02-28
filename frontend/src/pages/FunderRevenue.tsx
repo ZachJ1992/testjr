@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Card, Row, Col, Statistic, Table, Select, DatePicker, Button, Space, message, Empty, Spin } from 'antd';
+import { Card, Row, Col, Statistic, Table, Select, DatePicker, Button, Space, message, Empty, Spin, Tag } from 'antd';
 import { DownloadOutlined } from '@ant-design/icons';
 import * as echarts from 'echarts';
 import dayjs, { Dayjs } from 'dayjs';
@@ -38,9 +38,9 @@ const FunderRevenue: React.FC = () => {
                          user?.permissions?.includes("view_platform_revenue");
   const isFunderUser = isPlatformUser || user?.orgContext?.orgType === 'funder';
   
-  const [timeRange, setTimeRange] = useState<TimeRange>('month');
+  const [timeRange, setTimeRange] = useState<TimeRange>('year');
   const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null);
-  const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month'>('day');
+  const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month'>('month');
   
   const [stats, setStats] = useState<RevenueStats | null>(null);
   const [trend, setTrend] = useState<RevenueTrendPoint[]>([]);
@@ -132,78 +132,120 @@ const FunderRevenue: React.FC = () => {
 
   // 初始化趋势图 - 只显示总收益
   useEffect(() => {
-    if (!trendChartRef.current || trend.length === 0 || !isFunderUser) return;
+    if (!trendChartRef.current || !isFunderUser) return;
     
-    if (!trendChartInstance.current) {
-      trendChartInstance.current = echarts.init(trendChartRef.current);
+    // 获取或创建实例
+    let chart = echarts.getInstanceByDom(trendChartRef.current);
+    if (!chart) {
+      chart = echarts.init(trendChartRef.current);
+    }
+    trendChartInstance.current = chart;
+    
+    // 数据为空时清除图表
+    if (trend.length === 0) {
+      chart.clear();
+      return;
     }
     
-    trendChartInstance.current.setOption({
-      tooltip: { 
-        trigger: 'axis',
-        formatter: (params: any) => {
-          const date = params[0]?.axisValue || '';
-          let result = `${date}<br/>`;
-          params.forEach((p: any) => {
-            result += `${p.marker} ${p.seriesName}: ¥${p.value?.toLocaleString() || 0}<br/>`;
-          });
-          return result;
-        }
-      },
-      legend: { data: ['收益金额'], bottom: 0 },
-      grid: { left: '3%', right: '4%', bottom: '15%', top: '10%', containLabel: true },
-      xAxis: { type: 'category', data: trend.map(t => t.date), boundaryGap: false },
-      yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `¥${(v / 1000).toFixed(0)}k` } },
-      series: [
-        { 
-          name: '收益金额', 
-          type: 'line', 
-          data: trend.map(t => t.amount), 
-          smooth: true, 
-          areaStyle: { opacity: 0.3 },
-          itemStyle: { color: '#52c41a' },
+    // 延迟执行以确保容器已可见
+    const timer = setTimeout(() => {
+      if (!trendChartInstance.current) return;
+      
+      trendChartInstance.current.resize();
+    
+      // 使用 notMerge: true 强制完全刷新图表
+      trendChartInstance.current.setOption({
+        tooltip: { 
+          trigger: 'axis',
+          formatter: (params: any) => {
+            const date = params[0]?.axisValue || '';
+            let result = `${date}<br/>`;
+            params.forEach((p: any) => {
+              result += `${p.marker} ${p.seriesName}: ¥${p.value?.toLocaleString() || 0}<br/>`;
+            });
+            return result;
+          }
         },
-      ],
-    });
+        legend: { data: ['收益金额'], bottom: 0 },
+        grid: { left: '3%', right: '4%', bottom: '15%', top: '10%', containLabel: true },
+        xAxis: { type: 'category', data: trend.map(t => t.date), boundaryGap: false },
+        yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `¥${(v / 1000).toFixed(0)}k` } },
+        series: [
+          { 
+            name: '收益金额', 
+            type: 'line', 
+            data: trend.map(t => t.amount), 
+            smooth: true, 
+            areaStyle: { opacity: 0.3 },
+            itemStyle: { color: '#DC2626' },
+          },
+        ],
+      }, { notMerge: true });
+    }, 50);
 
     const handleResize = () => trendChartInstance.current?.resize();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleResize);
+    };
   }, [trend, isFunderUser]);
 
   // 初始化饼图
   useEffect(() => {
-    if (!compositionChartRef.current || composition.length === 0 || !isFunderUser) return;
+    if (!compositionChartRef.current || !isFunderUser) return;
     
-    if (!compositionChartInstance.current) {
-      compositionChartInstance.current = echarts.init(compositionChartRef.current);
+    // 获取或创建实例
+    let chart = echarts.getInstanceByDom(compositionChartRef.current);
+    if (!chart) {
+      chart = echarts.init(compositionChartRef.current);
     }
+    compositionChartInstance.current = chart;
     
-    compositionChartInstance.current.setOption({
-      tooltip: { 
-        trigger: 'item', 
-        formatter: (params: any) => `${params.name}: ¥${params.value?.toLocaleString() || 0} (${params.percent}%)`
-      },
-      legend: { bottom: 0 },
-      series: [{
-        type: 'pie',
-        radius: ['40%', '70%'],
-        center: ['50%', '45%'],
-        label: { show: false },
-        emphasis: {
-          label: { show: true, fontSize: 14, fontWeight: 'bold' }
+    // 数据为空时清除图表
+    if (composition.length === 0) {
+      chart.clear();
+      return;
+    }
+  
+    // 延迟执行以确保容器已可见
+    const timer = setTimeout(() => {
+      if (!compositionChartInstance.current) return;
+      
+      compositionChartInstance.current.resize();
+      
+      // 使用 notMerge: true 强制完全刷新图表
+      compositionChartInstance.current.setOption({
+        tooltip: { 
+          trigger: 'item', 
+          formatter: (params: any) => `${params.name}: ¥${params.value?.toLocaleString() || 0} (${params.percent}%)`
         },
-        data: composition.map(c => ({ 
-          name: c.sourceName || SOURCE_TYPE_MAP[c.sourceType] || c.sourceType, 
-          value: c.amount 
-        })),
-      }],
-      color: ['#1890ff', '#52c41a'],
-    });
+        legend: { bottom: 0 },
+        series: [{
+          type: 'pie',
+          radius: ['40%', '70%'],
+          center: ['50%', '45%'],
+          label: { show: false },
+          emphasis: {
+            label: { show: true, fontSize: 14, fontWeight: 'bold' }
+          },
+          data: composition.map(c => ({ 
+            name: c.sourceName || SOURCE_TYPE_MAP[c.sourceType] || c.sourceType, 
+            value: c.amount 
+          })),
+        }],
+        color: ['#DC2626', '#EF4444'],
+      }, { notMerge: true });
+    }, 50);
 
     const handleResize = () => compositionChartInstance.current?.resize();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleResize);
+    };
   }, [composition, isFunderUser]);
 
   // 销毁图表
@@ -236,29 +278,72 @@ const FunderRevenue: React.FC = () => {
   }
 
   const columns = [
-    { title: '日期', dataIndex: 'revenueDate', key: 'revenueDate', width: 100 },
+    { 
+      title: '日期', 
+      dataIndex: 'revenueDate', 
+      key: 'revenueDate', 
+      width: 110,
+      render: (date: string) => (
+        <span style={{ color: '#64748B', fontSize: 13 }}>{date}</span>
+      ),
+    },
     { 
       title: '收益类型', 
       dataIndex: 'sourceType', 
       key: 'sourceType',
       width: 120,
-      render: (type: string) => SOURCE_TYPE_MAP[type] || type,
+      render: (type: string) => (
+        <Tag color="red" style={{ margin: 0 }}>
+          {SOURCE_TYPE_MAP[type] || type}
+        </Tag>
+      ),
     },
-    { title: '合同编号', dataIndex: 'contractNumber', key: 'contractNumber', width: 150 },
-    { title: '融资方', dataIndex: 'financierName', key: 'financierName', width: 120 },
+    { 
+      title: '合同编号', 
+      dataIndex: 'contractNumber', 
+      key: 'contractNumber', 
+      width: 160,
+      render: (num: string) => (
+        <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#475569' }}>
+          {num || '-'}
+        </span>
+      ),
+    },
+    { 
+      title: '融资方', 
+      dataIndex: 'financierName', 
+      key: 'financierName', 
+      width: 150,
+      render: (name: string) => (
+        <span style={{ fontWeight: 500 }}>{name || '-'}</span>
+      ),
+    },
     { 
       title: '金额', 
       dataIndex: 'amount', 
       key: 'amount',
-      width: 120,
+      width: 130,
       align: 'right' as const,
       render: (amount: number) => (
-        <span style={{ color: '#52c41a', fontWeight: 500 }}>
+        <span style={{ 
+          color: '#DC2626', 
+          fontWeight: 600,
+          fontSize: 14,
+          fontFamily: 'monospace'
+        }}>
           +¥{amount?.toLocaleString('zh-CN', { minimumFractionDigits: 2 }) || '0.00'}
         </span>
       ),
     },
-    { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true },
+    { 
+      title: '备注', 
+      dataIndex: 'remark', 
+      key: 'remark', 
+      ellipsis: true,
+      render: (text: string) => (
+        <span style={{ color: '#94A3B8', fontSize: 13 }}>{text || '-'}</span>
+      ),
+    },
   ];
 
   return (
@@ -295,7 +380,7 @@ const FunderRevenue: React.FC = () => {
                 value={stats?.totalRevenue || 0}
                 precision={2}
                 prefix="¥"
-                valueStyle={{ color: '#52c41a', fontSize: 28 }}
+                valueStyle={{ color: '#DC2626', fontSize: 28 }}
               />
             </Card>
           </Col>
@@ -306,7 +391,7 @@ const FunderRevenue: React.FC = () => {
                 value={stats?.periodRevenue || 0}
                 precision={2}
                 prefix="¥"
-                valueStyle={{ color: '#1890ff' }}
+                valueStyle={{ color: '#B91C1C' }}
               />
             </Card>
           </Col>
@@ -317,7 +402,7 @@ const FunderRevenue: React.FC = () => {
                 value={stats?.estimatedRevenue || 0}
                 precision={2}
                 prefix="¥"
-                valueStyle={{ color: '#722ed1' }}
+                valueStyle={{ color: '#DC2626' }}
               />
             </Card>
           </Col>
@@ -329,28 +414,41 @@ const FunderRevenue: React.FC = () => {
           style={{ marginBottom: 24 }}
           extra={
             <Space>
-              <Button type={groupBy === 'day' ? 'primary' : 'default'} size="small" onClick={() => setGroupBy('day')}>按日</Button>
-              <Button type={groupBy === 'week' ? 'primary' : 'default'} size="small" onClick={() => setGroupBy('week')}>按周</Button>
-              <Button type={groupBy === 'month' ? 'primary' : 'default'} size="small" onClick={() => setGroupBy('month')}>按月</Button>
+              <Button 
+                type={groupBy === 'day' ? 'primary' : 'default'} 
+                size="small" 
+                onClick={() => setGroupBy('day')}
+                style={groupBy === 'day' ? { backgroundColor: '#DC2626', borderColor: '#DC2626' } : {}}
+              >按日</Button>
+              <Button 
+                type={groupBy === 'week' ? 'primary' : 'default'} 
+                size="small" 
+                onClick={() => setGroupBy('week')}
+                style={groupBy === 'week' ? { backgroundColor: '#DC2626', borderColor: '#DC2626' } : {}}
+              >按周</Button>
+              <Button 
+                type={groupBy === 'month' ? 'primary' : 'default'} 
+                size="small" 
+                onClick={() => setGroupBy('month')}
+                style={groupBy === 'month' ? { backgroundColor: '#DC2626', borderColor: '#DC2626' } : {}}
+              >按月</Button>
             </Space>
           }
         >
-          {trend.length > 0 ? (
-            <div ref={trendChartRef} style={{ height: 300 }} />
-          ) : (
-            <Empty description="暂无趋势数据" style={{ height: 300, paddingTop: 100 }} />
-          )}
+          <div style={{ height: 300, position: 'relative' }}>
+            <div ref={trendChartRef} style={{ height: '100%', display: trend.length > 0 ? 'block' : 'none' }} />
+            {trend.length === 0 && <Empty description="暂无趋势数据" style={{ paddingTop: 100 }} />}
+          </div>
         </Card>
 
         {/* 构成和排行 */}
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={12}>
             <Card title="收益来源构成">
-              {composition.length > 0 ? (
-                <div ref={compositionChartRef} style={{ height: 250 }} />
-              ) : (
-                <Empty description="暂无数据" style={{ height: 250, paddingTop: 80 }} />
-              )}
+              <div style={{ height: 250, position: 'relative' }}>
+                <div ref={compositionChartRef} style={{ height: '100%', display: composition.length > 0 ? 'block' : 'none' }} />
+                {composition.length === 0 && <Empty description="暂无数据" style={{ paddingTop: 80 }} />}
+              </div>
             </Card>
           </Col>
           <Col span={12}>
@@ -382,7 +480,7 @@ const FunderRevenue: React.FC = () => {
                       </span>
                       {item.name}
                     </span>
-                    <span style={{ color: '#52c41a', fontWeight: 500 }}>
+                    <span style={{ color: '#DC2626', fontWeight: 500 }}>
                       ¥{item.amount?.toLocaleString() || 0}
                     </span>
                   </div>

@@ -10,9 +10,114 @@ import {
 } from "./crawler-store.js";
 import { testConnection, triggerSync } from "./crawler-service.js";
 import { syncWithPuppeteer, testPuppeteerConnection } from "./puppeteer-crawler.js";
+import { getAllTemplatesMeta, getCrawlerTemplate } from "./crawler-templates.js";
+import { getExternalSystemById, updateSyncStatus } from "../external-systems-store.js";
+import { runCrawlerWithTemplate, testCrawlerConnection } from "./crawler-engine.js";
 import type { CrawlerConfig, TestConnectionResult, SyncResult } from "./crawler-types.js";
 
+// 加载所有模板
+import './templates/index.js';
+
 const router = Router();
+
+// ==================== 爬虫模板管理 ====================
+
+// 获取可用爬虫模板列表
+router.get("/crawler-templates", authenticate, async (req, res) => {
+  try {
+    const templates = getAllTemplatesMeta();
+    res.json(templates);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== 外部系统爬虫操作 ====================
+
+// 从外部系统配置触发同步
+router.post("/external-systems/:id/sync", authenticate, async (req, res) => {
+  try {
+    const externalSystem = await getExternalSystemById(req.params.id);
+    if (!externalSystem) {
+      return res.status(404).json({ error: "外部系统配置不存在" });
+    }
+
+    if (externalSystem.integrationType !== 'crawler') {
+      return res.status(400).json({ error: "该配置不是爬虫类型" });
+    }
+
+    if (!externalSystem.crawlerType) {
+      return res.status(400).json({ error: "未配置爬虫模板" });
+    }
+
+    const template = getCrawlerTemplate(externalSystem.crawlerType);
+    if (!template) {
+      return res.status(400).json({ error: `未找到爬虫模板: ${externalSystem.crawlerType}` });
+    }
+
+    const maxPages = parseInt(req.query.maxPages as string) || 150;
+
+    // 异步执行同步，立即返回
+    (async () => {
+      try {
+        await updateSyncStatus(externalSystem.id, 'running');
+        const result = await runCrawlerWithTemplate(externalSystem, template, maxPages);
+        
+        if (result.success) {
+          await updateSyncStatus(externalSystem.id, 'success');
+        } else {
+          await updateSyncStatus(externalSystem.id, 'failed', result.error);
+        }
+      } catch (err: any) {
+        console.error(`[CrawlerRoutes] 同步失败:`, err.message);
+        await updateSyncStatus(externalSystem.id, 'failed', err.message);
+      }
+    })();
+
+    res.json({ 
+      success: true,
+      message: "同步任务已启动，请稍后查看结果",
+      externalSystemId: externalSystem.id,
+      crawlerType: externalSystem.crawlerType,
+    });
+  } catch (err: any) {
+    res.status(500).json({ 
+      success: false,
+      message: err.message,
+    });
+  }
+});
+
+// 测试外部系统爬虫连接
+router.post("/external-systems/:id/test-connection", authenticate, async (req, res) => {
+  try {
+    const externalSystem = await getExternalSystemById(req.params.id);
+    if (!externalSystem) {
+      return res.status(404).json({ error: "外部系统配置不存在" });
+    }
+
+    if (externalSystem.integrationType !== 'crawler') {
+      return res.status(400).json({ error: "该配置不是爬虫类型" });
+    }
+
+    if (!externalSystem.crawlerType) {
+      return res.status(400).json({ error: "未配置爬虫模板" });
+    }
+
+    const template = getCrawlerTemplate(externalSystem.crawlerType);
+    if (!template) {
+      return res.status(400).json({ error: `未找到爬虫模板: ${externalSystem.crawlerType}` });
+    }
+
+    const result = await testCrawlerConnection(externalSystem, template);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ 
+      success: false, 
+      message: err.message 
+    });
+  }
+});
 
 // ==================== 爬虫配置管理 ====================
 

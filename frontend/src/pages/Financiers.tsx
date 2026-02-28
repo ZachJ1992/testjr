@@ -16,7 +16,10 @@ import {
   deleteCrawlerConfigApi,
   testCrawlerConnectionApi,
   triggerCrawlerSyncApi,
-  fetchCrawlerLogsApi
+  fetchCrawlerLogsApi,
+  fetchCrawlerTemplates,
+  triggerExternalSystemSync,
+  testExternalSystemConnection,
 } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
@@ -29,7 +32,9 @@ import {
   CrawlerSyncLog,
   SYNC_INTERVAL_OPTIONS,
   CRAWLER_SYNC_STATUS_CONFIG,
-  CrawlerSyncStatus
+  CrawlerSyncStatus,
+  CrawlerTemplateMeta,
+  IntegrationType,
 } from "../types";
 import {
   Button,
@@ -57,7 +62,8 @@ import {
   Tooltip,
   Card,
   Spin,
-  Timeline
+  Timeline,
+  Divider
 } from "antd";
 import { 
   FileTextOutlined, 
@@ -133,6 +139,13 @@ function FinanciersPage() {
   ];
   const [selectedSystemType, setSelectedSystemType] = useState<string>("TMS运输管理系统");
   
+  // 爬虫模板相关状态
+  const [crawlerTemplates, setCrawlerTemplates] = useState<CrawlerTemplateMeta[]>([]);
+  const [selectedIntegrationType, setSelectedIntegrationType] = useState<IntegrationType>("manual");
+  const [selectedCrawlerTemplate, setSelectedCrawlerTemplate] = useState<string>("");
+  const [testingExternalConnection, setTestingExternalConnection] = useState(false);
+  const [syncingExternalId, setSyncingExternalId] = useState<string | null>(null);
+  
   // 爬虫数据源配置相关状态
   const [crawlerDrawerOpen, setCrawlerDrawerOpen] = useState(false);
   const [currentFinancierForCrawler, setCurrentFinancierForCrawler] = useState<Financier | null>(null);
@@ -191,6 +204,20 @@ function FinanciersPage() {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, searchText]);
+  
+  // 加载爬虫模板列表
+  useEffect(() => {
+    const loadTemplates = async () => {
+      if (!token) return;
+      try {
+        const templates = await fetchCrawlerTemplates(token);
+        setCrawlerTemplates(templates);
+      } catch (err) {
+        console.error("加载爬虫模板失败:", err);
+      }
+    };
+    void loadTemplates();
+  }, [token]);
 
   // 外部系统配置相关函数
   const loadExternalSystems = async (financierId: string) => {
@@ -223,20 +250,32 @@ function FinanciersPage() {
     if (system) {
       const isPreset = presetSystems.some(p => p.value === system.systemName && p.value !== "custom");
       setSelectedSystemType(isPreset ? system.systemName : "custom");
+      setSelectedIntegrationType(system.integrationType || "manual");
+      setSelectedCrawlerTemplate(system.crawlerType || "");
+      
       externalSystemForm.setFieldsValue({
         systemName: system.systemName,
         customSystemName: isPreset ? "" : system.systemName,
         systemId: system.systemId,
         apiEndpoint: system.apiEndpoint,
         apiKey: system.apiKey,
-        syncEnabled: system.syncEnabled
+        syncEnabled: system.syncEnabled,
+        integrationType: system.integrationType || "manual",
+        crawlerType: system.crawlerType,
+        syncIntervalMinutes: system.syncIntervalMinutes || 360,
+        // 爬虫配置参数
+        ...(system.crawlerConfig || {}),
       });
     } else {
       setSelectedSystemType("TMS运输管理系统");
+      setSelectedIntegrationType("manual");
+      setSelectedCrawlerTemplate("");
       externalSystemForm.resetFields();
       externalSystemForm.setFieldsValue({
         systemName: "TMS运输管理系统",
-        syncEnabled: false
+        syncEnabled: false,
+        integrationType: "manual",
+        syncIntervalMinutes: 360,
       });
     }
     setExternalSystemModalOpen(true);
@@ -248,23 +287,37 @@ function FinanciersPage() {
       const values = await externalSystemForm.validateFields();
       const systemName = selectedSystemType === "custom" ? values.customSystemName : selectedSystemType;
       
+      // 构建爬虫配置参数
+      let crawlerConfig: Record<string, any> | undefined = undefined;
+      if (selectedIntegrationType === "crawler" && selectedCrawlerTemplate) {
+        const template = crawlerTemplates.find(t => t.id === selectedCrawlerTemplate);
+        if (template) {
+          crawlerConfig = {};
+          for (const field of template.requiredFields) {
+            if (values[field.key] !== undefined) {
+              crawlerConfig[field.key] = values[field.key];
+            }
+          }
+        }
+      }
+      
+      const payload = {
+        systemName,
+        systemId: values.systemId,
+        apiEndpoint: values.apiEndpoint,
+        apiKey: values.apiKey,
+        syncEnabled: values.syncEnabled,
+        integrationType: selectedIntegrationType,
+        crawlerType: selectedIntegrationType === "crawler" ? selectedCrawlerTemplate : undefined,
+        crawlerConfig,
+        syncIntervalMinutes: values.syncIntervalMinutes || 360,
+      };
+      
       if (editingExternalSystem) {
-        await updateExternalSystemApi(token, currentFinancierForExternal.id, editingExternalSystem.id, {
-          systemName,
-          systemId: values.systemId,
-          apiEndpoint: values.apiEndpoint,
-          apiKey: values.apiKey,
-          syncEnabled: values.syncEnabled
-        });
+        await updateExternalSystemApi(token, currentFinancierForExternal.id, editingExternalSystem.id, payload);
         message.success(t("external_systems.update_success", "外部系统配置更新成功"));
       } else {
-        await createExternalSystemApi(token, currentFinancierForExternal.id, {
-          systemName,
-          systemId: values.systemId,
-          apiEndpoint: values.apiEndpoint,
-          apiKey: values.apiKey,
-          syncEnabled: values.syncEnabled
-        });
+        await createExternalSystemApi(token, currentFinancierForExternal.id, payload);
         message.success(t("external_systems.create_success", "外部系统配置添加成功"));
       }
       
@@ -276,6 +329,42 @@ function FinanciersPage() {
         return; // 表单验证失败，错误已显示在字段旁
       }
       message.error(getErrorMessage(err));
+    }
+  };
+  
+  // 触发外部系统同步
+  const handleTriggerExternalSync = async (system: ExternalSystemConfig) => {
+    if (!token) return;
+    setSyncingExternalId(system.id);
+    try {
+      const result = await triggerExternalSystemSync(token, system.id);
+      if (result.success) {
+        message.success(result.message || "同步任务已启动");
+      } else {
+        message.error(result.message || "同步失败");
+      }
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    } finally {
+      setSyncingExternalId(null);
+    }
+  };
+  
+  // 测试外部系统连接
+  const handleTestExternalConnection = async (system: ExternalSystemConfig) => {
+    if (!token) return;
+    setTestingExternalConnection(true);
+    try {
+      const result = await testExternalSystemConnection(token, system.id);
+      if (result.success) {
+        message.success(result.message || "连接测试成功");
+      } else {
+        message.error(result.message || "连接测试失败");
+      }
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    } finally {
+      setTestingExternalConnection(false);
     }
   };
 
@@ -1328,7 +1417,7 @@ function FinanciersPage() {
             {
               title: t("external_systems.system_name", "系统名称"),
               dataIndex: "systemName",
-              width: 140,
+              width: 120,
               render: (name: string) => (
                 <Tag color="blue">{name}</Tag>
               )
@@ -1336,7 +1425,7 @@ function FinanciersPage() {
             {
               title: t("external_systems.system_id", "系统ID"),
               dataIndex: "systemId",
-              width: 160,
+              width: 120,
               ellipsis: true,
               render: (id: string) => (
                 <Typography.Text copyable={{ text: id }}>
@@ -1345,27 +1434,83 @@ function FinanciersPage() {
               )
             },
             {
-              title: t("external_systems.api_endpoint", "API地址"),
-              dataIndex: "apiEndpoint",
-              ellipsis: true,
-              render: (url: string) => url || <Typography.Text type="secondary">-</Typography.Text>
+              title: t("external_systems.integration_type", "集成方式"),
+              dataIndex: "integrationType",
+              width: 100,
+              render: (type: string, record: ExternalSystemConfig) => {
+                const typeConfig: Record<string, { label: string; color: string }> = {
+                  manual: { label: "手动", color: "default" },
+                  crawler: { label: "爬虫", color: "purple" },
+                  api: { label: "API", color: "cyan" },
+                };
+                const config = typeConfig[type] || typeConfig.manual;
+                return (
+                  <Space size={4}>
+                    <Tag color={config.color}>{config.label}</Tag>
+                    {type === "crawler" && record.crawlerType && (
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        {record.crawlerType}
+                      </Typography.Text>
+                    )}
+                  </Space>
+                );
+              }
             },
             {
-              title: t("external_systems.sync_enabled", "同步状态"),
-              dataIndex: "syncEnabled",
+              title: t("external_systems.sync_status", "同步状态"),
               width: 100,
-              align: "center",
-              render: (enabled: boolean) => (
-                <Tag color={enabled ? "green" : "default"}>
-                  {enabled ? t("external_systems.sync_on", "已启用") : t("external_systems.sync_off", "未启用")}
-                </Tag>
-              )
+              render: (_, record: ExternalSystemConfig) => {
+                if (record.integrationType !== "crawler") {
+                  return <Typography.Text type="secondary">-</Typography.Text>;
+                }
+                const statusConfig: Record<string, { color: string; text: string }> = {
+                  success: { color: "green", text: "成功" },
+                  failed: { color: "red", text: "失败" },
+                  running: { color: "blue", text: "运行中" },
+                };
+                const config = statusConfig[record.lastSyncStatus || ""] || { color: "default", text: "未同步" };
+                return (
+                  <Tooltip title={record.lastSyncError || undefined}>
+                    <Tag color={config.color}>{config.text}</Tag>
+                  </Tooltip>
+                );
+              }
+            },
+            {
+              title: t("external_systems.last_sync", "上次同步"),
+              dataIndex: "lastSyncTime",
+              width: 140,
+              render: (time: string) => time 
+                ? new Date(time).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+                : <Typography.Text type="secondary">-</Typography.Text>
             },
             {
               title: t("common.actions", "操作"),
-              width: 100,
+              width: 140,
               render: (_, record: ExternalSystemConfig) => (
                 <Space size="small">
+                  {record.integrationType === "crawler" && record.crawlerType && (
+                    <>
+                      <Tooltip title={t("external_systems.sync_now", "立即同步")}>
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<SyncOutlined spin={syncingExternalId === record.id} />}
+                          onClick={() => handleTriggerExternalSync(record)}
+                          disabled={syncingExternalId === record.id}
+                        />
+                      </Tooltip>
+                      <Tooltip title={t("external_systems.test_connection", "测试连接")}>
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<LinkOutlined />}
+                          onClick={() => handleTestExternalConnection(record)}
+                          disabled={testingExternalConnection}
+                        />
+                      </Tooltip>
+                    </>
+                  )}
                   <Tooltip title={t("common.edit", "编辑")}>
                     <Button
                       type="link"
@@ -1415,14 +1560,16 @@ function FinanciersPage() {
         onOk={handleExternalSystemSave}
         okText={t("common.save", "保存")}
         cancelText={t("common.cancel", "取消")}
-        width={500}
+        width={600}
         destroyOnClose
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
       >
         <Form
           form={externalSystemForm}
           layout="vertical"
           style={{ marginTop: 16 }}
         >
+          {/* 基础信息 */}
           <Form.Item
             name="systemName"
             label={t("external_systems.system_type", "系统类型")}
@@ -1454,44 +1601,143 @@ function FinanciersPage() {
           <Form.Item
             name="systemId"
             label={t("external_systems.system_id", "在外部系统中的ID")}
-            required
-            rules={[{ required: true, message: t("external_systems.system_id_required", "请输入系统ID") }]}
             extra={
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {t("external_systems.system_id_hint", "此ID用于在运单数据中匹配识别该融资方")}
+                {t("external_systems.system_id_hint", "可选，用于在运单数据中匹配识别该融资方")}
               </Typography.Text>
             }
           >
             <Input placeholder={t("external_systems.enter_system_id", "请输入在外部系统中的唯一标识")} />
           </Form.Item>
           
+          <Divider orientation="left">集成方式</Divider>
+          
+          {/* 集成方式选择 - 放在显眼位置 */}
           <Form.Item
-            name="apiEndpoint"
-            label={t("external_systems.api_endpoint", "API接口地址")}
-            extra={
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {t("external_systems.api_hint", "可选，用于系统间数据同步")}
-              </Typography.Text>
-            }
+            name="integrationType"
+            required
           >
-            <Input placeholder={t("external_systems.enter_api_endpoint", "https://api.example.com/sync")} />
+            <Radio.Group
+              value={selectedIntegrationType}
+              onChange={(e) => {
+                setSelectedIntegrationType(e.target.value);
+                externalSystemForm.setFieldsValue({ integrationType: e.target.value });
+                if (e.target.value !== "crawler") {
+                  setSelectedCrawlerTemplate("");
+                }
+              }}
+            >
+              <Radio.Button value="manual">手动录入</Radio.Button>
+              <Radio.Button value="crawler">爬虫同步</Radio.Button>
+              <Radio.Button value="api">API对接</Radio.Button>
+            </Radio.Group>
           </Form.Item>
           
-          <Form.Item
-            name="apiKey"
-            label={t("external_systems.api_key", "API密钥")}
-          >
-            <Input.Password placeholder={t("external_systems.enter_api_key", "请输入API密钥（如有）")} />
-          </Form.Item>
+          {/* 爬虫同步配置 */}
+          {selectedIntegrationType === "crawler" && (
+            <>
+              <Form.Item
+                name="crawlerType"
+                label="选择爬虫模板"
+                required
+                rules={[{ required: true, message: "请选择爬虫模板" }]}
+              >
+                <Select
+                  value={selectedCrawlerTemplate}
+                  onChange={(value) => setSelectedCrawlerTemplate(value)}
+                  placeholder="请选择要使用的爬虫模板"
+                  options={crawlerTemplates.map(tmpl => ({
+                    value: tmpl.id,
+                    label: tmpl.name,
+                  }))}
+                />
+              </Form.Item>
+              
+              {selectedCrawlerTemplate && (() => {
+                const template = crawlerTemplates.find(tmpl => tmpl.id === selectedCrawlerTemplate);
+                if (!template) return null;
+                
+                return (
+                  <>
+                    <Typography.Text type="secondary" style={{ display: "block", marginBottom: 16 }}>
+                      {template.description}
+                    </Typography.Text>
+                    
+                    {template.requiredFields.map(field => (
+                      <Form.Item
+                        key={field.key}
+                        name={field.key}
+                        label={field.label}
+                        rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : undefined}
+                        initialValue={field.defaultValue}
+                      >
+                        {field.type === "password" ? (
+                          <Input.Password placeholder={field.placeholder} />
+                        ) : field.type === "number" ? (
+                          <InputNumber style={{ width: "100%" }} placeholder={field.placeholder} />
+                        ) : field.type === "select" ? (
+                          <Select 
+                            placeholder={field.placeholder}
+                            options={field.options}
+                          />
+                        ) : (
+                          <Input placeholder={field.placeholder} />
+                        )}
+                      </Form.Item>
+                    ))}
+                  </>
+                );
+              })()}
+              
+              <Form.Item
+                name="syncIntervalMinutes"
+                label="同步间隔"
+              >
+                <Select
+                  options={SYNC_INTERVAL_OPTIONS as any}
+                  placeholder="选择自动同步间隔"
+                />
+              </Form.Item>
+            </>
+          )}
+          
+          {/* API对接配置 */}
+          {selectedIntegrationType === "api" && (
+            <>
+              <Form.Item
+                name="apiEndpoint"
+                label="API接口地址"
+                rules={[{ required: true, message: "请输入API接口地址" }]}
+              >
+                <Input placeholder="https://api.example.com/sync" />
+              </Form.Item>
+              
+              <Form.Item
+                name="apiKey"
+                label="API密钥"
+              >
+                <Input.Password placeholder="请输入API密钥（如有）" />
+              </Form.Item>
+            </>
+          )}
+          
+          {/* 手动录入说明 */}
+          {selectedIntegrationType === "manual" && (
+            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 16 }}>
+              手动录入模式下，仅记录外部系统信息，不进行自动数据同步。
+            </Typography.Text>
+          )}
+          
+          <Divider />
           
           <Form.Item
             name="syncEnabled"
-            label={t("external_systems.sync_enabled", "启用同步")}
+            label="启用同步"
             valuePropName="checked"
           >
             <Switch 
-              checkedChildren={t("common.enabled", "开")} 
-              unCheckedChildren={t("common.disabled", "关")} 
+              checkedChildren="启用" 
+              unCheckedChildren="停用" 
             />
           </Form.Item>
         </Form>

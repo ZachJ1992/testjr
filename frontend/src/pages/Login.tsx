@@ -1,25 +1,30 @@
 import { LockOutlined, UserOutlined } from "@ant-design/icons";
-import { Button, Card, Form, Input, Typography } from "antd";
+import { Button, Card, Form, Input, Typography, message } from "antd";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
+import { getErrorMessage } from "../api";
 
-const { Title, Paragraph } = Typography;
+const { Title, Paragraph, Text } = Typography;
 
 function LoginPage() {
   const { login } = useAuth();
   const { t } = useI18n();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string>("");
 
   const handleFinish = async (values: { username: string; password: string }) => {
     try {
       setLoading(true);
+      setErrorMsg("");
       await login(values.username, values.password);
       navigate("/", { replace: true });
     } catch (err) {
-      // error handled in login
+      const msg = getErrorMessage(err) || t("login.error", "用户名或密码错误");
+      setErrorMsg(msg);
+      message.error(msg);
     } finally {
       setLoading(false);
     }
@@ -62,6 +67,17 @@ function LoginPage() {
               size="large"
             />
           </Form.Item>
+          {errorMsg && (
+            <div style={{ 
+              marginBottom: 16, 
+              padding: "8px 12px", 
+              background: "#FEF2F2", 
+              borderRadius: 6,
+              border: "1px solid #FECACA"
+            }}>
+              <Text type="danger" style={{ fontSize: 13 }}>{errorMsg}</Text>
+            </div>
+          )}
           <Form.Item style={{ marginBottom: 0 }}>
             <Button
               type="primary"
@@ -75,6 +91,19 @@ function LoginPage() {
           </Form.Item>
         </Form>
       </Card>
+      
+      {/* 页脚版权信息 */}
+      <div style={{ 
+        position: "absolute", 
+        bottom: 24, 
+        left: 0, 
+        right: 0, 
+        textAlign: "center" 
+      }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          Copyright © 2024-{new Date().getFullYear()} 北京登途云物流科技有限公司. All Rights Reserved.
+        </Text>
+      </div>
     </div>
   );
 }
