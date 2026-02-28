@@ -909,7 +909,7 @@ router.post(
 
       const request = await core.platformApprove(
         req.params.id,
-        currentUser?.id,
+        currentUser?.id ?? '',
         remark
       );
 
@@ -938,7 +938,7 @@ router.post(
 
       const request = await core.platformReject(
         req.params.id,
-        currentUser?.id,
+        currentUser?.id ?? '',
         remark
       );
 
@@ -968,7 +968,7 @@ router.post(
         if (!contract) {
           return res.status(404).json({ error: "合同不存在" });
         }
-        if (orgContext.orgType !== "funder" || contract.funderId !== orgContext.relatedEntityId) {
+        if (orgContext!.orgType !== "funder" || contract.funderId !== orgContext!.relatedEntityId) {
           return res.status(403).json({ error: "只有关联资金方可以进行资金方审批" });
         }
       }
@@ -978,7 +978,7 @@ router.post(
 
       const request = await core.funderApprove(
         req.params.id,
-        currentUser?.id,
+        currentUser?.id ?? '',
         remark
       );
 
@@ -1007,7 +1007,7 @@ router.post(
         if (!contract) {
           return res.status(404).json({ error: "合同不存在" });
         }
-        if (orgContext.orgType !== "funder" || contract.funderId !== orgContext.relatedEntityId) {
+        if (orgContext!.orgType !== "funder" || contract.funderId !== orgContext!.relatedEntityId) {
           return res.status(403).json({ error: "只有关联资金方可以进行资金方拒绝" });
         }
       }
@@ -1017,7 +1017,7 @@ router.post(
 
       const request = await core.funderReject(
         req.params.id,
-        currentUser?.id,
+        currentUser?.id ?? '',
         remark
       );
 

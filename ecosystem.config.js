@@ -3,7 +3,7 @@ module.exports = {
   apps: [
     {
       name: 'testapp-backend',
-      script: './backend/dist/index.js',
+      script: './backend/dist/backend/src/index.js',
       cwd: '/opt/testapp/app',
       instances: 1,
       exec_mode: 'fork',

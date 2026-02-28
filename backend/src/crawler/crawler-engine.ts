@@ -296,7 +296,7 @@ export async function runCrawlerWithTemplate(
     browser = await withTimeout(
       puppeteer.launch({
         executablePath: chromePath,
-        headless: 'new',
+        headless: true,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -304,7 +304,7 @@ export async function runCrawlerWithTemplate(
           '--disable-gpu',
           '--window-size=1920,1080',
           '--disable-blink-features=AutomationControlled',
-          '--single-process',  // 减少子进程
+          '--single-process',
         ],
         userDataDir: tempDir,
         timeout: 30000,  // 浏览器启动超时
@@ -461,7 +461,7 @@ export async function testCrawlerConnection(
     browser = await withTimeout(
       puppeteer.launch({
         executablePath: chromePath,
-        headless: 'new',
+        headless: true,
         args: [
           '--no-sandbox', 
           '--disable-setuid-sandbox',

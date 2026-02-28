@@ -531,12 +531,9 @@ function WaybillsPage() {
     URL.revokeObjectURL(url);
   };
 
-  // 格式化金额显示 - 紧凑格式，不换行
   const formatMoney = (v: number | undefined | null, showSign = false) => {
     if (v === undefined || v === null || v === 0) return "-";
-    const formatted = v >= 10000 
-      ? `${(v / 10000).toFixed(1)}万` 
-      : v.toLocaleString();
+    const formatted = v.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
     return <span style={{ whiteSpace: 'nowrap' }}>{showSign && v > 0 ? '+' : ''}¥{formatted}</span>;
   };
 
@@ -547,13 +544,10 @@ function WaybillsPage() {
     return <span style={{ color, whiteSpace: 'nowrap' }}>{(v * 100).toFixed(0)}%</span>;
   };
 
-  // 格式化毛利显示
   const formatProfit = (v: number | undefined | null) => {
     if (v === undefined || v === null) return "-";
     const color = v >= 0 ? "#52c41a" : "#ff4d4f";
-    const formatted = Math.abs(v) >= 10000 
-      ? `${(v / 10000).toFixed(1)}万` 
-      : v.toLocaleString();
+    const formatted = v.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
     return <span style={{ color, fontWeight: 500, whiteSpace: 'nowrap' }}>¥{formatted}</span>;
   };
 

@@ -143,6 +143,7 @@ function mapCategoryRow(row: RowDataPacket): PaymentCategoryConfig {
       : undefined,
     autoPaymentEnabled: row.auto_payment_enabled === 1,
     isEnabled: row.is_enabled === 1,
+    unlockStatus: row.unlock_status || "created",
     createdAt: row.created_at,
   };
 }

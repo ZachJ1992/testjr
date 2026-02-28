@@ -1455,7 +1455,7 @@ async function getExistingWaybill(waybillNumber: string): Promise<ExistingWaybil
 /**
  * 比较两个数值是否有显著差异（考虑浮点数精度）
  */
-function hasNumericChange(oldVal: number | null, newVal: number | null, precision: number = 2): boolean {
+function hasNumericChange(oldVal: number | null | undefined, newVal: number | null | undefined, precision: number = 2): boolean {
   const old = oldVal ?? 0;
   const curr = newVal ?? 0;
   return Math.abs(old - curr) > Math.pow(10, -precision);
@@ -1637,7 +1637,6 @@ export async function syncWithPuppeteer(
   // 创建同步日志
   const syncLog = await createCrawlerSyncLog({
     configId: config.id,
-    startTime: formatMySQLDateTime(),
     status: 'running',
   });
 

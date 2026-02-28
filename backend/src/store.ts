@@ -3946,10 +3946,10 @@ export async function getCommissionContractStats(): Promise<CommissionContractSt
   
   // 计算平均抽成比例（仅比例模式）
   const percentageConfigs = contracts.flatMap(c => 
-    c.commissionConfig.filter(cfg => cfg.mode === "percentage")
+    c.commissionConfig.filter((cfg: CommissionConfigItem) => cfg.mode === "percentage")
   );
   const avgRatio = percentageConfigs.length > 0
-    ? percentageConfigs.reduce((sum, cfg) => sum + cfg.value, 0) / percentageConfigs.length
+    ? percentageConfigs.reduce((sum: number, cfg: CommissionConfigItem) => sum + cfg.value, 0) / percentageConfigs.length
     : 0;
 
   return {

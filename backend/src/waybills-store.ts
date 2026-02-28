@@ -241,8 +241,12 @@ export async function getWaybills(filters?: {
   batchSource?: string;
   startDate?: string;
   endDate?: string;
-  customerId?: string;  // 融资方ID过滤（单个）
-  customerIds?: string[];  // 融资方ID过滤（多个，资金方用）
+  customerId?: string;
+  customerIds?: string[];
+  contractNumber?: string;
+  businessMode?: string;
+  status?: string;
+  waybillNumber?: string;
 }): Promise<Waybill[]> {
   // 先检查表结构，获取存在的列
   const [columns] = await pool.query<RowDataPacket[]>(
@@ -308,6 +312,22 @@ export async function getWaybills(filters?: {
       query += ` AND w.waybill_date <= ?`;
       params.push(filters.endDate);
     }
+  }
+  if (filters?.waybillNumber) {
+    query += ` AND w.waybill_number LIKE ?`;
+    params.push(`%${filters.waybillNumber}%`);
+  }
+  if (filters?.contractNumber && columnNames.has('contract_number')) {
+    query += ` AND w.contract_number LIKE ?`;
+    params.push(`%${filters.contractNumber}%`);
+  }
+  if (filters?.businessMode && columnNames.has('business_mode')) {
+    query += ` AND w.business_mode = ?`;
+    params.push(filters.businessMode);
+  }
+  if (filters?.status && columnNames.has('status')) {
+    query += ` AND w.status = ?`;
+    params.push(filters.status);
   }
 
   // 优先按发车时间降序排列（最新在前），发车时间为空的按创建时间排序

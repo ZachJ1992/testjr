@@ -196,6 +196,9 @@ export interface Contract {
   updatedAt: string;
   // 放款信息
   usedAmount?: number; // 已用额度（累计放款）
+  outstandingPrincipal?: number; // 未偿还本金
+  accruedInterest?: number; // 累计利息
+  commissionConfig?: any; // 抽成配置（JSON）
 }
 
 // 资金方相关类型（枚举已从共享文件导入）
@@ -415,40 +418,8 @@ export interface DirectedPayContract {
   updatedAt: string;
 }
 
-// 运单状态类型
-export type WaybillStatus = 
-  | "created"      // 已创建
-  | "dispatched"   // 已派单  
-  | "loading"      // 装货中
-  | "in_transit"   // 运输中
-  | "delivered"    // 已送达
-  | "signed"       // 已签收
-  | "settled"      // 已结算
-  | "completed";   // 已完成
-
-// 状态顺序常量（用于判断状态是否达到解锁条件）
-export const WAYBILL_STATUS_ORDER: WaybillStatus[] = [
-  "created",
-  "dispatched", 
-  "loading",
-  "in_transit",
-  "delivered",
-  "signed",
-  "settled",
-  "completed"
-];
-
-// 状态显示名映射
-export const WAYBILL_STATUS_LABELS: Record<WaybillStatus, string> = {
-  created: "已创建",
-  dispatched: "已派单",
-  loading: "装货中",
-  in_transit: "运输中",
-  delivered: "已送达",
-  signed: "已签收",
-  settled: "已结算",
-  completed: "已完成"
-};
+// 从 shared/enums 重新导出运单状态相关常量
+export { WAYBILL_STATUS_ORDER, WAYBILL_STATUS_LABELS } from "../../shared/src/enums.js";
 
 // 支付类别配置
 export interface PaymentCategoryConfig {
@@ -740,4 +711,39 @@ export interface RevenueRankItem {
   name: string;
   amount: number;
   count: number;
+}
+
+// 抽成合同状态
+export type CommissionContractStatus = "active" | "expired" | "terminated" | "expiring_soon";
+
+// 抽成配置项
+export interface CommissionConfigItem {
+  mode: "percentage" | "fixed";
+  value: number;
+  categoryCode?: string;
+  categoryName?: string;
+}
+
+// 抽成合同
+export interface CommissionContract {
+  id: string;
+  customerName: string;
+  customerSystemId: string;
+  startDate: string;
+  endDate: string;
+  settlementCycle: string;
+  settlementDay: number;
+  remark?: string;
+  commissionConfig: CommissionConfigItem[];
+  status: CommissionContractStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// 抽成合同统计
+export interface CommissionContractStats {
+  totalCount: number;
+  activeCount: number;
+  totalConfigCount: number;
+  avgRatio: number;
 }

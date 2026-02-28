@@ -2980,10 +2980,10 @@ router.post(
         return;
       }
 
-      const isAdmin = req.user?.username === "admin";
+      const isAdmin = req.currentUser?.username === "admin";
       const requestsWithUser = requestsInput.map(r => ({
         ...r,
-        createdBy: req.user?.id,
+        createdBy: req.currentUser?.id,
         skipApproval: isAdmin && r.skipApproval,
       }));
 

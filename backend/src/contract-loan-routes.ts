@@ -45,8 +45,8 @@ router.post(
         contractId,
         amount,
         disbursementDate,
-        operatorId: req.user?.id,
-        operatorName: req.user?.username,
+        operatorId: req.currentUser?.id,
+        operatorName: req.currentUser?.username,
         remark,
       });
 
@@ -127,8 +127,8 @@ router.post(
         principalAmount: principal,
         interestAmount: interest,
         repaymentDate,
-        operatorId: req.user?.id,
-        operatorName: req.user?.username,
+        operatorId: req.currentUser?.id,
+        operatorName: req.currentUser?.username,
         remark,
       });
 

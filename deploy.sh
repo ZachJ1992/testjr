@@ -54,8 +54,10 @@ rm -rf $DEPLOY_DIR
 mkdir -p $DEPLOY_DIR
 
 # 复制必要文件
-cp -r backend/dist $DEPLOY_DIR/backend/
+mkdir -p $DEPLOY_DIR/backend/dist
+cp -r backend/dist/* $DEPLOY_DIR/backend/dist/
 cp -r frontend/dist $DEPLOY_DIR/frontend/
+cp -r shared $DEPLOY_DIR/shared/
 cp backend/package.json $DEPLOY_DIR/backend/
 cp package.json $DEPLOY_DIR/
 cp package-lock.json $DEPLOY_DIR/ 2>/dev/null || true
@@ -92,7 +94,7 @@ if command -v pm2 &> /dev/null; then
 else
     echo "未安装 PM2，使用 node 直接启动..."
     export NODE_ENV=production
-    node dist/index.js
+    node dist/backend/src/index.js
 fi
 EOF
 

@@ -653,7 +653,7 @@ router.post(
     try {
       const { date } = req.body ?? {};
       if (!date) {
-        return sendError(res, 400, "日期参数必填");
+        return sendError(res, req, 400, "日期参数必填");
       }
       
       // 删除指定日期的融资利息和定向支付利息记录
