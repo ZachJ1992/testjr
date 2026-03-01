@@ -668,6 +668,8 @@ export interface RevenueRecord {
   paymentRequestId?: string;
   waybillId?: string;
   remark?: string;
+  vehiclePlate?: string;
+  driverName?: string;
   createdAt: string;
   updatedAt: string;
 }

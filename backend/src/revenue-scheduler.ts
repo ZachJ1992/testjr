@@ -348,7 +348,7 @@ export async function createCommissionFeeRecord(params: {
 
 /**
  * 计算运单平台抽成收益
- * 融满: 每单应收合计 * 2.5%
+ * 融满: 每单应付合计 * 2.5%
  * 金罗: 每单固定 200 元
  * 遍历所有未计算过收益的运单，按融资方规则生成 revenue_records
  */
@@ -380,7 +380,7 @@ async function calculateWaybillPlatformRevenue(): Promise<number> {
 
     // 查询未计算过收益的运单（通过 LEFT JOIN 排除已有记录的运单）
     const [waybills] = await pool.query<RowDataPacket[]>(
-      `SELECT w.id, w.waybill_number, w.customer_id, w.receivable_total, w.waybill_date, w.departure_time,
+      `SELECT w.id, w.waybill_number, w.customer_id, w.receivable_total, w.payable_total, w.waybill_date, w.departure_time,
               f.enterprise_name as financier_name
        FROM waybills w
        LEFT JOIN financiers f ON w.customer_id = f.id
@@ -404,11 +404,11 @@ async function calculateWaybillPlatformRevenue(): Promise<number> {
 
       let amount: number;
       let rate: number;
-      const receivableTotal = Number(w.receivable_total) || 0;
+      const payableTotal = Number(w.payable_total) || 0;
 
       if (rule.type === 'percentage') {
-        if (receivableTotal <= 0) continue;
-        amount = Math.round(receivableTotal * rule.value * 100) / 100;
+        if (payableTotal <= 0) continue;
+        amount = Math.round(payableTotal * rule.value * 100) / 100;
         rate = rule.value;
       } else {
         amount = rule.value;
@@ -431,7 +431,7 @@ async function calculateWaybillPlatformRevenue(): Promise<number> {
         financierId: w.customer_id,
         financierName: w.financier_name || rule.name,
         amount,
-        principalAmount: receivableTotal,
+        principalAmount: payableTotal,
         rate,
         revenueDate,
         status: "confirmed",
@@ -472,13 +472,16 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
         rr.contract_type = 'waybill',
         rr.financier_id = w.customer_id,
         rr.financier_name = f.enterprise_name,
-        rr.principal_amount = COALESCE(w.receivable_total, 0),
+        rr.principal_amount = CASE
+          WHEN f.enterprise_name = '融满' THEN COALESCE(w.payable_total, 0)
+          ELSE COALESCE(w.receivable_total, 0)
+        END,
         rr.rate = CASE
           WHEN f.enterprise_name = '融满' THEN 0.025
           ELSE 0
         END,
         rr.amount = CASE
-          WHEN f.enterprise_name = '融满' THEN ROUND(COALESCE(w.receivable_total, 0) * 0.025, 2)
+          WHEN f.enterprise_name = '融满' THEN ROUND(COALESCE(w.payable_total, 0) * 0.025, 2)
           WHEN f.enterprise_name = '金罗' THEN 200
           ELSE rr.amount
         END,
@@ -505,11 +508,14 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
         w.customer_id, w.waybill_number, 'waybill',
         w.customer_id, f.enterprise_name,
         CASE
-          WHEN f.enterprise_name = '融满' THEN ROUND(COALESCE(w.receivable_total, 0) * 0.025, 2)
+          WHEN f.enterprise_name = '融满' THEN ROUND(COALESCE(w.payable_total, 0) * 0.025, 2)
           WHEN f.enterprise_name = '金罗' THEN 200
           ELSE 0
         END AS amount,
-        COALESCE(w.receivable_total, 0) AS principal_amount,
+        CASE
+          WHEN f.enterprise_name = '融满' THEN COALESCE(w.payable_total, 0)
+          ELSE COALESCE(w.receivable_total, 0)
+        END AS principal_amount,
         CASE
           WHEN f.enterprise_name = '融满' THEN 0.025
           ELSE 0
@@ -526,7 +532,7 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
         AND f.deleted_at IS NULL
         AND f.enterprise_name IN ('融满', '金罗')
         AND rr.id IS NULL
-        AND (f.enterprise_name <> '融满' OR COALESCE(w.receivable_total, 0) > 0)
+        AND (f.enterprise_name <> '融满' OR COALESCE(w.payable_total, 0) > 0)
     `);
 
     const updated = Number(updateResult.affectedRows || 0);

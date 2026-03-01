@@ -297,7 +297,21 @@ const PlatformRevenue: React.FC = () => {
     },
     { title: '融资方', dataIndex: 'financierName', key: 'financierName', width: 100 },
     {
-      title: '应收金额',
+      title: '车牌号',
+      dataIndex: 'vehiclePlate',
+      key: 'vehiclePlate',
+      width: 100,
+      render: (v: string) => v || '-',
+    },
+    {
+      title: '司机',
+      dataIndex: 'driverName',
+      key: 'driverName',
+      width: 80,
+      render: (v: string) => v || '-',
+    },
+    {
+      title: '基础金额',
       dataIndex: 'principalAmount',
       key: 'principalAmount',
       width: 100,

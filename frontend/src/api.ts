@@ -2469,6 +2469,8 @@ export interface RevenueRecord {
   revenueDate: string;
   status: RevenueStatus;
   remark?: string;
+  vehiclePlate?: string;
+  driverName?: string;
   createdAt: string;
 }
 

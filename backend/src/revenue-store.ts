@@ -68,6 +68,8 @@ function rowToRevenueRecord(row: RowDataPacket): RevenueRecord {
     paymentRequestId: row.payment_request_id || undefined,
     waybillId: row.waybill_id || undefined,
     remark: row.remark || undefined,
+    vehiclePlate: row.vehicle_plate || undefined,
+    driverName: row.driver_name || undefined,
     createdAt: row.created_at instanceof Date
       ? row.created_at.toISOString()
       : String(row.created_at),
@@ -265,8 +267,11 @@ export async function getRevenueRecords(
   const offset = (page - 1) * pageSize;
 
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT * FROM revenue_records ${whereClause} 
-     ORDER BY revenue_date DESC, created_at DESC
+    `SELECT rr.*, w.vehicle_plate, w.driver_name
+     FROM revenue_records rr
+     LEFT JOIN waybills w ON rr.waybill_id = w.id
+     ${whereClause.replace(/\b(record_type|beneficiary_type|beneficiary_id|source_type|financier_id|funder_id|status|revenue_date|contract_id)\b/g, 'rr.$1')}
+     ORDER BY rr.revenue_date DESC, rr.created_at DESC
      LIMIT ? OFFSET ?`,
     [...params, pageSize, offset]
   );
