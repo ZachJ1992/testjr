@@ -915,6 +915,20 @@ async function setDateFilterToHalfYear(page: Page): Promise<boolean> {
  * 映射 API 数据到行数据格式
  */
 function mapApiDataToRow(item: any): TmsRowData {
+  const actualFreight = parseFloat(
+    item.actualFreight ||
+    item.actual_freight ||
+    item.realFreight ||
+    item.real_freight ||
+    item['实际运费'] ||
+    item.receivableTransport ||
+    item.receivable_transport ||
+    item.receivable_trans_f ||
+    item.b_tr_trans_f_s ||
+    0
+  );
+  const receivableTotal = actualFreight || parseFloat(item.receivableTotal || item.receivable_total || item.b_tr_total_price_s || 0);
+
   return {
     waybillNumber: item.batchNumber || item.batch_number || item.car_batch || '',
     operator: item.operator || item.mgr_id || '',
@@ -926,8 +940,8 @@ function mapApiDataToRow(item: any): TmsRowData {
     departureTime: item.departureTime || item.departure_time || item.truck_t || '',
     remark: item.remark || item.b_remark || '',
     customerName: item.customerName || item.customer_name || '',
-    receivableTotal: parseFloat(item.receivableTotal || item.receivable_total || 0),
-    receivableTransport: parseFloat(item.receivableTransport || item.receivable_transport || item.receivable_trans_f || 0),
+    receivableTotal,
+    receivableTransport: actualFreight || parseFloat(item.receivableTransport || item.receivable_transport || item.receivable_trans_f || 0),
     payableTotal: parseFloat(item.payableTotal || item.payable_total || 0),
     driverPieceRate: parseFloat(item.driverPieceRate || item.driver_piece_rate || 0),
     coDriverPieceRate: parseFloat(item.coDriverPieceRate || item.co_driver_piece_rate || 0),

@@ -6,7 +6,7 @@ import { Router, Response } from "express";
 import { authenticate, requirePermissions, requireAnyPermission, AuthenticatedRequest } from "./auth.js";
 import { handleError, sendError } from "./errorHandler.js";
 import * as revenueStore from "./revenue-store.js";
-import { calculateDailyRevenue } from "./revenue-scheduler.js";
+import { calculateDailyRevenue, recalculateHistoricalWaybillCommissions } from "./revenue-scheduler.js";
 import { RevenueSourceType, RevenueStatus } from "./types.js";
 
 const router = Router();
@@ -666,6 +666,25 @@ router.post(
       // 重新计算
       const result = await calculateDailyRevenue(date);
       res.json({ success: true, message: `已清理并重新计算 ${date} 的收益`, ...result });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+// 全量回算运单抽成历史记录（仅平台管理员）
+router.post(
+  "/revenue/recalculate-waybill-commission-history",
+  authenticate,
+  requirePermissions("revenue_management"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const result = await recalculateHistoricalWaybillCommissions();
+      res.json({
+        success: true,
+        message: "运单抽成历史记录已按最新规则回算",
+        ...result,
+      });
     } catch (err) {
       handleError(res, req, 500, err);
     }

@@ -313,7 +313,10 @@ const PlatformRevenue: React.FC = () => {
       width: 90,
       render: (_: any, record: any) => {
         if (record.sourceType !== 'waybill_commission') return '-';
-        if (record.rate && record.rate > 0) return `${(record.rate * 100).toFixed(0)}%`;
+        if (record.rate && record.rate > 0) {
+          const percent = record.rate * 100;
+          return Number.isInteger(percent) ? `${percent.toFixed(0)}%` : `${percent.toFixed(1)}%`;
+        }
         return '固定200元';
       },
     },

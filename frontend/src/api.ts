@@ -1,12 +1,17 @@
 import { Investment, InvestmentStats, InvestmentStatus, OrgUnit, PermissionNode, SafeUser, UserGroupDetail, Supervision, SupervisionStats, SupervisionStatus, SupervisionType, ContractCommission, CommissionStats, CommissionStatus, Contract, ContractType, Funder, FunderType, FunderStatus, Financier, FinancierScale, FinancierStatus, FundPoolMonitoring, SystemParameters, Waybill, WaybillStats, WaybillStatus, BusinessMode, ExternalSystemConfig, DirectedPaymentRequest, PaymentRequestStatus, PaymentRequestStats, ReceiverType, CrawlerConfig, CrawlerSyncLog, CrawlerTestResult, CrawlerSyncResult, CrawlerTemplateMeta } from "./types";
 
-// 自动检测后端地址：如果是本地访问用localhost，否则用当前主机名
+// 自动检测后端地址：
+// - 本地开发：直接连 3001 端口
+// - 线上部署：统一走同源 /api（由 Nginx 反向代理）
 export const getApiBase = () => {
   if (import.meta.env.VITE_API_BASE) {
     return import.meta.env.VITE_API_BASE;
   }
   const hostname = window.location.hostname;
-  return `http://${hostname}:3001/api`;
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return `http://${hostname}:3001/api`;
+  }
+  return `${window.location.origin}/api`;
 };
 const API_BASE = getApiBase();
 export const API_AI = `${API_BASE}/ai/agent`;

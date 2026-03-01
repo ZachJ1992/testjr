@@ -26,6 +26,24 @@ const SOURCE_TYPE_NAMES: Record<RevenueSourceType, string> = {
   waybill_commission: "运单平台抽成",
 };
 
+function formatDateLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function toDateOnlyString(value: unknown): string {
+  if (value instanceof Date) {
+    return formatDateLocal(value);
+  }
+  const text = String(value ?? "");
+  if (!text) return "";
+  if (text.includes("T")) return text.split("T")[0];
+  if (text.includes(" ")) return text.split(" ")[0];
+  return text;
+}
+
 // 数据库行转换为 RevenueRecord
 function rowToRevenueRecord(row: RowDataPacket): RevenueRecord {
   return {
@@ -44,9 +62,7 @@ function rowToRevenueRecord(row: RowDataPacket): RevenueRecord {
     amount: Number(row.amount),
     principalAmount: row.principal_amount ? Number(row.principal_amount) : undefined,
     rate: row.rate ? Number(row.rate) : undefined,
-    revenueDate: row.revenue_date instanceof Date
-      ? row.revenue_date.toISOString().split("T")[0]
-      : String(row.revenue_date).split("T")[0],
+    revenueDate: toDateOnlyString(row.revenue_date),
     status: row.status,
     settlementId: row.settlement_id || undefined,
     paymentRequestId: row.payment_request_id || undefined,
@@ -410,43 +426,75 @@ export async function getRevenueStats(filters: {
     if (filters.startDate && filters.endDate) {
       const [newContractRows] = await pool.query<RowDataPacket[]>(
         `SELECT COUNT(*) as count FROM contracts 
-         WHERE created_at >= ? AND created_at <= DATE_ADD(?, INTERVAL 1 DAY)
-         AND deleted_at IS NULL`,
+         WHERE status = 'active'
+           AND created_at >= ? AND created_at <= DATE_ADD(?, INTERVAL 1 DAY)
+           AND deleted_at IS NULL`,
         [filters.startDate, filters.endDate]
       );
       const [newCommissionRows] = await pool.query<RowDataPacket[]>(
         `SELECT COUNT(*) as count FROM commission_contracts 
-         WHERE created_at >= ? AND created_at <= DATE_ADD(?, INTERVAL 1 DAY)`,
+         WHERE status = 'active'
+           AND created_at >= ? AND created_at <= DATE_ADD(?, INTERVAL 1 DAY)`,
         [filters.startDate, filters.endDate]
       );
       const [newDirectedPayRows] = await pool.query<RowDataPacket[]>(
         `SELECT COUNT(*) as count FROM directed_pay_contracts 
-         WHERE created_at >= ? AND created_at <= DATE_ADD(?, INTERVAL 1 DAY)`,
+         WHERE status = 'active'
+           AND created_at >= ? AND created_at <= DATE_ADD(?, INTERVAL 1 DAY)
+           AND deleted_at IS NULL`,
         [filters.startDate, filters.endDate]
       );
       newContractsPeriod = Number(newContractRows[0].count) + Number(newCommissionRows[0].count) + Number(newDirectedPayRows[0].count);
     }
 
-    // 活跃资金方数量 (在有效合同中出现过的资金方)
+    // 活跃资金方数量（有效合同 + 资金方主数据未删除且状态激活）
     const [funderRows] = await pool.query<RowDataPacket[]>(
       `SELECT COUNT(*) as count FROM (
-         SELECT DISTINCT funder_id FROM contracts 
-         WHERE status = 'active' AND deleted_at IS NULL AND funder_id IS NOT NULL AND funder_id != ''
+         SELECT DISTINCT c.funder_id
+         FROM contracts c
+         JOIN funders f ON f.id = c.funder_id
+         WHERE c.status = 'active'
+           AND c.deleted_at IS NULL
+           AND f.deleted_at IS NULL
+           AND f.status = 'active'
+           AND c.funder_id IS NOT NULL
+           AND c.funder_id != ''
          UNION
-         SELECT DISTINCT funder_id FROM directed_pay_contracts 
-         WHERE status = 'active' AND deleted_at IS NULL AND funder_id IS NOT NULL AND funder_id != ''
+         SELECT DISTINCT dpc.funder_id
+         FROM directed_pay_contracts dpc
+         JOIN funders f ON f.id = dpc.funder_id
+         WHERE dpc.status = 'active'
+           AND dpc.deleted_at IS NULL
+           AND f.deleted_at IS NULL
+           AND f.status = 'active'
+           AND dpc.funder_id IS NOT NULL
+           AND dpc.funder_id != ''
        ) AS all_funders`
     );
     activeFunders = Number(funderRows[0].count);
 
-    // 活跃融资方数量 (在有效合同中出现过的融资方)
+    // 活跃融资方数量（有效合同 + 融资方主数据未删除且状态激活）
     const [financierRows] = await pool.query<RowDataPacket[]>(
       `SELECT COUNT(*) as count FROM (
-         SELECT DISTINCT logistics_provider_id FROM contracts 
-         WHERE status = 'active' AND deleted_at IS NULL AND logistics_provider_id IS NOT NULL AND logistics_provider_id != ''
+         SELECT DISTINCT c.logistics_provider_id
+         FROM contracts c
+         JOIN financiers f ON f.id = c.logistics_provider_id
+         WHERE c.status = 'active'
+           AND c.deleted_at IS NULL
+           AND f.deleted_at IS NULL
+           AND f.status = 'active'
+           AND c.logistics_provider_id IS NOT NULL
+           AND c.logistics_provider_id != ''
          UNION
-         SELECT DISTINCT financier_id FROM directed_pay_contracts 
-         WHERE status = 'active' AND deleted_at IS NULL AND financier_id IS NOT NULL AND financier_id != ''
+         SELECT DISTINCT dpc.financier_id
+         FROM directed_pay_contracts dpc
+         JOIN financiers f ON f.id = dpc.financier_id
+         WHERE dpc.status = 'active'
+           AND dpc.deleted_at IS NULL
+           AND f.deleted_at IS NULL
+           AND f.status = 'active'
+           AND dpc.financier_id IS NOT NULL
+           AND dpc.financier_id != ''
        ) AS all_financiers`
     );
     activeFinanciers = Number(financierRows[0].count);

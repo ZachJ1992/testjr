@@ -3244,10 +3244,13 @@ function mapContractRow(row: ContractRow): Contract {
   const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
   
   let status: ContractStatus = row.status as ContractStatus;
-  if (status === "active" && daysUntilExpiry <= 30 && daysUntilExpiry >= 0) {
-    status = "expiring_soon";
-  } else if (daysUntilExpiry < 0) {
-    status = "expired";
+  // disabled 状态优先，不应被“临近到期/已过期”规则覆盖
+  if (status !== "disabled") {
+    if (daysUntilExpiry < 0) {
+      status = "expired";
+    } else if (status === "active" && daysUntilExpiry <= 30 && daysUntilExpiry >= 0) {
+      status = "expiring_soon";
+    }
   }
 
   return {

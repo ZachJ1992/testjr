@@ -5,9 +5,22 @@
  */
 
 import { pool } from "./db.js";
-import { RowDataPacket } from "mysql2";
+import { RowDataPacket, ResultSetHeader } from "mysql2";
 import * as revenueStore from "./revenue-store.js";
 import { CreateRevenueRecordInput } from "./revenue-store.js";
+
+function formatDateOnly(value: Date | string): string {
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  const text = String(value);
+  if (text.includes("T")) return text.split("T")[0];
+  if (text.includes(" ")) return text.split(" ")[0];
+  return text;
+}
 
 /**
  * 每日收益计算任务
@@ -35,7 +48,7 @@ export async function calculateDailyRevenue(targetDate?: string): Promise<{
   // 3. 撮合业务抽成 (在结算时生成，这里不处理)
   // 4. 抽成合同费用 (在结算时生成，这里不处理)
 
-  // 5. 运单平台抽成（按融资方规则：融满20%应收，金罗200元/单）
+  // 5. 运单平台抽成（按融资方规则：融满2.5%应收，金罗200元/单）
   const waybillCommissionRecords = await calculateWaybillPlatformRevenue();
   totalRecords += waybillCommissionRecords;
 
@@ -335,7 +348,7 @@ export async function createCommissionFeeRecord(params: {
 
 /**
  * 计算运单平台抽成收益
- * 融满: 每单应收合计 * 20%
+ * 融满: 每单应收合计 * 2.5%
  * 金罗: 每单固定 200 元
  * 遍历所有未计算过收益的运单，按融资方规则生成 revenue_records
  */
@@ -351,7 +364,7 @@ async function calculateWaybillPlatformRevenue(): Promise<number> {
 
     for (const f of financiers) {
       if (f.enterprise_name === '融满') {
-        FINANCIER_RULES[f.id] = { type: 'percentage', value: 0.20, name: '融满' };
+        FINANCIER_RULES[f.id] = { type: 'percentage', value: 0.025, name: '融满' };
       } else if (f.enterprise_name === '金罗') {
         FINANCIER_RULES[f.id] = { type: 'fixed', value: 200, name: '金罗' };
       }
@@ -367,7 +380,7 @@ async function calculateWaybillPlatformRevenue(): Promise<number> {
 
     // 查询未计算过收益的运单（通过 LEFT JOIN 排除已有记录的运单）
     const [waybills] = await pool.query<RowDataPacket[]>(
-      `SELECT w.id, w.waybill_number, w.customer_id, w.receivable_total, w.waybill_date,
+      `SELECT w.id, w.waybill_number, w.customer_id, w.receivable_total, w.waybill_date, w.departure_time,
               f.enterprise_name as financier_name
        FROM waybills w
        LEFT JOIN financiers f ON w.customer_id = f.id
@@ -402,8 +415,10 @@ async function calculateWaybillPlatformRevenue(): Promise<number> {
         rate = 0;
       }
 
-      const revenueDate = w.waybill_date
-        ? (w.waybill_date instanceof Date ? w.waybill_date.toISOString().split('T')[0] : String(w.waybill_date).split('T')[0])
+      // 运单抽成日期优先使用“发车时间”，其次运单日期
+      const revenueDateSource = w.departure_time || w.waybill_date;
+      const revenueDate = revenueDateSource
+        ? formatDateOnly(revenueDateSource)
         : new Date().toISOString().split('T')[0];
 
       records.push({
@@ -433,6 +448,96 @@ async function calculateWaybillPlatformRevenue(): Promise<number> {
   } catch (err) {
     console.error("[WaybillRevenue] 计算运单平台抽成失败:", err);
     return 0;
+  }
+}
+
+/**
+ * 回算历史运单抽成记录（全量）
+ * - 已有记录：按当前规则重算 amount / rate / principal_amount
+ * - 缺失记录：补齐 waybill_commission 记录
+ */
+export async function recalculateHistoricalWaybillCommissions(): Promise<{
+  updated: number;
+  inserted: number;
+  totalAffected: number;
+}> {
+  try {
+    const [updateResult] = await pool.query<ResultSetHeader>(`
+      UPDATE revenue_records rr
+      JOIN waybills w ON rr.waybill_id = w.id
+      JOIN financiers f ON w.customer_id = f.id
+      SET
+        rr.contract_id = w.customer_id,
+        rr.contract_number = w.waybill_number,
+        rr.contract_type = 'waybill',
+        rr.financier_id = w.customer_id,
+        rr.financier_name = f.enterprise_name,
+        rr.principal_amount = COALESCE(w.receivable_total, 0),
+        rr.rate = CASE
+          WHEN f.enterprise_name = '融满' THEN 0.025
+          ELSE 0
+        END,
+        rr.amount = CASE
+          WHEN f.enterprise_name = '融满' THEN ROUND(COALESCE(w.receivable_total, 0) * 0.025, 2)
+          WHEN f.enterprise_name = '金罗' THEN 200
+          ELSE rr.amount
+        END,
+        rr.record_type = 'revenue',
+        rr.beneficiary_type = 'platform',
+        rr.revenue_date = COALESCE(DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date),
+        rr.status = 'confirmed'
+      WHERE rr.source_type = 'waybill_commission'
+        AND w.deleted_at IS NULL
+        AND f.deleted_at IS NULL
+        AND f.enterprise_name IN ('融满', '金罗')
+    `);
+
+    const [insertResult] = await pool.query<ResultSetHeader>(`
+      INSERT INTO revenue_records (
+        id, record_type, beneficiary_type, source_type,
+        contract_id, contract_number, contract_type,
+        financier_id, financier_name,
+        amount, principal_amount, rate,
+        revenue_date, status, waybill_id
+      )
+      SELECT
+        UUID(), 'revenue', 'platform', 'waybill_commission',
+        w.customer_id, w.waybill_number, 'waybill',
+        w.customer_id, f.enterprise_name,
+        CASE
+          WHEN f.enterprise_name = '融满' THEN ROUND(COALESCE(w.receivable_total, 0) * 0.025, 2)
+          WHEN f.enterprise_name = '金罗' THEN 200
+          ELSE 0
+        END AS amount,
+        COALESCE(w.receivable_total, 0) AS principal_amount,
+        CASE
+          WHEN f.enterprise_name = '融满' THEN 0.025
+          ELSE 0
+        END AS rate,
+        COALESCE(DATE(w.departure_time), DATE(w.waybill_date), CURRENT_DATE) AS revenue_date,
+        'confirmed' AS status,
+        w.id AS waybill_id
+      FROM waybills w
+      JOIN financiers f ON w.customer_id = f.id
+      LEFT JOIN revenue_records rr
+        ON rr.waybill_id = w.id
+       AND rr.source_type = 'waybill_commission'
+      WHERE w.deleted_at IS NULL
+        AND f.deleted_at IS NULL
+        AND f.enterprise_name IN ('融满', '金罗')
+        AND rr.id IS NULL
+        AND (f.enterprise_name <> '融满' OR COALESCE(w.receivable_total, 0) > 0)
+    `);
+
+    const updated = Number(updateResult.affectedRows || 0);
+    const inserted = Number(insertResult.affectedRows || 0);
+    const totalAffected = updated + inserted;
+
+    console.log(`[WaybillRevenue] 历史回算完成: 更新 ${updated} 条, 新增 ${inserted} 条`);
+    return { updated, inserted, totalAffected };
+  } catch (err) {
+    console.error("[WaybillRevenue] 历史回算失败:", err);
+    throw err;
   }
 }
 

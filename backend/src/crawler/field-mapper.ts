@@ -32,6 +32,14 @@ function parseString(value: any): string {
   return String(value).trim();
 }
 
+function pickFirstPositiveNumber(candidates: Array<string | number | null | undefined>): number {
+  for (const candidate of candidates) {
+    const value = parseNumber(candidate);
+    if (value > 0) return value;
+  }
+  return 0;
+}
+
 /**
  * 将TMS运单记录映射到系统运单格式
  */
@@ -53,6 +61,17 @@ export function mapTmsToWaybill(record: TmsWaybillRecord, customerId: string): R
   // 优先使用 load_addr 和 unload_addr
   if (record.load_addr) departurePlace = record.load_addr;
   if (record.unload_addr) arrivalPlace = record.unload_addr;
+
+  const actualFreight = pickFirstPositiveNumber([
+    record.receivable_trans_f,
+    (record as any).b_tr_trans_f_s,
+    (record as any).actual_freight,
+    (record as any).actualFreight,
+    (record as any).real_freight,
+    (record as any).realFreight,
+    (record as any)["实际运费"],
+  ]);
+  const receivableTotal = actualFreight || parseNumber(record.receivable_total);
 
   return {
     // 基础信息
@@ -81,8 +100,8 @@ export function mapTmsToWaybill(record: TmsWaybillRecord, customerId: string): R
     dispatchStatus: parseString(record.dispatch_driver_st),
     
     // 费用信息 - 应收
-    receivableTotal: parseNumber(record.receivable_total),
-    receivableTransport: parseNumber(record.receivable_trans_f),
+    receivableTotal: receivableTotal,
+    receivableTransport: actualFreight || parseNumber(record.receivable_trans_f),
     receivableCash: parseNumber(record.receivable_spot_fee),
     receivableUpstairsFee: parseNumber(record.receivable_upstairs_f),
     receivableLoadingFee: parseNumber(record.receivable_handling_f),
@@ -100,7 +119,7 @@ export function mapTmsToWaybill(record: TmsWaybillRecord, customerId: string): R
     remark: parseString(record.b_remark),
     
     // 兼容旧字段
-    freightAmount: parseNumber(record.receivable_trans_f) || parseNumber(record.receivable_total),
+    freightAmount: receivableTotal,
     oilCardAmount: parseNumber(record.b_fuel_card_f),
     etcAmount: 0,
     cashAmount: parseNumber(record.receivable_spot_fee),
