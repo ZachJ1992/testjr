@@ -13,6 +13,7 @@ import { getActiveCrawlerConfigs, updateSyncStatus } from '../external-systems-s
 import { getCrawlerTemplate } from './crawler-templates.js';
 import { runCrawlerWithTemplate, cleanupStaleCrawlerProcesses } from './crawler-engine.js';
 import { cleanupOldTempDirectories } from './puppeteer-crawler.js';
+import { calculateWaybillPlatformRevenue } from '../revenue-scheduler.js';
 import type { ExternalSystemConfig } from '../types.js';
 
 // 加载所有模板
@@ -165,6 +166,17 @@ async function executeSyncTask(config: ExternalSystemConfig): Promise<void> {
     if (result.success) {
       console.log(`[Scheduler] 同步任务完成: ${configName}，新增 ${result.newCount} 条，更新 ${result.updatedCount} 条，跳过 ${result.skippedCount} 条`);
       await updateSyncStatus(config.id, 'success');
+      
+      if (result.newCount > 0 || result.updatedCount > 0) {
+        try {
+          const commissionCount = await calculateWaybillPlatformRevenue();
+          if (commissionCount > 0) {
+            console.log(`[Scheduler] 自动生成 ${commissionCount} 条运单抽成记录`);
+          }
+        } catch (err: any) {
+          console.error(`[Scheduler] 自动计算运单抽成失败: ${err.message}`);
+        }
+      }
     } else {
       console.log(`[Scheduler] 同步任务失败: ${configName}，错误: ${result.error}`);
       await updateSyncStatus(config.id, 'failed', result.error);

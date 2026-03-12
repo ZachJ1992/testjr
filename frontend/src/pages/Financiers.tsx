@@ -899,6 +899,7 @@ function FinanciersPage() {
           {
             title: t("common.actions", "操作"),
             width: 300,
+            align: "center" as const,
             render: (_, record) => (
               <Space size="small">
                 <Tooltip title={t("common.view", "查看")}>

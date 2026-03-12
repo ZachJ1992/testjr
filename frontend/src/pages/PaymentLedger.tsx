@@ -41,12 +41,13 @@ interface PaymentTransaction {
   isAbnormal?: boolean;
 }
 
-// Mock数据
+// Mock数据（使用当天日期，确保"今日"筛选能命中）
+const today = dayjs().format("YYYY-MM-DD");
 const mockTransactions: PaymentTransaction[] = [
   {
     id: "1",
     transactionNumber: "TXN-20241219-001234",
-    occurredAt: "2024-12-19T15:23:45Z",
+    occurredAt: `${today}T15:23:45Z`,
     businessType: "freight_payment",
     amount: -125000,
     relatedDocument: "FIN-2024-001",
@@ -55,31 +56,9 @@ const mockTransactions: PaymentTransaction[] = [
     status: "success"
   },
   {
-    id: "2",
-    transactionNumber: "TXN-20241219-001235",
-    occurredAt: "2024-12-19T14:58:12Z",
-    businessType: "balance_repayment",
-    amount: 450000,
-    relatedDocument: "REP-2024-089",
-    fundAccount: "招商银行资金池",
-    channel: "CMB",
-    status: "success"
-  },
-  {
-    id: "3",
-    transactionNumber: "TXN-20241219-001236",
-    occurredAt: "2024-12-19T14:35:20Z",
-    businessType: "freight_payment",
-    amount: -88000,
-    relatedDocument: "FIN-2024-045",
-    fundAccount: "华润深国投信托",
-    channel: "CRSC",
-    status: "success"
-  },
-  {
     id: "4",
     transactionNumber: "TXN-20241219-001237",
-    occurredAt: "2024-12-19T13:42:08Z",
+    occurredAt: `${today}T13:42:08Z`,
     businessType: "interest_settlement",
     amount: -75000,
     relatedDocument: "FR-2025-02-001",
@@ -87,95 +66,6 @@ const mockTransactions: PaymentTransaction[] = [
     channel: "ICBC",
     status: "processing",
     isAbnormal: true
-  },
-  {
-    id: "5",
-    transactionNumber: "TXN-20241219-001238",
-    occurredAt: "2024-12-19T13:15:33Z",
-    businessType: "freight_payment",
-    amount: -156000,
-    relatedDocument: "FIN-2024-078",
-    fundAccount: "招商银行资金池",
-    channel: "CMB",
-    status: "success"
-  },
-  {
-    id: "6",
-    transactionNumber: "TXN-20241219-001239",
-    occurredAt: "2024-12-19T12:28:45Z",
-    businessType: "balance_repayment",
-    amount: 220000,
-    relatedDocument: "REP-2024-095",
-    fundAccount: "中国工商银行资金池",
-    channel: "ICBC",
-    status: "success"
-  },
-  {
-    id: "7",
-    transactionNumber: "TXN-20241219-001240",
-    occurredAt: "2024-12-19T11:50:19Z",
-    businessType: "freight_payment",
-    amount: -98000,
-    relatedDocument: "FIN-2024-089",
-    fundAccount: "登途自营资金池",
-    channel: "DT",
-    status: "success"
-  },
-  {
-    id: "8",
-    transactionNumber: "TXN-20241219-001241",
-    occurredAt: "2024-12-19T11:20:56Z",
-    businessType: "balance_repayment",
-    amount: 180000,
-    relatedDocument: "REP-2024-102",
-    fundAccount: "华润深国投信托",
-    channel: "CRSC",
-    status: "success"
-  },
-  {
-    id: "9",
-    transactionNumber: "TXN-20241219-001242",
-    occurredAt: "2024-12-19T10:45:32Z",
-    businessType: "freight_payment",
-    amount: -132000,
-    relatedDocument: "FIN-2024-112",
-    fundAccount: "招商银行资金池",
-    channel: "CMB",
-    status: "success"
-  },
-  {
-    id: "10",
-    transactionNumber: "TXN-20241219-001243",
-    occurredAt: "2024-12-19T10:12:44Z",
-    businessType: "interest_settlement",
-    amount: -68000,
-    relatedDocument: "FR-2025-02-002",
-    fundAccount: "招商银行资金池",
-    channel: "CMB",
-    status: "success"
-  },
-  {
-    id: "11",
-    transactionNumber: "TXN-20241219-001244",
-    occurredAt: "2024-12-19T09:38:17Z",
-    businessType: "freight_payment",
-    amount: -245000,
-    relatedDocument: "FIN-2024-125",
-    fundAccount: "中国工商银行资金池",
-    channel: "ICBC",
-    status: "success",
-    isAbnormal: true
-  },
-  {
-    id: "12",
-    transactionNumber: "TXN-20241219-001245",
-    occurredAt: "2024-12-19T09:05:23Z",
-    businessType: "balance_repayment",
-    amount: 320000,
-    relatedDocument: "REP-2024-115",
-    fundAccount: "华润深国投信托",
-    channel: "CRSC",
-    status: "success"
   }
 ];
 

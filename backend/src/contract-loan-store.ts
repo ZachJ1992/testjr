@@ -256,8 +256,8 @@ export async function calculateDailyInterest(
     ? Number(contract.overdue_rate) 
     : Number(contract.annual_interest_rate);
   
-  // 日利率 = 年利率 / 360
-  const dailyRate = annualRate / 360;
+  // 日利率 = 年利率(%) / 100 / 360
+  const dailyRate = annualRate / 100 / 360;
   const interestAmount = outstandingPrincipal * dailyRate;
   
   // 检查是否已计算过

@@ -84,6 +84,7 @@ async function calculateFinancingInterest(date: string): Promise<number> {
       LEFT JOIN financiers fn ON c.logistics_provider_id = fn.id
       WHERE c.type = 'financing' 
       AND c.status = 'active'
+      AND c.deleted_at IS NULL
       AND c.outstanding_principal > 0
     `);
 
@@ -181,6 +182,8 @@ async function calculateDirectedPayInterest(date: string): Promise<number> {
       LEFT JOIN funders f ON dpc.funder_id = f.id
       LEFT JOIN financiers fn ON dpc.financier_id = fn.id
       WHERE dpr.status = 'success'
+      AND dpc.status = 'active'
+      AND dpc.deleted_at IS NULL
       AND dpr.interest_start_time IS NOT NULL
       AND DATE(dpr.interest_start_time) <= ?
     `, [date]);
@@ -352,7 +355,7 @@ export async function createCommissionFeeRecord(params: {
  * 金罗: 每单固定 200 元
  * 遍历所有未计算过收益的运单，按融资方规则生成 revenue_records
  */
-async function calculateWaybillPlatformRevenue(): Promise<number> {
+export async function calculateWaybillPlatformRevenue(): Promise<number> {
   try {
     // 融资方规则配置
     const FINANCIER_RULES: Record<string, { type: 'percentage' | 'fixed'; value: number; name: string }> = {};

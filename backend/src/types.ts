@@ -670,6 +670,7 @@ export interface RevenueRecord {
   remark?: string;
   vehiclePlate?: string;
   driverName?: string;
+  subFinancier?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -72,7 +72,9 @@ const STATUS_CONFIG: Record<PaymentRequestStatus, { color: string; label: string
   processing: { color: "purple", label: "处理中" },
   success: { color: "green", label: "支付成功" },
   failed: { color: "error", label: "支付失败" },
-  cancelled: { color: "default", label: "已取消" }
+  cancelled: { color: "default", label: "已取消" },
+  completed: { color: "cyan", label: "已完成" },
+  paid: { color: "green", label: "已支付" }
 };
 
 function DirectedPayRequestsPage() {
@@ -346,7 +348,7 @@ function DirectedPayRequestsPage() {
       dataIndex: "status",
       width: 120,
       render: (status: PaymentRequestStatus) => {
-        const config = STATUS_CONFIG[status];
+        const config = STATUS_CONFIG[status] || { color: "default", label: status || "未知" };
         return <Tag color={config.color}>{config.label}</Tag>;
       }
     },
@@ -768,8 +770,8 @@ function DirectedPayRequestsPage() {
             <Descriptions.Item label="司机姓名">{selectedRequest.driverName || "-"}</Descriptions.Item>
             <Descriptions.Item label="司机电话">{selectedRequest.driverPhone || "-"}</Descriptions.Item>
             <Descriptions.Item label="状态" span={2}>
-              <Tag color={STATUS_CONFIG[selectedRequest.status].color}>
-                {STATUS_CONFIG[selectedRequest.status].label}
+              <Tag color={(STATUS_CONFIG[selectedRequest.status] || { color: "default" }).color}>
+                {(STATUS_CONFIG[selectedRequest.status] || { label: selectedRequest.status }).label}
               </Tag>
             </Descriptions.Item>
             <Descriptions.Item label="平台审批" span={2}>

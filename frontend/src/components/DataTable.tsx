@@ -265,7 +265,15 @@ export function DataTable<RecordType extends object>({
       const filterConfig = (col as EnhancedColumnType<RecordType>).filterConfig;
       
       if (!filterConfig || !columnKey) {
-        return col;
+        const origTitle = (col as any).title;
+        return {
+          ...col,
+          title: typeof origTitle === "function" ? origTitle : () => (
+            <div style={{ textAlign: "center", whiteSpace: "nowrap", fontWeight: 600, fontSize: 13, color: "#262626" }}>
+              {origTitle}
+            </div>
+          ),
+        } as ColumnType<RecordType>;
       }
 
       const originalTitle = (col as any).title;
@@ -280,12 +288,14 @@ export function DataTable<RecordType extends object>({
           const titleContent = typeof originalTitle === "function" ? originalTitle() : originalTitle;
           
           return (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, alignItems: "center" }}>
               <div style={{ 
-                fontWeight: 500,
+                fontWeight: 600,
                 fontSize: 13,
                 color: "#262626",
-                lineHeight: "20px"
+                lineHeight: "22px",
+                whiteSpace: "nowrap",
+                textAlign: "center",
               }}>
                 {titleContent}
               </div>
@@ -293,6 +303,7 @@ export function DataTable<RecordType extends object>({
                 onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
                 onMouseUp={(e) => e.stopPropagation()}
+                style={{ minWidth: 0 }}
               >
                 {filterConfig.type === "input" ? (
                   <Input
@@ -303,33 +314,30 @@ export function DataTable<RecordType extends object>({
                     onKeyDown={(e) => handleInputKeyDown(e, columnKey)}
                     onClick={(e) => e.stopPropagation()}
                     onMouseDown={(e) => e.stopPropagation()}
-                    prefix={<SearchOutlined style={{ color: "#bfbfbf", fontSize: 12 }} />}
+                    prefix={<SearchOutlined style={{ color: "#d9d9d9", fontSize: 11 }} />}
                     allowClear
                     style={{ 
                       width: "100%",
                       fontSize: 12,
-                      height: 26
+                      height: 24,
+                      borderRadius: 4,
                     }}
                   />
                 ) : filterConfig.type === "select" ? (
                   <Select
                     size="small"
-                    mode="multiple"
                     placeholder={filterConfig.placeholder || "筛选"}
-                    value={currentValue !== undefined && currentValue !== null 
-                      ? (Array.isArray(currentValue) ? currentValue : [currentValue])
-                      : []}
-                    onChange={(value) => handleSelectChange(columnKey, value || [])}
+                    value={currentValue !== undefined && currentValue !== null && currentValue !== "" ? currentValue : undefined}
+                    onChange={(value) => handleSelectChange(columnKey, value ?? "")}
                     onClick={(e) => e.stopPropagation()}
                     onMouseDown={(e) => e.stopPropagation()}
                     options={filterConfig.options || []}
                     allowClear
-                    maxTagCount={1}
-                    maxTagPlaceholder={(omittedValues) => `+${omittedValues.length}`}
                     style={{ 
                       width: "100%",
-                      fontSize: 12
+                      fontSize: 12,
                     }}
+                    popupMatchSelectWidth={false}
                   />
                 ) : null}
               </div>

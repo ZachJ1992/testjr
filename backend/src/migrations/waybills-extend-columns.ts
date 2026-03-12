@@ -55,6 +55,7 @@ const COLUMNS_TO_ADD = [
   { name: 'load_type', definition: 'VARCHAR(50) NULL' },
   { name: 'batch_type', definition: 'VARCHAR(50) NULL' },
   { name: 'point_count', definition: 'INT DEFAULT 0' },
+  { name: 'sub_financier', definition: "VARCHAR(200) NULL COMMENT '子融资方'" },
 ];
 
 /**

@@ -46,16 +46,6 @@ const mockSettlements: FundIncomeSettlement[] = [
     status: "pending"
   },
   {
-    id: "2",
-    settlementNumber: "FR-2025-02-002",
-    fundProvider: "招商银行",
-    totalCreditAmount: 30000000,
-    occupiedFundDailyCount: 720000000,
-    payableIncome: 45000,
-    settlementPeriod: "2025-02",
-    status: "pending"
-  },
-  {
     id: "3",
     settlementNumber: "FR-2025-01-005",
     fundProvider: "华润深国投信托",
@@ -63,36 +53,6 @@ const mockSettlements: FundIncomeSettlement[] = [
     occupiedFundDailyCount: 570000000,
     payableIncome: 58000,
     settlementPeriod: "2025-01",
-    status: "paid"
-  },
-  {
-    id: "4",
-    settlementNumber: "FR-2025-01-004",
-    fundProvider: "中国工商银行",
-    totalCreditAmount: 50000000,
-    occupiedFundDailyCount: 1650000000,
-    payableIncome: 68000,
-    settlementPeriod: "2025-01",
-    status: "paid"
-  },
-  {
-    id: "5",
-    settlementNumber: "FR-2025-01-003",
-    fundProvider: "招商银行",
-    totalCreditAmount: 30000000,
-    occupiedFundDailyCount: 810000000,
-    payableIncome: 42000,
-    settlementPeriod: "2025-01",
-    status: "paid"
-  },
-  {
-    id: "6",
-    settlementNumber: "FR-2024-12-012",
-    fundProvider: "登途自营资金池",
-    totalCreditAmount: 15000000,
-    occupiedFundDailyCount: 352500000,
-    payableIncome: 32000,
-    settlementPeriod: "2024-12",
     status: "paid"
   }
 ];

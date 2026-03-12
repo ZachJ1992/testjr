@@ -70,6 +70,7 @@ function rowToRevenueRecord(row: RowDataPacket): RevenueRecord {
     remark: row.remark || undefined,
     vehiclePlate: row.vehicle_plate || undefined,
     driverName: row.driver_name || undefined,
+    subFinancier: row.sub_financier || undefined,
     createdAt: row.created_at instanceof Date
       ? row.created_at.toISOString()
       : String(row.created_at),
@@ -189,6 +190,7 @@ export interface RevenueRecordFilters {
   startDate?: string;
   endDate?: string;
   contractId?: string;
+  subFinancier?: string;
   page?: number;
   pageSize?: number;
 }
@@ -203,60 +205,67 @@ export async function getRevenueRecords(
   const params: any[] = [];
 
   if (filters.recordType) {
-    conditions.push("record_type = ?");
+    conditions.push("rr.record_type = ?");
     params.push(filters.recordType);
   }
 
   if (filters.beneficiaryType) {
-    conditions.push("beneficiary_type = ?");
+    conditions.push("rr.beneficiary_type = ?");
     params.push(filters.beneficiaryType);
   }
 
   if (filters.beneficiaryId) {
-    conditions.push("beneficiary_id = ?");
+    conditions.push("rr.beneficiary_id = ?");
     params.push(filters.beneficiaryId);
   }
 
   if (filters.sourceType) {
-    conditions.push("source_type = ?");
+    conditions.push("rr.source_type = ?");
     params.push(filters.sourceType);
   }
 
   if (filters.financierId) {
-    conditions.push("financier_id = ?");
+    conditions.push("rr.financier_id = ?");
     params.push(filters.financierId);
   }
 
   if (filters.funderId) {
-    conditions.push("funder_id = ?");
+    conditions.push("rr.funder_id = ?");
     params.push(filters.funderId);
   }
 
   if (filters.status) {
-    conditions.push("status = ?");
+    conditions.push("rr.status = ?");
     params.push(filters.status);
   }
 
   if (filters.startDate) {
-    conditions.push("revenue_date >= ?");
+    conditions.push("rr.revenue_date >= ?");
     params.push(filters.startDate);
   }
 
   if (filters.endDate) {
-    conditions.push("revenue_date <= ?");
+    conditions.push("rr.revenue_date <= ?");
     params.push(filters.endDate);
   }
 
   if (filters.contractId) {
-    conditions.push("contract_id = ?");
+    conditions.push("rr.contract_id = ?");
     params.push(filters.contractId);
   }
 
+  if (filters.subFinancier) {
+    conditions.push("w.sub_financier = ?");
+    params.push(filters.subFinancier);
+  }
+
+  const needsJoin = !!filters.subFinancier;
+  const joinClause = "LEFT JOIN waybills w ON rr.waybill_id = w.id";
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   // 获取总数
   const [countRows] = await pool.query<RowDataPacket[]>(
-    `SELECT COUNT(*) as total FROM revenue_records ${whereClause}`,
+    `SELECT COUNT(*) as total FROM revenue_records rr ${needsJoin ? joinClause : ""} ${whereClause}`,
     params
   );
   const total = countRows[0].total;
@@ -267,10 +276,10 @@ export async function getRevenueRecords(
   const offset = (page - 1) * pageSize;
 
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT rr.*, w.vehicle_plate, w.driver_name
+    `SELECT rr.*, w.vehicle_plate, w.driver_name, w.sub_financier
      FROM revenue_records rr
-     LEFT JOIN waybills w ON rr.waybill_id = w.id
-     ${whereClause.replace(/\b(record_type|beneficiary_type|beneficiary_id|source_type|financier_id|funder_id|status|revenue_date|contract_id)\b/g, 'rr.$1')}
+     ${joinClause}
+     ${whereClause}
      ORDER BY rr.revenue_date DESC, rr.created_at DESC
      LIMIT ? OFFSET ?`,
     [...params, pageSize, offset]
@@ -452,55 +461,17 @@ export async function getRevenueStats(filters: {
       newContractsPeriod = Number(newContractRows[0].count) + Number(newCommissionRows[0].count) + Number(newDirectedPayRows[0].count);
     }
 
-    // 活跃资金方数量（有效合同 + 资金方主数据未删除且状态激活）
+    // 活跃资金方数量（主数据表中未删除且状态激活）
     const [funderRows] = await pool.query<RowDataPacket[]>(
-      `SELECT COUNT(*) as count FROM (
-         SELECT DISTINCT c.funder_id
-         FROM contracts c
-         JOIN funders f ON f.id = c.funder_id
-         WHERE c.status = 'active'
-           AND c.deleted_at IS NULL
-           AND f.deleted_at IS NULL
-           AND f.status = 'active'
-           AND c.funder_id IS NOT NULL
-           AND c.funder_id != ''
-         UNION
-         SELECT DISTINCT dpc.funder_id
-         FROM directed_pay_contracts dpc
-         JOIN funders f ON f.id = dpc.funder_id
-         WHERE dpc.status = 'active'
-           AND dpc.deleted_at IS NULL
-           AND f.deleted_at IS NULL
-           AND f.status = 'active'
-           AND dpc.funder_id IS NOT NULL
-           AND dpc.funder_id != ''
-       ) AS all_funders`
+      `SELECT COUNT(*) as count FROM funders
+       WHERE deleted_at IS NULL AND status = 'active'`
     );
     activeFunders = Number(funderRows[0].count);
 
-    // 活跃融资方数量（有效合同 + 融资方主数据未删除且状态激活）
+    // 活跃融资方数量（主数据表中未删除且状态激活）
     const [financierRows] = await pool.query<RowDataPacket[]>(
-      `SELECT COUNT(*) as count FROM (
-         SELECT DISTINCT c.logistics_provider_id
-         FROM contracts c
-         JOIN financiers f ON f.id = c.logistics_provider_id
-         WHERE c.status = 'active'
-           AND c.deleted_at IS NULL
-           AND f.deleted_at IS NULL
-           AND f.status = 'active'
-           AND c.logistics_provider_id IS NOT NULL
-           AND c.logistics_provider_id != ''
-         UNION
-         SELECT DISTINCT dpc.financier_id
-         FROM directed_pay_contracts dpc
-         JOIN financiers f ON f.id = dpc.financier_id
-         WHERE dpc.status = 'active'
-           AND dpc.deleted_at IS NULL
-           AND f.deleted_at IS NULL
-           AND f.status = 'active'
-           AND dpc.financier_id IS NOT NULL
-           AND dpc.financier_id != ''
-       ) AS all_financiers`
+      `SELECT COUNT(*) as count FROM financiers
+       WHERE deleted_at IS NULL AND status = 'active'`
     );
     activeFinanciers = Number(financierRows[0].count);
 

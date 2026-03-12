@@ -345,6 +345,15 @@ function FinancingRepaymentSettlementPage() {
       }
     },
     {
+      title: t("financing_repayment.status", "状态"),
+      key: "status",
+      width: 120,
+      render: (_: any, record: Settlement) => {
+        const config = getStatusTag(record.status);
+        return <Tag color={config.color}>{config.label}</Tag>;
+      }
+    },
+    {
       title: t("financing_repayment.principal_due", "应还本金"),
       key: "principal",
       width: 150,
@@ -380,15 +389,6 @@ function FinancingRepaymentSettlementPage() {
       render: (_: any, record: Settlement) => (
         <Text>{record.dueDate}</Text>
       )
-    },
-    {
-      title: t("financing_repayment.status", "状态"),
-      key: "status",
-      width: 120,
-      render: (_: any, record: Settlement) => {
-        const config = getStatusTag(record.status);
-        return <Tag color={config.color}>{config.label}</Tag>;
-      }
     },
     {
       title: t("financing_repayment.operations", "操作"),

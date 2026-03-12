@@ -207,7 +207,6 @@ async function saveWaybillData(
       return { inserted: false, updated: false };
     }
     
-    // 插入新记录（包含所有费用字段）
     const id = randomUUID();
     await pool.query(
       `INSERT INTO waybills (
@@ -215,8 +214,8 @@ async function saveWaybillData(
         driver_name, vehicle_plate, departure_place, arrival_place,
         freight_amount, receivable_total, payable_total,
         receivable_cash, receivable_collect, receivable_return, monthly_cost, receivable_transport,
-        status, remark, waybill_date, business_mode, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        status, remark, waybill_date, business_mode, sub_financier, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         id,
         waybill.waybillNumber,
@@ -229,15 +228,16 @@ async function saveWaybillData(
         waybill.freight || 0,
         waybill.receivableTotal || 0,
         waybill.payableTotal || 0,
-        waybill.receivableCash || 0,       // 现付
-        waybill.receivableCollect || 0,    // 到付
-        waybill.receivableReturn || 0,     // 回付
-        waybill.receivableMonthly || 0,    // 月结
-        waybill.receivableTransport || 0,  // 运费
+        waybill.receivableCash || 0,
+        waybill.receivableCollect || 0,
+        waybill.receivableReturn || 0,
+        waybill.receivableMonthly || 0,
+        waybill.receivableTransport || 0,
         waybill.status || 'pending',
         waybill.remark || '',
         waybill.createTime ? new Date(waybill.createTime).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        'standard',  // business_mode 默认值
+        'standard',
+        waybill.subFinancier || '',
       ]
     );
     

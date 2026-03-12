@@ -456,7 +456,8 @@ function FundersPage() {
           {
             title: t("funders.current_loan_balance", "当前在贷余额"),
             dataIndex: "currentLoanBalance",
-            render: (v: number) => `${v.toLocaleString()} ${t("common.unit_yuan", "元")}`,
+            width: 130,
+            render: (v: number) => `${v.toLocaleString()} 元`,
             sorter: (a, b) => a.currentLoanBalance - b.currentLoanBalance
           },
           {
@@ -482,6 +483,7 @@ function FundersPage() {
           {
             title: t("common.actions", "操作"),
             width: 280,
+            align: "center" as const,
             render: (_, record) => (
               <Space size={0} split={<span style={{ color: '#d9d9d9', margin: '0 4px' }}>|</span>}>
                 <Button type="link" size="small" style={{ padding: '0 4px' }} onClick={() => openView(record)}>

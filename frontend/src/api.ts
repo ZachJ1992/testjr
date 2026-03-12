@@ -2471,6 +2471,7 @@ export interface RevenueRecord {
   remark?: string;
   vehiclePlate?: string;
   driverName?: string;
+  subFinancier?: string;
   createdAt: string;
 }
 
@@ -2498,6 +2499,7 @@ export async function fetchPlatformRevenueList(
     funderId?: string;
     financierId?: string;
     status?: RevenueStatus;
+    subFinancier?: string;
     page?: number;
     pageSize?: number;
   }
@@ -2509,6 +2511,7 @@ export async function fetchPlatformRevenueList(
   if (filters?.funderId) params.append("funderId", filters.funderId);
   if (filters?.financierId) params.append("financierId", filters.financierId);
   if (filters?.status) params.append("status", filters.status);
+  if (filters?.subFinancier) params.append("subFinancier", filters.subFinancier);
   if (filters?.page) params.append("page", filters.page.toString());
   if (filters?.pageSize) params.append("pageSize", filters.pageSize.toString());
   const queryString = params.toString();

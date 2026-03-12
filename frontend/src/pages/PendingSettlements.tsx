@@ -71,58 +71,6 @@ const mockSettlements: SettlementOrder[] = [
     amount: 56780.5,
     createdAt: "2024-12-18T11:00:00Z",
     status: "pending"
-  },
-  {
-    id: "4",
-    settlementNumber: "JS2024121804",
-    type: "repayment",
-    logisticsProviderName: "申通快递有限公司",
-    contractNumber: "RZ2024010004",
-    amount: 92340.25,
-    createdAt: "2024-12-18T12:20:00Z",
-    dueDate: "2024-12-18",
-    status: "pending"
-  },
-  {
-    id: "5",
-    settlementNumber: "JS2024121805",
-    type: "profit_sharing",
-    logisticsProviderName: "韵达快递有限公司",
-    contractNumber: "RZ2024010005",
-    amount: 45670,
-    createdAt: "2024-12-18T13:10:00Z",
-    status: "pending"
-  },
-  {
-    id: "6",
-    settlementNumber: "JS2024121806",
-    type: "refund",
-    logisticsProviderName: "德邦物流股份有限公司",
-    contractNumber: "RZ2024010006",
-    amount: 78230.5,
-    createdAt: "2024-12-18T14:30:00Z",
-    status: "pending"
-  },
-  {
-    id: "7",
-    settlementNumber: "JS2024121807",
-    type: "repayment",
-    logisticsProviderName: "百世快递有限公司",
-    contractNumber: "RZ2024010007",
-    amount: 105600,
-    createdAt: "2024-12-18T15:00:00Z",
-    dueDate: "2024-12-18",
-    status: "pending"
-  },
-  {
-    id: "8",
-    settlementNumber: "JS2024121808",
-    type: "profit_sharing",
-    logisticsProviderName: "极兔速递有限公司",
-    contractNumber: "RZ2024010008",
-    amount: 65420.75,
-    createdAt: "2024-12-18T15:45:00Z",
-    status: "pending"
   }
 ];
 

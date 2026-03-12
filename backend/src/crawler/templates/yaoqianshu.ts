@@ -29,9 +29,13 @@ const DEFAULT_STATUS_CODE_TEXT_MAP: Record<string, string> = {
   '6': '已卸车',
   '7': '已完成',
   '10': '已发车',
+  '15': '已发车',
   '20': '已到车',
+  '25': '已到车',
   '30': '部分卸车',
+  '35': '部分卸车',
   '40': '已卸车',
+  '45': '已卸车',
   '50': '已完成',
 };
 
@@ -2083,13 +2087,10 @@ async function fetchData(page: Page, config: CrawlerRuntimeConfig, maxPages: num
       }
     }
 
-    if (enforceShipTimeFilter) {
-      const shipTimeText = extractShipTime(item);
-      const shipYmd = (shipTimeText.match(/\d{4}-\d{2}-\d{2}/)?.[0] || '').trim();
-      if (!shipYmd || shipYmd < shipStartYmd) {
-        rejectedByShipTime++;
-        return false;
-      }
+    const shipTimeText = extractShipTime(item);
+    if (!/\d{4}-\d{2}-\d{2}/.test(shipTimeText)) {
+      rejectedByShipTime++;
+      return false;
     }
 
     if (statusTextSet.size > 0 || statusCodeSet.size > 0) {
@@ -2098,6 +2099,9 @@ async function fetchData(page: Page, config: CrawlerRuntimeConfig, maxPages: num
       const byCode = statusCodeSet.size > 0 && statusCodeSet.has(statusCode);
       const byText = statusText && Array.from(statusTextSet).some(t => statusText.includes(t) || t.includes(statusText));
       if (!byCode && !byText) {
+        if (rejectedByStatus < 5) {
+          console.log(`[摇钱树] 状态拦截: batch=${normalizeBatchNo(item?.car_batch)}, code=${statusCode}, text=${statusText}`);
+        }
         rejectedByStatus++;
         return false;
       }
@@ -2252,6 +2256,7 @@ function mapFields(rawData: any): WaybillData {
     remark: String(item.b_remark || ''),
     createTime: truckTime ? new Date(truckTime) : undefined,
     shipTime: truckTime ? new Date(truckTime) : undefined,
+    subFinancier: String(item.down_line_text || '').split('->')[0].trim() || TARGET_ORG_NAME,
   };
 }
 

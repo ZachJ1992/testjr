@@ -55,6 +55,7 @@ import type { ColumnsType } from "antd/es/table";
 import { Resizable } from "react-resizable";
 import "react-resizable/css/styles.css";
 import dayjs from "dayjs";
+import * as XLSX from "xlsx";
 
 const { RangePicker } = DatePicker;
 
@@ -146,6 +147,7 @@ interface WaybillData {
   status?: string;
   createdAt: string;
   updatedAt: string;
+  subFinancier?: string;
   // 融资方名称（从后端 JOIN 获取）
   financierName?: string;
 }
@@ -531,6 +533,77 @@ function WaybillsPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handleExportExcel = () => {
+    if (waybills.length === 0) {
+      message.warning("没有数据可导出");
+      return;
+    }
+
+    const exportColumns = [
+      { header: "融资方", key: (w: WaybillData) => w.financierName || w.customerName || "" },
+      { header: "子融资方", key: (w: WaybillData) => w.subFinancier || "" },
+      { header: "批次号", key: (w: WaybillData) => w.waybillNumber },
+      { header: "批次状态", key: (w: WaybillData) => w.batchStatus || "" },
+      { header: "应收合计", key: (w: WaybillData) => w.receivableTotal ?? "" },
+      { header: "应付合计", key: (w: WaybillData) => w.payableTotal ?? "" },
+      { header: "毛利", key: (w: WaybillData) => w.profit ?? "" },
+      { header: "毛利率", key: (w: WaybillData) => w.profitRate != null ? `${(w.profitRate * 100).toFixed(0)}%` : "" },
+      { header: "应收运输费", key: (w: WaybillData) => w.receivableTransport ?? "" },
+      { header: "应收点位费", key: (w: WaybillData) => w.receivablePointFee ?? "" },
+      { header: "应收上楼费", key: (w: WaybillData) => w.receivableUpstairsFee ?? "" },
+      { header: "应收装卸费", key: (w: WaybillData) => w.receivableLoadingFee ?? "" },
+      { header: "应收现付", key: (w: WaybillData) => w.receivableCash ?? "" },
+      { header: "应收到付", key: (w: WaybillData) => w.receivableCollect ?? "" },
+      { header: "应收回付", key: (w: WaybillData) => w.receivableReturn ?? "" },
+      { header: "应收其它", key: (w: WaybillData) => w.receivableOther ?? "" },
+      { header: "应付现付", key: (w: WaybillData) => w.payableCash ?? "" },
+      { header: "应付到付", key: (w: WaybillData) => w.payableCollect ?? "" },
+      { header: "应付油卡", key: (w: WaybillData) => w.payableOilCard ?? "" },
+      { header: "应付回付", key: (w: WaybillData) => w.payableReturn ?? "" },
+      { header: "拼车费", key: (w: WaybillData) => w.carpoolFee ?? "" },
+      { header: "外调车费", key: (w: WaybillData) => w.externalVehicleFee ?? "" },
+      { header: "ETC过路费", key: (w: WaybillData) => w.etcFee ?? "" },
+      { header: "月度分摊费用", key: (w: WaybillData) => w.monthlyCost ?? "" },
+      { header: "主驾计件", key: (w: WaybillData) => w.driverPieceRate ?? "" },
+      { header: "副驾计件", key: (w: WaybillData) => w.coDriverPieceRate ?? "" },
+      { header: "车牌号", key: (w: WaybillData) => w.vehiclePlate || "" },
+      { header: "主驾司机", key: (w: WaybillData) => w.driverName || "" },
+      { header: "副驾司机", key: (w: WaybillData) => w.coDriver || "" },
+      { header: "发站", key: (w: WaybillData) => w.departurePlace || "" },
+      { header: "到站", key: (w: WaybillData) => w.arrivalPlace || "" },
+      { header: "发车时间", key: (w: WaybillData) => {
+        const t = w.waybillDate || w.departureTime || w.createdTime;
+        return t ? dayjs(t).format("YYYY-MM-DD HH:mm") : "";
+      }},
+      { header: "数据来源", key: (w: WaybillData) => w.batchSource || "" },
+      { header: "项目名称", key: (w: WaybillData) => w.projectName || "" },
+      { header: "客户名称", key: (w: WaybillData) => w.customerName || "" },
+      { header: "网点", key: (w: WaybillData) => w.branch || "" },
+      { header: "车辆线路", key: (w: WaybillData) => w.vehicleRoute || "" },
+      { header: "备注", key: (w: WaybillData) => w.remark || "" },
+    ];
+
+    const headers = exportColumns.map(c => c.header);
+    const rows = waybills.map(w => exportColumns.map(c => c.key(w)));
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+
+    const colWidths = headers.map((h, i) => {
+      let maxLen = h.length;
+      rows.forEach(row => {
+        const cellLen = String(row[i] ?? "").length;
+        if (cellLen > maxLen) maxLen = cellLen;
+      });
+      return { wch: Math.min(Math.max(maxLen + 2, 8), 30) };
+    });
+    ws["!cols"] = colWidths;
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "运单数据");
+    XLSX.writeFile(wb, `运单数据_${dayjs().format("YYYYMMDD_HHmmss")}.xlsx`);
+    message.success(`已导出 ${waybills.length} 条运单数据`);
+  };
+
   const formatMoney = (v: number | undefined | null, showSign = false) => {
     if (v === undefined || v === null || v === 0) return "-";
     const formatted = v.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -568,6 +641,14 @@ function WaybillsPage() {
           }
           return <Tag color="blue" style={{ margin: 0 }}>{displayName}</Tag>;
         }
+      },
+      {
+        title: "子融资方",
+        dataIndex: "subFinancier",
+        width: 120,
+        fixed: 'left',
+        ellipsis: true,
+        render: (v: string) => v ? <Tag color="cyan" style={{ margin: 0 }}>{v}</Tag> : '-',
       },
       {
         title: "批次号",
@@ -1046,6 +1127,13 @@ function WaybillsPage() {
           onClick={downloadTemplate}
         >
           下载模板
+        </Button>
+        <Button
+          icon={<FileExcelOutlined />}
+          onClick={handleExportExcel}
+          disabled={waybills.length === 0}
+        >
+          导出Excel
         </Button>
         <Dropdown
           trigger={['click']}

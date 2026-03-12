@@ -42,7 +42,7 @@ router.get(
   requirePermissions("view_platform_revenue"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { startDate, endDate, sourceType, funderId, financierId, status, page, pageSize } = req.query;
+      const { startDate, endDate, sourceType, funderId, financierId, status, page, pageSize, subFinancier } = req.query;
       
       const result = await revenueStore.getRevenueRecords({
         recordType: "revenue",
@@ -54,6 +54,7 @@ router.get(
         endDate: endDate as string,
         page: page ? Number(page) : 1,
         pageSize: pageSize ? Number(pageSize) : 20,
+        subFinancier: subFinancier as string,
       });
       
       res.json(result);

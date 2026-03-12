@@ -1737,19 +1737,29 @@ async function fetchData(page: Page, config: CrawlerRuntimeConfig, maxPages: num
     }
   }
 
-  // 本地兜底过滤：按时间窗 + 指定业务口径过滤（防止服务端过滤未生效）
+  // 本地强制过滤：网点名称 + 时间窗 + 业务口径
+  let rejectedByOutlet = 0;
+  let rejectedByTime = 0;
   const filteredData = allData.filter(item => {
     const ts = extractRecordTime(item);
-    if (ts !== null && (ts < startTs || ts > endTs)) return false;
-
-    if (criteria.local.outletCompanyId) {
-      const companyId = String(item?.company_id || '').trim();
-      if (companyId && companyId !== criteria.local.outletCompanyId) return false;
+    if (ts !== null && (ts < startTs || ts > endTs)) {
+      rejectedByTime++;
+      return false;
     }
 
     if (criteria.local.outletName) {
+      const outletName = criteria.local.outletName;
       const outlet = extractOutletName(item);
-      if (!outlet.includes(criteria.local.outletName)) return false;
+      const companyId = String(item?.company_id || '').trim();
+      const companyIdMatch = criteria.local.outletCompanyId && companyId === criteria.local.outletCompanyId;
+      const nameMatch = outlet && outlet.includes(outletName);
+      const fullTextMatch = String(item?.down_line_text || '').includes(outletName) ||
+                            String(item?.n_company_name || '').includes(outletName) ||
+                            String(item?.company_name || '').includes(outletName);
+      if (!companyIdMatch && !nameMatch && !fullTextMatch) {
+        rejectedByOutlet++;
+        return false;
+      }
     }
 
     if (criteria.local.batchNumber) {
@@ -1780,9 +1790,9 @@ async function fetchData(page: Page, config: CrawlerRuntimeConfig, maxPages: num
     return true;
   });
 
-  if (filteredData.length !== allData.length) {
-    console.log(`[zo-cloud] 本地业务口径过滤: ${allData.length} -> ${filteredData.length}`);
-  }
+  console.log(
+    `[zo-cloud] 本地过滤: 原始=${allData.length}, 过滤后=${filteredData.length}, 拦截[网点=${rejectedByOutlet}, 时间=${rejectedByTime}]`
+  );
 
   console.log(`[zo-cloud] Node 直连抓取完成，共 ${filteredData.length} 条`);
   if (filteredData.length > 0) {
@@ -1882,6 +1892,7 @@ function mapFields(rawData: any): WaybillData {
     remark: String(item.b_remark || ''),
     createTime: truckTime ? new Date(truckTime) : undefined,
     shipTime: truckTime ? new Date(truckTime) : undefined,
+    subFinancier: '金罗',
   };
 }
 

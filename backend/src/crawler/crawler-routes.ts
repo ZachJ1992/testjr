@@ -13,6 +13,7 @@ import { syncWithPuppeteer, testPuppeteerConnection } from "./puppeteer-crawler.
 import { getAllTemplatesMeta, getCrawlerTemplate } from "./crawler-templates.js";
 import { getExternalSystemById, updateSyncStatus } from "../external-systems-store.js";
 import { runCrawlerWithTemplate, testCrawlerConnection } from "./crawler-engine.js";
+import { calculateWaybillPlatformRevenue } from "../revenue-scheduler.js";
 import type { CrawlerConfig, TestConnectionResult, SyncResult } from "./crawler-types.js";
 
 // 加载所有模板
@@ -65,6 +66,16 @@ router.post("/external-systems/:id/sync", authenticate, async (req, res) => {
         
         if (result.success) {
           await updateSyncStatus(externalSystem.id, 'success');
+          if (result.newCount > 0 || result.updatedCount > 0) {
+            try {
+              const commissionCount = await calculateWaybillPlatformRevenue();
+              if (commissionCount > 0) {
+                console.log(`[CrawlerRoutes] 自动生成 ${commissionCount} 条运单抽成记录`);
+              }
+            } catch (e: any) {
+              console.error(`[CrawlerRoutes] 自动计算运单抽成失败: ${e.message}`);
+            }
+          }
         } else {
           await updateSyncStatus(externalSystem.id, 'failed', result.error);
         }

@@ -223,37 +223,21 @@ function DirectedPaySettlementsPage() {
       )
     },
     {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      width: 100,
+      render: (status: string) => {
+        const config = statusMap[status] || { color: "default", text: status };
+        return <Tag color={config.color}>{config.text}</Tag>;
+      }
+    },
+    {
       title: "支付笔数",
       dataIndex: "paymentCount",
       key: "paymentCount",
       width: 90,
       align: "center" as const
-    },
-    {
-      title: "本金",
-      dataIndex: "principalAmount",
-      key: "principalAmount",
-      width: 120,
-      align: "right" as const,
-      render: (val: number) => `¥${val.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`
-    },
-    {
-      title: "利息",
-      dataIndex: "interestAmount",
-      key: "interestAmount",
-      width: 100,
-      align: "right" as const,
-      render: (val: number) => (
-        <Text type="warning">¥{val.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</Text>
-      )
-    },
-    {
-      title: "服务费",
-      dataIndex: "serviceAmount",
-      key: "serviceAmount",
-      width: 100,
-      align: "right" as const,
-      render: (val: number) => `¥${val.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`
     },
     {
       title: "应还总额",
@@ -290,14 +274,30 @@ function DirectedPaySettlementsPage() {
       }
     },
     {
-      title: "状态",
-      dataIndex: "status",
-      key: "status",
+      title: "本金",
+      dataIndex: "principalAmount",
+      key: "principalAmount",
+      width: 120,
+      align: "right" as const,
+      render: (val: number) => `¥${val.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`
+    },
+    {
+      title: "利息",
+      dataIndex: "interestAmount",
+      key: "interestAmount",
       width: 100,
-      render: (status: string) => {
-        const config = statusMap[status] || { color: "default", text: status };
-        return <Tag color={config.color}>{config.text}</Tag>;
-      }
+      align: "right" as const,
+      render: (val: number) => (
+        <Text type="warning">¥{val.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</Text>
+      )
+    },
+    {
+      title: "服务费",
+      dataIndex: "serviceAmount",
+      key: "serviceAmount",
+      width: 100,
+      align: "right" as const,
+      render: (val: number) => `¥${val.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`
     },
     {
       title: "操作",

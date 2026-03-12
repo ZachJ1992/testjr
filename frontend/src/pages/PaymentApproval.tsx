@@ -63,66 +63,6 @@ const mockApplications: PaymentApplication[] = [
     riskMessage: "授信额度充足",
     status: "pending",
     createdAt: "2024-12-18T10:00:00Z"
-  },
-  {
-    id: "2",
-    applicationNumber: "DF202412180002",
-    logisticsEnterpriseId: "YTO001",
-    logisticsEnterpriseName: "圆通速递股份有限公司",
-    paymentType: "etc",
-    recipientName: "李师傅",
-    recipientAccount: "6222****6666",
-    amount: 1200,
-    waybillNumber: "YD20251218002",
-    riskStatus: "sufficient",
-    riskMessage: "授信额度充足",
-    status: "pending",
-    createdAt: "2024-12-18T10:30:00Z"
-  },
-  {
-    id: "3",
-    applicationNumber: "DF202412180003",
-    logisticsEnterpriseId: "ZTO001",
-    logisticsEnterpriseName: "中通快递股份有限公司",
-    paymentType: "fuel",
-    recipientName: "张师傅",
-    recipientAccount: "6222****7777",
-    amount: 3500,
-    waybillNumber: "YD20251218003",
-    riskStatus: "warning",
-    riskMessage: "剩余额度不足20%",
-    status: "pending",
-    createdAt: "2024-12-18T11:00:00Z"
-  },
-  {
-    id: "4",
-    applicationNumber: "DF202412180004",
-    logisticsEnterpriseId: "STO001",
-    logisticsEnterpriseName: "申通快递有限公司",
-    paymentType: "freight",
-    recipientName: "刘师傅",
-    recipientAccount: "6222****9999",
-    amount: 7200,
-    waybillNumber: "YD20251218004",
-    riskStatus: "sufficient",
-    riskMessage: "授信额度充足",
-    status: "pending",
-    createdAt: "2024-12-18T11:30:00Z"
-  },
-  {
-    id: "5",
-    applicationNumber: "DF202412180005",
-    logisticsEnterpriseId: "YD001",
-    logisticsEnterpriseName: "韵达快递有限公司",
-    paymentType: "etc",
-    recipientName: "陈师傅",
-    recipientAccount: "6222****5555",
-    amount: 980,
-    waybillNumber: "YD20251218005",
-    riskStatus: "sufficient",
-    riskMessage: "授信额度充足",
-    status: "pending",
-    createdAt: "2024-12-18T12:00:00Z"
   }
 ];
 

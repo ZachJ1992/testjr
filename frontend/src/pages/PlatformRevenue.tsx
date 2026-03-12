@@ -1,10 +1,38 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Card, Row, Col, Statistic, Table, Select, DatePicker, Button, Space, Tag, message, Empty, Spin, Progress, Typography } from 'antd';
-import { DownloadOutlined, FileTextOutlined, TeamOutlined, UserOutlined, RiseOutlined, ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Card, Row, Col, Statistic, Table, Select, DatePicker, Button, Space, Tag, message, Empty, Spin, Progress, Typography, Modal } from 'antd';
+import { DownloadOutlined, FileTextOutlined, TeamOutlined, UserOutlined, RiseOutlined, ArrowUpOutlined, ArrowDownOutlined, FileExcelOutlined } from '@ant-design/icons';
+import * as XLSX from 'xlsx';
+import { Resizable } from 'react-resizable';
+import 'react-resizable/css/styles.css';
 
 const { Text } = Typography;
 import * as echarts from 'echarts';
 import dayjs, { Dayjs } from 'dayjs';
+
+const ResizableTitle = (props: any) => {
+  const { onResize, width, ...restProps } = props;
+  if (!width || !onResize) return <th {...restProps} />;
+  return (
+    <Resizable
+      width={width}
+      height={0}
+      handle={
+        <span
+          className="react-resizable-handle"
+          style={{
+            position: 'absolute', right: -5, bottom: 0, top: 0, width: 10,
+            cursor: 'col-resize', zIndex: 1,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      }
+      onResize={onResize}
+      draggableOpts={{ enableUserSelectHack: false }}
+    >
+      <th {...restProps} />
+    </Resizable>
+  );
+};
 import { useAuth } from '../auth';
 import {
   fetchPlatformRevenueStats,
@@ -60,6 +88,9 @@ const PlatformRevenue: React.FC = () => {
     sourceType: undefined as RevenueSourceType | undefined,
     funderId: undefined as string | undefined,
     financierId: undefined as string | undefined,
+    subFinancier: undefined as string | undefined,
+    detailStartDate: undefined as string | undefined,
+    detailEndDate: undefined as string | undefined,
     page: 1,
     pageSize: 10,
   });
@@ -81,7 +112,7 @@ const PlatformRevenue: React.FC = () => {
       case 'month':
         return { startDate: today.startOf('month').format('YYYY-MM-DD'), endDate: today.format('YYYY-MM-DD') };
       case 'year':
-        return { startDate: today.startOf('year').format('YYYY-MM-DD'), endDate: today.format('YYYY-MM-DD') };
+        return { startDate: today.subtract(1, 'year').format('YYYY-MM-DD'), endDate: today.format('YYYY-MM-DD') };
       case 'custom':
         if (customRange) {
           return { startDate: customRange[0].format('YYYY-MM-DD'), endDate: customRange[1].format('YYYY-MM-DD') };
@@ -122,10 +153,17 @@ const PlatformRevenue: React.FC = () => {
     if (!token) return;
     setTableLoading(true);
     try {
-      const res = await fetchPlatformRevenueList(token, {
-        ...dateRange,
-        ...filters,
-      });
+      const listFilters: any = {
+        startDate: filters.detailStartDate || dateRange.startDate,
+        endDate: filters.detailEndDate || dateRange.endDate,
+        sourceType: filters.sourceType,
+        funderId: filters.funderId,
+        financierId: filters.financierId,
+        subFinancier: filters.subFinancier,
+        page: filters.page,
+        pageSize: filters.pageSize,
+      };
+      const res = await fetchPlatformRevenueList(token, listFilters);
       setRecords(res.records || []);
       setTotal(res.total || 0);
     } catch (error) {
@@ -272,49 +310,152 @@ const PlatformRevenue: React.FC = () => {
     };
   }, []);
 
-  // 导出
-  const handleExport = () => {
-    if (!token) return;
-    const url = getPlatformRevenueExportUrl(token, { ...dateRange, ...filters });
-    window.open(url, '_blank');
+  // 导出状态
+  const [exporting, setExporting] = useState(false);
+
+  const exportColumns = [
+    { header: '序号', key: (_: any, i: number) => i + 1 },
+    { header: '落地合作方', key: (r: any) => r.subFinancier || '' },
+    { header: '日期', key: (r: any) => r.revenueDate || '' },
+    { header: '关联单号', key: (r: any) => r.contractNumber || '' },
+    { header: '运费金额', key: (r: any) => r.principalAmount ?? '' },
+    { header: '服务费', key: (r: any) => r.amount ?? '' },
+    { header: '合作方', key: (r: any) => r.financierName || '' },
+    { header: '收益类型', key: (r: any) => SOURCE_TYPE_MAP[r.sourceType] || r.sourceType || '' },
+    { header: '服务费率', key: (r: any) => {
+      if (r.sourceType !== 'waybill_commission') return '';
+      if (r.rate && r.rate > 0) { const p = r.rate * 100; return Number.isInteger(p) ? `${p}%` : `${p.toFixed(1)}%`; }
+      return '固定200元';
+    }},
+    { header: '车牌号', key: (r: any) => r.vehiclePlate || '' },
+    { header: '司机', key: (r: any) => r.driverName || '' },
+    { header: '资金方', key: (r: any) => r.funderName || '' },
+    { header: '备注', key: (r: any) => r.remark || '' },
+  ];
+
+  const doExportExcel = (data: RevenueRecord[], filename: string) => {
+    const headers = exportColumns.map(c => c.header);
+    const rows = data.map((r, i) => exportColumns.map(c => c.key(r, i)));
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = headers.map((h, i) => {
+      let maxLen = h.length;
+      rows.forEach(row => { const len = String(row[i] ?? '').length; if (len > maxLen) maxLen = len; });
+      return { wch: Math.min(Math.max(maxLen + 2, 8), 30) };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '收益明细');
+    XLSX.writeFile(wb, filename);
   };
 
+  const handleExport = () => {
+    if (!token) return;
+    const hasFilter = filters.sourceType || filters.subFinancier || filters.detailStartDate;
+    Modal.confirm({
+      title: '导出收益明细',
+      icon: <FileExcelOutlined style={{ color: '#52c41a' }} />,
+      content: hasFilter
+        ? `当前筛选条件下共 ${total} 条记录，您希望导出哪些数据？`
+        : `当前共 ${total} 条记录，确认导出？`,
+      okText: hasFilter ? '导出筛选结果' : '确认导出',
+      cancelText: hasFilter ? '全量导出' : '取消',
+      cancelButtonProps: hasFilter ? { type: 'default' } : undefined,
+      onOk: async () => {
+        setExporting(true);
+        try {
+          const listFilters: any = {
+            startDate: filters.detailStartDate || dateRange.startDate,
+            endDate: filters.detailEndDate || dateRange.endDate,
+            sourceType: filters.sourceType,
+            subFinancier: filters.subFinancier,
+            page: 1,
+            pageSize: 9999,
+          };
+          const res = await fetchPlatformRevenueList(token, listFilters);
+          doExportExcel(res.records || [], `收益明细_筛选_${dayjs().format('YYYYMMDD_HHmmss')}.xlsx`);
+          message.success(`已导出 ${(res.records || []).length} 条记录`);
+        } catch (e) {
+          message.error('导出失败: ' + getErrorMessage(e));
+        } finally {
+          setExporting(false);
+        }
+      },
+      onCancel: hasFilter ? async () => {
+        setExporting(true);
+        try {
+          const res = await fetchPlatformRevenueList(token, {
+            startDate: dateRange.startDate,
+            endDate: dateRange.endDate,
+            page: 1,
+            pageSize: 9999,
+          });
+          doExportExcel(res.records || [], `收益明细_全量_${dayjs().format('YYYYMMDD_HHmmss')}.xlsx`);
+          message.success(`已导出 ${(res.records || []).length} 条记录`);
+        } catch (e) {
+          message.error('导出失败: ' + getErrorMessage(e));
+        } finally {
+          setExporting(false);
+        }
+      } : undefined,
+    });
+  };
+
+  // 列宽拖动状态
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+
+  const handleResize = useCallback((key: string) => (_: any, { size }: any) => {
+    setColumnWidths(prev => ({ ...prev, [key]: size.width }));
+  }, []);
+
+  // 从数据中提取子融资方选项
+  const subFinancierOptions = useMemo(() => {
+    const set = new Set<string>();
+    records.forEach(r => { if ((r as any).subFinancier) set.add((r as any).subFinancier); });
+    return Array.from(set).map(v => ({ label: v, value: v }));
+  }, [records]);
+
   // 表格列定义
-  const columns = [
-    { title: '日期', dataIndex: 'revenueDate', key: 'revenueDate', width: 100 },
+  const baseColumns = [
+    { title: '合作方', dataIndex: 'financierName', key: 'financierName', width: 80, render: (v: string) => <span style={{ whiteSpace: 'nowrap' }}>{v || '-'}</span> },
+    {
+      title: '落地合作方',
+      dataIndex: 'subFinancier',
+      key: 'subFinancier',
+      width: 150,
+      render: (v: string) => v ? <Tag color="cyan" style={{ margin: 0 }}>{v}</Tag> : '-',
+    },
+    { title: '日期', dataIndex: 'revenueDate', key: 'revenueDate', width: 110, render: (v: string) => <span style={{ whiteSpace: 'nowrap' }}>{v}</span> },
     { 
       title: '收益类型', 
       dataIndex: 'sourceType', 
       key: 'sourceType',
-      width: 120,
-      render: (type: string) => SOURCE_TYPE_MAP[type] || type,
+      width: 100,
+      render: (type: string) => <span style={{ whiteSpace: 'nowrap' }}>{SOURCE_TYPE_MAP[type] || type}</span>,
     },
     { 
       title: '关联单号',
       key: 'refNumber',
-      width: 180,
-      render: (_: any, record: any) => record.contractNumber || '-',
+      width: 200,
+      render: (_: any, record: any) => <span style={{ whiteSpace: 'nowrap' }}>{record.contractNumber || '-'}</span>,
     },
-    { title: '融资方', dataIndex: 'financierName', key: 'financierName', width: 100 },
     {
       title: '车牌号',
       dataIndex: 'vehiclePlate',
       key: 'vehiclePlate',
       width: 100,
-      render: (v: string) => v || '-',
+      render: (v: string) => <span style={{ whiteSpace: 'nowrap' }}>{v || '-'}</span>,
     },
     {
       title: '司机',
       dataIndex: 'driverName',
       key: 'driverName',
       width: 80,
-      render: (v: string) => v || '-',
+      render: (v: string) => <span style={{ whiteSpace: 'nowrap' }}>{v || '-'}</span>,
     },
     {
-      title: '基础金额',
+      title: '运费金额',
       dataIndex: 'principalAmount',
       key: 'principalAmount',
-      width: 100,
+      width: 120,
       align: 'right' as const,
       render: (v: number, record: any) => {
         if (record.sourceType !== 'waybill_commission' || !v) return '-';
@@ -322,20 +463,20 @@ const PlatformRevenue: React.FC = () => {
       },
     },
     {
-      title: '抽成规则',
+      title: '服务费率',
       key: 'rule',
       width: 90,
       render: (_: any, record: any) => {
         if (record.sourceType !== 'waybill_commission') return '-';
         if (record.rate && record.rate > 0) {
           const percent = record.rate * 100;
-          return Number.isInteger(percent) ? `${percent.toFixed(0)}%` : `${percent.toFixed(1)}%`;
+          return <span style={{ whiteSpace: 'nowrap' }}>{Number.isInteger(percent) ? `${percent.toFixed(0)}%` : `${percent.toFixed(1)}%`}</span>;
         }
-        return '固定200元';
+        return <span style={{ whiteSpace: 'nowrap' }}>固定200元</span>;
       },
     },
     { 
-      title: '收益金额', 
+      title: '服务费', 
       dataIndex: 'amount', 
       key: 'amount',
       width: 110,
@@ -346,9 +487,19 @@ const PlatformRevenue: React.FC = () => {
         </span>
       ),
     },
-    { title: '资金方', dataIndex: 'funderName', key: 'funderName', width: 100 },
-    { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true },
+    { title: '资金方', dataIndex: 'funderName', key: 'funderName', width: 100, render: (v: string) => <span style={{ whiteSpace: 'nowrap' }}>{v || '-'}</span> },
+    { title: '备注', dataIndex: 'remark', key: 'remark', width: 120, ellipsis: true },
   ];
+
+  const columns = baseColumns.map(col => ({
+    ...col,
+    align: (col as any).align || ('center' as const),
+    width: columnWidths[col.key] || col.width,
+    onHeaderCell: (column: any) => ({
+      width: column.width,
+      onResize: handleResize(col.key),
+    }),
+  }));
 
   return (
     <Spin spinning={loading}>
@@ -363,7 +514,7 @@ const PlatformRevenue: React.FC = () => {
               <Button type={timeRange === 'today' ? 'primary' : 'default'} onClick={() => setTimeRange('today')}>今日</Button>
               <Button type={timeRange === 'week' ? 'primary' : 'default'} onClick={() => setTimeRange('week')}>本周</Button>
               <Button type={timeRange === 'month' ? 'primary' : 'default'} onClick={() => setTimeRange('month')}>本月</Button>
-              <Button type={timeRange === 'year' ? 'primary' : 'default'} onClick={() => setTimeRange('year')}>本年</Button>
+              <Button type={timeRange === 'year' ? 'primary' : 'default'} onClick={() => setTimeRange('year')}>近一年</Button>
               <RangePicker
                 value={customRange}
                 onChange={(dates) => {
@@ -578,13 +729,13 @@ const PlatformRevenue: React.FC = () => {
         <Card 
           title="收益明细" 
           extra={
-            <Button icon={<DownloadOutlined />} onClick={handleExport}>
-              导出 CSV
+            <Button icon={<FileExcelOutlined />} onClick={handleExport} loading={exporting}>
+              导出Excel
             </Button>
           }
         >
-          {/* 筛选器 - 移除状态筛选 */}
-          <Space style={{ marginBottom: 16 }}>
+          {/* 筛选器 */}
+          <Space style={{ marginBottom: 16 }} wrap>
             <Select
               placeholder="收益类型"
               allowClear
@@ -596,6 +747,29 @@ const PlatformRevenue: React.FC = () => {
                 <Select.Option key={key} value={key}>{label}</Select.Option>
               ))}
             </Select>
+            <Select
+              placeholder="落地合作方"
+              allowClear
+              showSearch
+              style={{ width: 200 }}
+              value={(filters as any).subFinancier}
+              onChange={(v) => setFilters({ ...filters, subFinancier: v, page: 1 } as any)}
+              options={subFinancierOptions}
+            />
+            <RangePicker
+              placeholder={['开始日期', '结束日期']}
+              value={(filters as any).detailStartDate && (filters as any).detailEndDate
+                ? [dayjs((filters as any).detailStartDate), dayjs((filters as any).detailEndDate)]
+                : null}
+              onChange={(dates) => {
+                if (dates && dates[0] && dates[1]) {
+                  setFilters({ ...filters, detailStartDate: dates[0].format('YYYY-MM-DD'), detailEndDate: dates[1].format('YYYY-MM-DD'), page: 1 } as any);
+                } else {
+                  const { detailStartDate, detailEndDate, ...rest } = filters as any;
+                  setFilters({ ...rest, page: 1 });
+                }
+              }}
+            />
           </Space>
 
           <Table
@@ -603,6 +777,10 @@ const PlatformRevenue: React.FC = () => {
             dataSource={records}
             rowKey="id"
             loading={tableLoading}
+            scroll={{ x: 1200 }}
+            components={{ header: { cell: ResizableTitle } }}
+            bordered
+            size="middle"
             pagination={{
               current: filters.page,
               pageSize: filters.pageSize,

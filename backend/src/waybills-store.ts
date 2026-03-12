@@ -72,6 +72,7 @@ interface Waybill {
   status?: string;
   createdAt: string;
   updatedAt: string;
+  subFinancier?: string;
   // JOIN 融资方表的字段
   financierName?: string;
 }
@@ -155,6 +156,7 @@ interface WaybillRow extends RowDataPacket {
   status: string | null;
   created_at: string;
   updated_at: string;
+  sub_financier: string | null;
   // JOIN 融资方表的字段
   financier_name: string | null;
 }
@@ -229,7 +231,7 @@ function mapWaybillRow(row: WaybillRow): Waybill {
     status: row.status || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    // 融资方名称（从 JOIN 获取）
+    subFinancier: row.sub_financier || undefined,
     financierName: row.financier_name || undefined
   };
 }

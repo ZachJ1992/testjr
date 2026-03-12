@@ -48,26 +48,6 @@ const mockSettlements: ProfitSharingSettlement[] = [
     status: "pending"
   },
   {
-    id: "2",
-    settlementNumber: "PS-2024-12-002",
-    logisticsProviderName: "德邦物流上海总部",
-    associatedBusinessVolume: 38,
-    totalPeriodProfit: 132000,
-    deductedFinancingInterest: -38000,
-    platformShareAmount: 47000,
-    status: "pending"
-  },
-  {
-    id: "3",
-    settlementNumber: "PS-2024-12-003",
-    logisticsProviderName: "中通快递浙江分公司",
-    associatedBusinessVolume: 52,
-    totalPeriodProfit: 180000,
-    deductedFinancingInterest: -52000,
-    platformShareAmount: 64000,
-    status: "pending"
-  },
-  {
     id: "4",
     settlementNumber: "PS-2024-11-015",
     logisticsProviderName: "韵达速递江苏分公司",
@@ -75,26 +55,6 @@ const mockSettlements: ProfitSharingSettlement[] = [
     totalPeriodProfit: 120000,
     deductedFinancingInterest: -35000,
     platformShareAmount: 42500,
-    status: "accounted"
-  },
-  {
-    id: "5",
-    settlementNumber: "PS-2024-11-014",
-    logisticsProviderName: "顺丰速运华东区",
-    associatedBusinessVolume: 42,
-    totalPeriodProfit: 145000,
-    deductedFinancingInterest: -42000,
-    platformShareAmount: 51500,
-    status: "accounted"
-  },
-  {
-    id: "6",
-    settlementNumber: "PS-2024-11-013",
-    logisticsProviderName: "德邦物流上海总部",
-    associatedBusinessVolume: 48,
-    totalPeriodProfit: 168000,
-    deductedFinancingInterest: -48000,
-    platformShareAmount: 60000,
     status: "accounted"
   }
 ];
