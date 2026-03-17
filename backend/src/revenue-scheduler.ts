@@ -384,6 +384,7 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
     // 查询未计算过收益的运单（通过 LEFT JOIN 排除已有记录的运单）
     const [waybills] = await pool.query<RowDataPacket[]>(
       `SELECT w.id, w.waybill_number, w.customer_id, w.receivable_total, w.payable_total, w.waybill_date, w.departure_time,
+              w.branch,
               f.enterprise_name as financier_name
        FROM waybills w
        LEFT JOIN financiers f ON w.customer_id = f.id
@@ -393,6 +394,18 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
          AND rr.id IS NULL`,
       financierIds
     );
+
+    // 预加载 route → contract 映射
+    const [routeMappings] = await pool.query<RowDataPacket[]>(
+      `SELECT r.id as route_id, r.name as route_name, cr.contract_id
+       FROM routes r
+       JOIN contract_routes cr ON r.id = cr.route_id
+       WHERE r.status = 'active'`
+    );
+    const routeByName = new Map<string, { routeId: string; contractId: string }>();
+    for (const rm of routeMappings) {
+      routeByName.set(rm.route_name, { routeId: rm.route_id, contractId: rm.contract_id });
+    }
 
     if (waybills.length === 0) {
       console.log("[WaybillRevenue] 无新运单需要计算收益");
@@ -424,6 +437,8 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
         ? formatDateOnly(revenueDateSource)
         : new Date().toISOString().split('T')[0];
 
+      const routeMatch = w.branch ? routeByName.get(w.branch) : undefined;
+
       records.push({
         recordType: "revenue",
         beneficiaryType: "platform",
@@ -439,6 +454,8 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
         revenueDate,
         status: "confirmed",
         waybillId: w.id,
+        commissionContractId: routeMatch?.contractId,
+        routeId: routeMatch?.routeId,
       });
     }
 

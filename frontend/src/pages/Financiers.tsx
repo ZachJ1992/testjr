@@ -727,7 +727,7 @@ function FinanciersPage() {
     if (!token) return;
     const content = t(
       "financiers.delete_confirm_content",
-      `确定要删除融资方 "{name}" 吗？此操作不可恢复。`
+      `确定要删除合作方 "{name}" 吗？此操作不可恢复。`
     ).replace("{name}", record.enterpriseName);
     Modal.confirm({
       title: t("common.confirm_delete", "确认删除？"),
@@ -762,7 +762,7 @@ function FinanciersPage() {
       {/* 标题和副标题 */}
       <div style={{ marginBottom: 24 }}>
         <Typography.Title level={2} style={{ margin: 0, marginBottom: 8 }}>
-          {t("financiers.title", "融资方档案")}
+          {t("financiers.title", "合作方档案")}
         </Typography.Title>
         <Typography.Text type="secondary">
           {t("financiers.subtitle", "管理物流企业基础信息与授信情况")}
@@ -781,7 +781,7 @@ function FinanciersPage() {
           allowClear
         />
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          {t("financiers.add", "新增融资方")}
+          {t("financiers.add", "新增合作方")}
         </Button>
       </Space>
 
@@ -949,15 +949,15 @@ function FinanciersPage() {
         ]}
       />
 
-      {/* 新增/编辑/查看融资方Drawer */}
+      {/* 新增/编辑/查看合作方Drawer */}
       <Drawer
         open={modalOpen}
         title={
           <div>
             <Typography.Title level={4} style={{ margin: 0, color: "#1890ff" }}>
               {viewMode 
-                ? t("financiers.view_title", "查看融资方") 
-                : (editing ? t("financiers.edit_title", "编辑融资方") : t("financiers.add_title", "新增融资方"))}
+                ? t("financiers.view_title", "查看合作方") 
+                : (editing ? t("financiers.edit_title", "编辑合作方") : t("financiers.add_title", "新增合作方"))}
             </Typography.Title>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {viewMode 
@@ -1604,7 +1604,7 @@ function FinanciersPage() {
             label={t("external_systems.system_id", "在外部系统中的ID")}
             extra={
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {t("external_systems.system_id_hint", "可选，用于在运单数据中匹配识别该融资方")}
+                {t("external_systems.system_id_hint", "可选，用于在运单数据中匹配识别该合作方")}
               </Typography.Text>
             }
           >

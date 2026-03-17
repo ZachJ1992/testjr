@@ -16,6 +16,13 @@ export const getApiBase = () => {
 const API_BASE = getApiBase();
 export const API_AI = `${API_BASE}/ai/agent`;
 
+export function resolveFileUrl(path: string): string {
+  if (!path) return '';
+  if (/^https?:\/\//.test(path)) return path;
+  const base = API_BASE.replace(/\/api\/?$/, '');
+  return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+}
+
 export interface AISession {
   id: string;
   userId: string;
@@ -1318,7 +1325,7 @@ export async function importWaybillsApi(
 
 // Settlement Types
 export type SettlementType = "financing_repayment" | "commission" | "profit_sharing";
-export type SettlementStatus = "pending" | "confirmed" | "settled" | "overdue";
+export type SettlementStatus = "pending" | "confirmed" | "paid" | "invoiced" | "settled" | "overdue";
 
 export interface SettlementDetail {
   fieldKey: string;
@@ -1345,7 +1352,15 @@ export interface Settlement {
   details?: SettlementDetail[];
   status: SettlementStatus;
   dueDate: string;
+  paymentProofUrl?: string;
+  paidDate?: string;
+  invoiceNumber?: string;
+  invoiceDate?: string;
+  invoiceAmount?: number;
+  invoiceRemark?: string;
+  invoiceAttachmentUrl?: string;
   settledDate?: string;
+  localPartnerName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -1452,6 +1467,30 @@ export async function settleSettlementApi(
   });
 }
 
+export async function markSettlementPaidApi(
+  token: string,
+  id: string,
+  paymentProofUrl?: string
+): Promise<{ settlement: Settlement }> {
+  return request(`/settlements/${id}/mark-paid`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ paymentProofUrl }),
+  });
+}
+
+export async function registerSettlementInvoiceApi(
+  token: string,
+  id: string,
+  data: { invoiceNumber: string; invoiceDate: string; invoiceAmount: number; invoiceRemark?: string; invoiceAttachmentUrl?: string }
+): Promise<{ settlement: Settlement }> {
+  return request(`/settlements/${id}/register-invoice`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
 export async function generateFinancingRepaymentSettlementApi(
   token: string,
   payload: {
@@ -1520,19 +1559,30 @@ export interface CommissionConfigItem {
 
 export type CommissionContractStatus = "active" | "expiring_soon" | "expired" | "disabled";
 
+export interface ContractRoute {
+  id: string;
+  contractId: string;
+  routeId: string;
+  routeName?: string;
+  localPartnerName?: string;
+  createdAt: string;
+}
+
 export interface CommissionContract {
   id: string;
   customerName: string;
-  customerSystemId: string;
+  financierId?: string;
+  customerSystemId?: string;
   startDate: string;
   endDate: string;
-  settlementCycle: "monthly" | "biweekly" | "weekly";
-  settlementDay: number;
+  settlementCycle?: "monthly" | "biweekly" | "weekly";
+  settlementDay?: number;
   remark?: string;
   commissionConfig: CommissionConfigItem[];
   status: CommissionContractStatus;
   createdAt: string;
   updatedAt: string;
+  routes?: ContractRoute[];
 }
 
 export interface CommissionContractStats {
@@ -1577,14 +1627,16 @@ export async function createCommissionContractApi(
   token: string,
   payload: {
     customerName: string;
-    customerSystemId: string;
+    financierId?: string;
+    customerSystemId?: string;
     startDate: string;
     endDate: string;
-    settlementCycle: "monthly" | "biweekly" | "weekly";
-    settlementDay: number;
+    settlementCycle?: "monthly" | "biweekly" | "weekly";
+    settlementDay?: number;
     remark?: string;
     commissionConfig: CommissionConfigItem[];
     status?: CommissionContractStatus;
+    routeIds?: string[];
   }
 ): Promise<{ contract: CommissionContract }> {
   return request("/commission-contracts", {
@@ -1599,6 +1651,7 @@ export async function updateCommissionContractApi(
   id: string,
   payload: Partial<{
     customerName: string;
+    financierId: string;
     customerSystemId: string;
     startDate: string;
     endDate: string;
@@ -1607,6 +1660,7 @@ export async function updateCommissionContractApi(
     remark: string;
     commissionConfig: CommissionConfigItem[];
     status: CommissionContractStatus;
+    routeIds: string[];
   }>
 ): Promise<{ contract: CommissionContract }> {
   return request(`/commission-contracts/${id}`, {
@@ -2401,10 +2455,11 @@ export type RevenueSourceType =
   | 'financing_interest'      // 三方融资利息
   | 'directed_pay_interest'   // 定向支付利息
   | 'brokerage_commission'    // 撮合业务抽成
-  | 'commission_fee';         // 抽成合同费用
+  | 'commission_fee'          // 抽成合同费用
+  | 'waybill_commission';     // 运单平台抽成
 
 // 收益状态
-export type RevenueStatus = 'pending' | 'confirmed' | 'settled';
+export type RevenueStatus = 'pending' | 'confirmed' | 'reconciling' | 'reconciled' | 'settled' | 'accounted';
 
 // 收益统计
 export interface RevenueStats {
@@ -2416,7 +2471,8 @@ export interface RevenueStats {
   // 扩展字段 - 收益增长分析
   growthRate?: number;          // 环比增长率(%)
   dailyAverage?: number;        // 日均收益
-  totalInvestment?: number;     // 在投总额
+  settledRevenue?: number;      // 已结算收益
+  unsettledRevenue?: number;    // 待结算收益
   // 扩展字段 - 业务增长指标
   activeContracts?: number;     // 有效合同数
   newContractsPeriod?: number;  // 本期新增合同数
@@ -2472,6 +2528,10 @@ export interface RevenueRecord {
   vehiclePlate?: string;
   driverName?: string;
   subFinancier?: string;
+  commissionContractId?: string;
+  routeId?: string;
+  localPartnerName?: string;
+  routeName?: string;
   createdAt: string;
 }
 
@@ -2500,6 +2560,8 @@ export async function fetchPlatformRevenueList(
     financierId?: string;
     status?: RevenueStatus;
     subFinancier?: string;
+    commissionContractId?: string;
+    localPartnerId?: string;
     page?: number;
     pageSize?: number;
   }
@@ -2512,6 +2574,8 @@ export async function fetchPlatformRevenueList(
   if (filters?.financierId) params.append("financierId", filters.financierId);
   if (filters?.status) params.append("status", filters.status);
   if (filters?.subFinancier) params.append("subFinancier", filters.subFinancier);
+  if (filters?.commissionContractId) params.append("commissionContractId", filters.commissionContractId);
+  if (filters?.localPartnerId) params.append("localPartnerId", filters.localPartnerId);
   if (filters?.page) params.append("page", filters.page.toString());
   if (filters?.pageSize) params.append("pageSize", filters.pageSize.toString());
   const queryString = params.toString();
@@ -2816,4 +2880,247 @@ export function getFunderRevenueExportUrl(
   if (filters?.status) params.append("status", filters.status);
   const queryString = params.toString();
   return `${API_BASE}/revenue/funder/export${queryString ? `?${queryString}` : ""}`;
+}
+
+// =============================================
+// 落地合作方 (Local Partners) API
+// =============================================
+
+export interface LocalPartner {
+  id: string;
+  name: string;
+  financierId: string;
+  financierName?: string;
+  contactPerson?: string;
+  contactPhone?: string;
+  remark?: string;
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function fetchLocalPartners(
+  token: string,
+  params?: { financierId?: string; status?: string }
+): Promise<{ localPartners: LocalPartner[] }> {
+  const sp = new URLSearchParams();
+  if (params?.financierId) sp.append("financierId", params.financierId);
+  if (params?.status) sp.append("status", params.status);
+  const q = sp.toString();
+  return request(`/local-partners${q ? `?${q}` : ""}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createLocalPartnerApi(
+  token: string,
+  payload: { name: string; financierId: string; contactPerson?: string; contactPhone?: string; remark?: string }
+): Promise<{ localPartner: LocalPartner }> {
+  return request("/local-partners", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateLocalPartnerApi(
+  token: string,
+  id: string,
+  payload: Partial<{ name: string; financierId: string; contactPerson: string; contactPhone: string; remark: string; status: "active" | "disabled" }>
+): Promise<{ localPartner: LocalPartner }> {
+  return request(`/local-partners/${id}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteLocalPartnerApi(
+  token: string,
+  id: string
+): Promise<{ success: boolean }> {
+  return request(`/local-partners/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// =============================================
+// 线路 (Routes) API
+// =============================================
+
+export interface RouteItem {
+  id: string;
+  name: string;
+  localPartnerId: string;
+  localPartnerName?: string;
+  remark?: string;
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function fetchRoutes(
+  token: string,
+  params?: { localPartnerId?: string; financierId?: string; status?: string }
+): Promise<{ routes: RouteItem[] }> {
+  const sp = new URLSearchParams();
+  if (params?.localPartnerId) sp.append("localPartnerId", params.localPartnerId);
+  if (params?.financierId) sp.append("financierId", params.financierId);
+  if (params?.status) sp.append("status", params.status);
+  const q = sp.toString();
+  return request(`/routes${q ? `?${q}` : ""}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createRouteApi(
+  token: string,
+  payload: { name: string; localPartnerId: string; remark?: string }
+): Promise<{ route: RouteItem }> {
+  return request("/routes", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateRouteApi(
+  token: string,
+  id: string,
+  payload: Partial<{ name: string; localPartnerId: string; remark: string; status: "active" | "disabled" }>
+): Promise<{ route: RouteItem }> {
+  return request(`/routes/${id}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteRouteApi(
+  token: string,
+  id: string
+): Promise<{ success: boolean }> {
+  return request(`/routes/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// =============================================
+// 对账批次 (Reconciliation) API
+// =============================================
+
+export type ReconBatchStatus = "reconciling" | "reconciled" | "settlement_generated" | "paid_offline" | "accounted" | "cancelled";
+
+export interface ReconBatch {
+  id: string;
+  batchNumber: string;
+  contractId: string;
+  financierId?: string;
+  financierName?: string;
+  localPartnerName?: string;
+  periodStart: string;
+  periodEnd: string;
+  totalAmount: number;
+  itemCount: number;
+  status: ReconBatchStatus;
+  settlementId?: string;
+  exportUrl?: string;
+  paymentProofUrl?: string;
+  remark?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReconStats {
+  totalRevenue: number;
+  pendingAmount: number;
+  accountedAmount: number;
+}
+
+export async function fetchReconBatches(
+  token: string,
+  params?: { contractId?: string; financierId?: string; status?: ReconBatchStatus; startDate?: string; endDate?: string }
+): Promise<{ batches: ReconBatch[] }> {
+  const sp = new URLSearchParams();
+  if (params?.contractId) sp.append("contractId", params.contractId);
+  if (params?.financierId) sp.append("financierId", params.financierId);
+  if (params?.status) sp.append("status", params.status);
+  if (params?.startDate) sp.append("startDate", params.startDate);
+  if (params?.endDate) sp.append("endDate", params.endDate);
+  const q = sp.toString();
+  return request(`/recon-batches${q ? `?${q}` : ""}`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export async function fetchReconStats(token: string): Promise<ReconStats> {
+  return request("/recon-batches/stats", { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export async function fetchReconBatchById(
+  token: string,
+  id: string
+): Promise<{ batch: ReconBatch; revenueRecordIds: string[] }> {
+  return request(`/recon-batches/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export async function createReconBatch(
+  token: string,
+  payload: {
+    contractId: string;
+    financierId?: string;
+    financierName?: string;
+    periodStart: string;
+    periodEnd: string;
+    revenueRecordIds: string[];
+    remark?: string;
+  }
+): Promise<{ batch: ReconBatch }> {
+  return request("/recon-batches", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function markReconReconciled(token: string, id: string): Promise<{ batch: ReconBatch }> {
+  return request(`/recon-batches/${id}/reconciled`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function generateReconSettlement(token: string, id: string): Promise<{ batch: ReconBatch }> {
+  return request(`/recon-batches/${id}/generate-settlement`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function markReconPaidOffline(token: string, id: string, paymentProofUrl?: string): Promise<{ batch: ReconBatch }> {
+  return request(`/recon-batches/${id}/paid-offline`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ paymentProofUrl }),
+  });
+}
+
+export async function markReconAccounted(token: string, id: string): Promise<{ batch: ReconBatch }> {
+  return request(`/recon-batches/${id}/accounted`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function cancelReconBatch(token: string, id: string): Promise<{ batch: ReconBatch }> {
+  return request(`/recon-batches/${id}/cancel`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function fetchBatchRevenueRecords(token: string, batchId: string): Promise<{ records: RevenueRecord[] }> {
+  return request(`/recon-batches/${batchId}/records`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }

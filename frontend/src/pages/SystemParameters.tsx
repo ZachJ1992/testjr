@@ -174,7 +174,7 @@ function SystemParametersPage() {
                     {t("system_parameters.round_half_up", "四舍五入 (标准规则)")}
                   </Select.Option>
                   <Select.Option value="round_down">
-                    {t("system_parameters.round_down", "向下取整 (对融资方有利)")}
+                    {t("system_parameters.round_down", "向下取整 (对合作方有利)")}
                   </Select.Option>
                 </Select>
               </Form.Item>

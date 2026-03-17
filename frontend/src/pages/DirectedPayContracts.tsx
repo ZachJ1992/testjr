@@ -255,7 +255,7 @@ function DirectedPayContractsPage() {
       ellipsis: true
     },
     {
-      title: "融资方",
+      title: "合作方",
       dataIndex: "financierName",
       key: "financierName",
       width: 150,
@@ -425,7 +425,7 @@ function DirectedPayContractsPage() {
       {/* 页面标题 */}
       <div style={{ marginBottom: 24 }}>
         <Title level={3} style={{ margin: 0 }}>定向支付合同管理</Title>
-        <Text type="secondary">管理资金方与融资方之间的定向支付合同</Text>
+        <Text type="secondary">管理资金方与合作方之间的定向支付合同</Text>
       </div>
 
       {/* 统计卡片 */}
@@ -479,7 +479,7 @@ function DirectedPayContractsPage() {
           <Col>
             <Space size="middle">
               <Search
-                placeholder="搜索合同编号/资金方/融资方"
+                placeholder="搜索合同编号/资金方/合作方"
                 allowClear
                 onSearch={handleSearch}
                 style={{ width: 280 }}
@@ -548,7 +548,7 @@ function DirectedPayContractsPage() {
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="资金方">{viewingContract.funderName || "-"}</Descriptions.Item>
-              <Descriptions.Item label="融资方">{viewingContract.financierName || "-"}</Descriptions.Item>
+              <Descriptions.Item label="合作方">{viewingContract.financierName || "-"}</Descriptions.Item>
               <Descriptions.Item label="资金方账户ID">{viewingContract.funderAccountId || "-"}</Descriptions.Item>
               <Descriptions.Item label="年化利率">{(viewingContract.annualInterestRate * 100).toFixed(2)}%</Descriptions.Item>
               <Descriptions.Item label="计息基数">{viewingContract.interestCalcBase}天</Descriptions.Item>

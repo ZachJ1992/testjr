@@ -950,6 +950,8 @@ function mapApiDataToRow(item: any): TmsRowData {
     profit: parseFloat(item.profit || item.tt_profit || 0),
     profitRate: parseFloat(item.profitRate || item.profit_rate || 0),
     receivableReturn: parseFloat(item.receivableReturn || item.receivable_return || 0),
+    branch: item.branch || item.down_line_text || item.net_point_name || '',
+    batchStatusText: item.batch_st_text || item.batch_status_text || item.batch_st_name || item.batch_status_name || '',
   };
 }
 
@@ -1590,12 +1592,12 @@ async function saveWaybill(data: TmsRowData, financierId: string): Promise<boole
         data.receivableTotal || 0, data.receivableTransport || 0, data.payableTotal || 0,
         data.driverPieceRate || 0, data.coDriverPieceRate || 0, data.payableOilCard || 0, data.etcFee || 0,
         data.profit || 0, data.profitRate || 0, data.receivableReturn || 0,
-        '10',   // batch_status 默认值
-        '200',  // assign_status 默认值  
-        '300',  // dispatch_status 默认值
+        data.batchStatusText || '',
+        '',     // assign_status
+        '',     // dispatch_status
         '2',    // batch_source 默认值
         '2',    // load_type 默认值
-        '',     // branch
+        data.branch || '',     // branch
         0,      // total_volume
         0       // goods_weight
       ]

@@ -1893,6 +1893,7 @@ function mapFields(rawData: any): WaybillData {
     createTime: truckTime ? new Date(truckTime) : undefined,
     shipTime: truckTime ? new Date(truckTime) : undefined,
     subFinancier: '金罗',
+    branch: extractOutletName(item) || '',
   };
 }
 

@@ -3759,11 +3759,12 @@ function mapCommissionContractRow(row: any): CommissionContract {
   return {
     id: row.id,
     customerName: row.customer_name,
-    customerSystemId: row.customer_system_id,
+    financierId: row.financier_id ?? undefined,
+    customerSystemId: row.customer_system_id ?? undefined,
     startDate: row.start_date,
     endDate: row.end_date,
-    settlementCycle: row.settlement_cycle,
-    settlementDay: row.settlement_day,
+    settlementCycle: row.settlement_cycle ?? undefined,
+    settlementDay: row.settlement_day ?? undefined,
     remark: row.remark || undefined,
     commissionConfig: row.commission_config ? (typeof row.commission_config === "string" ? JSON.parse(row.commission_config) : row.commission_config) : [],
     status: row.status as CommissionContractStatus,
@@ -3809,19 +3810,18 @@ export async function getCommissionContractById(id: string): Promise<CommissionC
 
 export async function createCommissionContract(input: {
   customerName: string;
-  customerSystemId: string;
+  financierId?: string;
+  customerSystemId?: string;
   startDate: string;
   endDate: string;
-  settlementCycle: "monthly" | "biweekly" | "weekly";
-  settlementDay: number;
+  settlementCycle?: "monthly" | "biweekly" | "weekly";
+  settlementDay?: number;
   remark?: string;
   commissionConfig: CommissionConfigItem[];
   status?: CommissionContractStatus;
 }): Promise<CommissionContract> {
   const id = randomUUID();
-  
 
-  // 根据日期判断初始状态
   let status: CommissionContractStatus = input.status || "active";
   const today = new Date();
   const endDate = new Date(input.endDate);
@@ -3835,17 +3835,18 @@ export async function createCommissionContract(input: {
 
   await pool.query(
     `INSERT INTO commission_contracts 
-     (id, customer_name, customer_system_id, start_date, end_date, 
+     (id, customer_name, financier_id, customer_system_id, start_date, end_date, 
       settlement_cycle, settlement_day, remark, commission_config, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
     [
       id,
       input.customerName,
-      input.customerSystemId,
+      input.financierId || null,
+      input.customerSystemId || null,
       input.startDate,
       input.endDate,
-      input.settlementCycle,
-      input.settlementDay,
+      input.settlementCycle || null,
+      input.settlementDay ?? null,
       input.remark || null,
       JSON.stringify(input.commissionConfig),
       status
@@ -3863,6 +3864,7 @@ export async function updateCommissionContract(
   id: string,
   input: Partial<{
     customerName: string;
+    financierId: string;
     customerSystemId: string;
     startDate: string;
     endDate: string;
@@ -3879,6 +3881,10 @@ export async function updateCommissionContract(
   if (input.customerName !== undefined) {
     updates.push("customer_name = ?");
     values.push(input.customerName);
+  }
+  if (input.financierId !== undefined) {
+    updates.push("financier_id = ?");
+    values.push(input.financierId);
   }
   if (input.customerSystemId !== undefined) {
     updates.push("customer_system_id = ?");

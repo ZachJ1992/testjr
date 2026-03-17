@@ -6,8 +6,10 @@ import {
   fetchAvailableCategories,
   fetchDirectedPayContracts,
   fetchFinanciers,
+  fetchRoutes,
   getErrorMessage,
-  type AvailablePaymentCategory
+  type AvailablePaymentCategory,
+  type RouteItem,
 } from "../api";
 import type { Financier } from "../types";
 import { useAuth } from "../auth";
@@ -143,12 +145,12 @@ interface WaybillData {
   etcFee?: number; // ETC过路费
   // 兼容旧字段
   waybillDate?: string; // 运单日期（发车时间）
-  customerId?: string;  // 融资方ID
+  customerId?: string;  // 合作方ID
   status?: string;
   createdAt: string;
   updatedAt: string;
   subFinancier?: string;
-  // 融资方名称（从后端 JOIN 获取）
+  // 合作方名称（从后端 JOIN 获取）
   financierName?: string;
 }
 
@@ -208,9 +210,11 @@ function WaybillsPage() {
   const [availableContracts, setAvailableContracts] = useState<any[]>([]);
   const [loadingContracts, setLoadingContracts] = useState(false);
   
-  // 融资方列表（平台用户导入时选择）
+  // 合作方列表（平台用户导入时选择）
   const [financiers, setFinanciers] = useState<Financier[]>([]);
   const [selectedFinancierId, setSelectedFinancierId] = useState<string>();
+  // 线路 → 落地合作方映射
+  const [routeToLpMap, setRouteToLpMap] = useState<Record<string, string>>({});
 
   // 列宽拖动状态
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -232,12 +236,24 @@ function WaybillsPage() {
     void refresh();
   }, [token, filters]);
 
-  // 加载融资方列表（平台用户需要）
+  // 加载合作方列表（平台用户需要）
   useEffect(() => {
     if (user?.orgContext?.isPlatformUser && token) {
       fetchFinanciers(token).then(res => setFinanciers(res.financiers)).catch(() => {});
     }
   }, [token, user]);
+
+  // 加载线路数据，构建 线路名称 → 落地合作方名称 映射
+  useEffect(() => {
+    if (!token) return;
+    fetchRoutes(token).then(res => {
+      const map: Record<string, string> = {};
+      res.routes.forEach((r: RouteItem) => {
+        if (r.name && r.localPartnerName) map[r.name] = r.localPartnerName;
+      });
+      setRouteToLpMap(map);
+    }).catch(() => {});
+  }, [token]);
 
   // CSV解析函数
   const parseCSV = (text: string): Record<string, string>[] => {
@@ -399,7 +415,7 @@ function WaybillsPage() {
       const contracts = contractsRes.contracts || [];
       setAvailableContracts(contracts);
       
-      // 如果运单有关联的融资方，自动选择该融资方的合同
+      // 如果运单有关联的合作方，自动选择该合作方的合同
       const matchedContract = record.customerId 
         ? contracts.find((c: any) => c.financierId === record.customerId)
         : contracts[0];
@@ -540,8 +556,9 @@ function WaybillsPage() {
     }
 
     const exportColumns = [
-      { header: "融资方", key: (w: WaybillData) => w.financierName || w.customerName || "" },
-      { header: "子融资方", key: (w: WaybillData) => w.subFinancier || "" },
+      { header: "合作方", key: (w: WaybillData) => w.financierName || w.customerName || "" },
+      { header: "落地合作方", key: (w: WaybillData) => w.subFinancier ? (routeToLpMap[w.subFinancier] || "") : "" },
+      { header: "线路", key: (w: WaybillData) => w.subFinancier || "" },
       { header: "批次号", key: (w: WaybillData) => w.waybillNumber },
       { header: "批次状态", key: (w: WaybillData) => w.batchStatus || "" },
       { header: "应收合计", key: (w: WaybillData) => w.receivableTotal ?? "" },
@@ -628,9 +645,9 @@ function WaybillsPage() {
   // 使用 useMemo 根据 visibleGroups 动态过滤列
   const columns: ColumnsType<WaybillData> = useMemo(() => {
     const fixedLeftColumns: ColumnsType<WaybillData> = [
-      // ========== 固定左侧：融资方标识 + 批次号 ==========
+      // ========== 固定左侧：合作方标识 + 批次号 ==========
       {
-        title: "融资方",
+        title: "合作方",
         key: "financier",
         width: 100,
         fixed: 'left',
@@ -643,7 +660,18 @@ function WaybillsPage() {
         }
       },
       {
-        title: "子融资方",
+        title: "落地合作方",
+        key: "localPartner",
+        width: 120,
+        fixed: 'left',
+        ellipsis: true,
+        render: (_: any, record: WaybillData) => {
+          const lpName = record.subFinancier ? routeToLpMap[record.subFinancier] : undefined;
+          return lpName ? <Tag color="green" style={{ margin: 0 }}>{lpName}</Tag> : '-';
+        },
+      },
+      {
+        title: "线路",
         dataIndex: "subFinancier",
         width: 120,
         fixed: 'left',
@@ -660,15 +688,16 @@ function WaybillsPage() {
       {
         title: "状态",
         dataIndex: "batchStatus",
-        width: 60,
+        width: 80,
         render: (status: string) => {
           if (!status) return "-";
-          const shortStatus = status === "10" ? "待" : status === "20" ? "运" : status === "30" ? "完" : status.slice(0, 2);
           const colorMap: Record<string, string> = {
-            "10": "default", "20": "blue", "30": "green",
-            "已到达": "green", "已发车": "blue", "已完成": "green", "已取消": "default",
+            "已创建": "default", "预派车": "default",
+            "已发车": "blue", "已到车": "cyan", "已装车": "blue",
+            "部分卸车": "orange", "已卸车": "green", "已完成": "green",
+            "已取消": "red",
           };
-          return <Tag color={colorMap[status] || "default"} style={{ margin: 0, padding: '0 4px' }}>{shortStatus}</Tag>;
+          return <Tag color={colorMap[status] || "default"} style={{ margin: 0 }}>{status}</Tag>;
         }
       },
     ];
@@ -1238,13 +1267,13 @@ function WaybillsPage() {
           </Button>
         </div>
 
-        {/* 平台用户需要选择融资方 */}
+        {/* 平台用户需要选择合作方 */}
         {user?.orgContext?.isPlatformUser && (
-          <Form.Item label="选择融资方" required style={{ marginBottom: 16 }}>
+          <Form.Item label="选择合作方" required style={{ marginBottom: 16 }}>
             <Select
               value={selectedFinancierId}
               onChange={setSelectedFinancierId}
-              placeholder="请选择要导入数据的融资方"
+              placeholder="请选择要导入数据的合作方"
               showSearch
               filterOption={(input, option) =>
                 ((option?.label as string) ?? '').toLowerCase().includes(input.toLowerCase())
@@ -1271,7 +1300,7 @@ function WaybillsPage() {
           </p>
           <p className="ant-upload-hint">
             {user?.orgContext?.isPlatformUser && !selectedFinancierId 
-              ? "请先选择融资方" 
+              ? "请先选择合作方" 
               : "支持 CSV 格式文件"}
           </p>
         </Upload.Dragger>
@@ -1369,7 +1398,7 @@ function WaybillsPage() {
               }
               options={availableContracts.map((c: any) => ({
                 value: c.id,
-                label: `${c.contractNumber} - ${c.financierName || '未知融资方'} (额度: ¥${(c.availableAmount || 0).toLocaleString()})`
+                label: `${c.contractNumber} - ${c.financierName || '未知合作方'} (额度: ¥${(c.availableAmount || 0).toLocaleString()})`
               }))}
             />
           </Form.Item>

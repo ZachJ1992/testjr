@@ -159,13 +159,12 @@ async function saveWaybillData(
     // 检查是否已存在
     const [existing] = await pool.query<any[]>(
       `SELECT id, receivable_total, payable_total, receivable_cash, receivable_collect, 
-              receivable_return, monthly_cost, remark FROM waybills 
+              receivable_return, monthly_cost, remark, branch, batch_status FROM waybills 
        WHERE waybill_number = ? AND deleted_at IS NULL`,
       [waybill.waybillNumber]
     );
     
     if (existing.length > 0) {
-      // 检查是否需要更新（比较所有费用字段）
       const existingRow = existing[0];
       const needUpdate = 
         Math.abs((existingRow.receivable_total || 0) - (waybill.receivableTotal || 0)) > 0.01 ||
@@ -174,7 +173,9 @@ async function saveWaybillData(
         Math.abs((existingRow.receivable_collect || 0) - (waybill.receivableCollect || 0)) > 0.01 ||
         Math.abs((existingRow.receivable_return || 0) - (waybill.receivableReturn || 0)) > 0.01 ||
         Math.abs((existingRow.monthly_cost || 0) - (waybill.receivableMonthly || 0)) > 0.01 ||
-        (existingRow.remark || '') !== (waybill.remark || '');
+        (existingRow.remark || '') !== (waybill.remark || '') ||
+        (!existingRow.branch && waybill.branch) ||
+        (!existingRow.batch_status && waybill.batchStatusText);
       
       if (needUpdate) {
         await pool.query(
@@ -187,6 +188,8 @@ async function saveWaybillData(
             monthly_cost = ?,
             receivable_transport = ?,
             remark = ?,
+            branch = COALESCE(NULLIF(?, ''), branch),
+            batch_status = COALESCE(NULLIF(?, ''), batch_status),
             updated_at = NOW()
            WHERE id = ?`,
           [
@@ -198,6 +201,8 @@ async function saveWaybillData(
             waybill.receivableMonthly || 0,
             waybill.receivableTransport || 0,
             waybill.remark || '',
+            waybill.branch || '',
+            waybill.batchStatusText || '',
             existingRow.id,
           ]
         );
@@ -214,8 +219,8 @@ async function saveWaybillData(
         driver_name, vehicle_plate, departure_place, arrival_place,
         freight_amount, receivable_total, payable_total,
         receivable_cash, receivable_collect, receivable_return, monthly_cost, receivable_transport,
-        status, remark, waybill_date, business_mode, sub_financier, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        status, batch_status, remark, waybill_date, business_mode, sub_financier, branch, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         id,
         waybill.waybillNumber,
@@ -234,10 +239,12 @@ async function saveWaybillData(
         waybill.receivableMonthly || 0,
         waybill.receivableTransport || 0,
         waybill.status || 'pending',
+        waybill.batchStatusText || '',
         waybill.remark || '',
         waybill.createTime ? new Date(waybill.createTime).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
         'standard',
         waybill.subFinancier || '',
+        waybill.branch || '',
       ]
     );
     

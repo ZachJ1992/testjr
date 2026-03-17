@@ -4,7 +4,7 @@ import { pool } from "./db.js";
 
 // 结算单类型
 export type SettlementType = "financing_repayment" | "commission" | "profit_sharing";
-export type SettlementStatus = "pending" | "confirmed" | "settled" | "overdue";
+export type SettlementStatus = "pending" | "confirmed" | "paid" | "invoiced" | "settled" | "overdue";
 
 // 结算单明细项
 export interface SettlementDetail {
@@ -33,7 +33,15 @@ export interface Settlement {
   details?: SettlementDetail[];
   status: SettlementStatus;
   dueDate: string;
+  paymentProofUrl?: string;
+  paidDate?: string;
+  invoiceNumber?: string;
+  invoiceDate?: string;
+  invoiceAmount?: number;
+  invoiceRemark?: string;
+  invoiceAttachmentUrl?: string;
   settledDate?: string;
+  localPartnerName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -68,6 +76,13 @@ interface SettlementRow extends RowDataPacket {
   details: string | null;
   status: string;
   due_date: string;
+  payment_proof_url: string | null;
+  paid_date: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  invoice_amount: number | null;
+  invoice_remark: string | null;
+  invoice_attachment_url: string | null;
   settled_date: string | null;
   created_at: string;
   updated_at: string;
@@ -93,7 +108,15 @@ function mapSettlementRow(row: SettlementRow): Settlement {
     details: row.details ? JSON.parse(row.details) : undefined,
     status: row.status as SettlementStatus,
     dueDate: row.due_date,
+    paymentProofUrl: row.payment_proof_url ?? undefined,
+    paidDate: row.paid_date ?? undefined,
+    invoiceNumber: row.invoice_number ?? undefined,
+    invoiceDate: row.invoice_date ?? undefined,
+    invoiceAmount: row.invoice_amount != null ? Number(row.invoice_amount) : undefined,
+    invoiceRemark: row.invoice_remark ?? undefined,
+    invoiceAttachmentUrl: row.invoice_attachment_url ?? undefined,
     settledDate: row.settled_date ?? undefined,
+    localPartnerName: (row as any).local_partner_name ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -119,8 +142,14 @@ export async function ensureSettlementsTable(): Promise<void> {
       waybill_count INT NULL,
       total_amount DECIMAL(18, 2) NULL,
       details JSON NULL,
-      status ENUM('pending', 'confirmed', 'settled', 'overdue') NOT NULL DEFAULT 'pending',
+      status ENUM('pending', 'confirmed', 'paid', 'invoiced', 'settled', 'overdue') NOT NULL DEFAULT 'pending',
       due_date DATE NOT NULL,
+      payment_proof_url TEXT NULL COMMENT '到账水单URL',
+      paid_date DATE NULL COMMENT '到账日期',
+      invoice_number VARCHAR(100) NULL COMMENT '发票号',
+      invoice_date DATE NULL COMMENT '开票日期',
+      invoice_amount DECIMAL(18,2) NULL COMMENT '发票金额',
+      invoice_remark TEXT NULL COMMENT '发票备注',
       settled_date DATE NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -131,6 +160,28 @@ export async function ensureSettlementsTable(): Promise<void> {
       INDEX idx_settlement_due_date (due_date)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  // 扩展已有表：新增列和状态枚举
+  const newColumns = [
+    { name: "payment_proof_url", sql: "ADD COLUMN payment_proof_url TEXT NULL COMMENT '到账水单URL' AFTER due_date" },
+    { name: "paid_date", sql: "ADD COLUMN paid_date DATE NULL COMMENT '到账日期' AFTER payment_proof_url" },
+    { name: "invoice_number", sql: "ADD COLUMN invoice_number VARCHAR(100) NULL COMMENT '发票号' AFTER paid_date" },
+    { name: "invoice_date", sql: "ADD COLUMN invoice_date DATE NULL COMMENT '开票日期' AFTER invoice_number" },
+    { name: "invoice_amount", sql: "ADD COLUMN invoice_amount DECIMAL(18,2) NULL COMMENT '发票金额' AFTER invoice_date" },
+    { name: "invoice_remark", sql: "ADD COLUMN invoice_remark TEXT NULL COMMENT '发票备注' AFTER invoice_amount" },
+    { name: "invoice_attachment_url", sql: "ADD COLUMN invoice_attachment_url TEXT NULL COMMENT '发票附件URL' AFTER invoice_remark" },
+  ];
+  for (const col of newColumns) {
+    try {
+      await pool.query(`ALTER TABLE settlements ${col.sql}`);
+    } catch (e: any) {
+      if (!e.message?.includes("Duplicate column")) { /* already exists, ignore */ }
+    }
+  }
+  // 扩展 status ENUM
+  try {
+    await pool.query(`ALTER TABLE settlements MODIFY COLUMN status ENUM('pending','confirmed','paid','invoiced','settled','overdue') NOT NULL DEFAULT 'pending'`);
+  } catch { /* ignore */ }
 }
 
 // 生成结算单号
@@ -160,42 +211,48 @@ export async function getSettlements(filters?: {
   endDate?: string;
 }): Promise<Settlement[]> {
   let query = `
-    SELECT id, settlement_number, type, contract_id, contract_type,
-           customer_id, customer_name, period_start, period_end,
-           repayment_type, principal, interest, total_due,
-           waybill_count, total_amount, details, status, due_date,
-           settled_date, created_at, updated_at
-    FROM settlements
+    SELECT s.id, s.settlement_number, s.type, s.contract_id, s.contract_type,
+           s.customer_id, s.customer_name, s.period_start, s.period_end,
+           s.repayment_type, s.principal, s.interest, s.total_due,
+           s.waybill_count, s.total_amount, s.details, s.status, s.due_date,
+           s.payment_proof_url, s.paid_date, s.invoice_number, s.invoice_date,
+           s.invoice_amount, s.invoice_remark, s.invoice_attachment_url,
+           s.settled_date, s.created_at, s.updated_at,
+           GROUP_CONCAT(DISTINCT lp.name SEPARATOR '、') as local_partner_name
+    FROM settlements s
+    LEFT JOIN contract_routes cr ON s.contract_id = cr.contract_id
+    LEFT JOIN routes rt ON cr.route_id = rt.id
+    LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id
     WHERE 1=1
   `;
   const params: any[] = [];
 
   if (filters?.type) {
-    query += ` AND type = ?`;
+    query += ` AND s.type = ?`;
     params.push(filters.type);
   }
   if (filters?.status) {
-    query += ` AND status = ?`;
+    query += ` AND s.status = ?`;
     params.push(filters.status);
   }
   if (filters?.customerId) {
-    query += ` AND customer_id = ?`;
+    query += ` AND s.customer_id = ?`;
     params.push(filters.customerId);
   }
   if (filters?.contractId) {
-    query += ` AND contract_id = ?`;
+    query += ` AND s.contract_id = ?`;
     params.push(filters.contractId);
   }
   if (filters?.startDate) {
-    query += ` AND due_date >= ?`;
+    query += ` AND s.due_date >= ?`;
     params.push(filters.startDate);
   }
   if (filters?.endDate) {
-    query += ` AND due_date <= ?`;
+    query += ` AND s.due_date <= ?`;
     params.push(filters.endDate);
   }
 
-  query += ` ORDER BY created_at DESC`;
+  query += ` GROUP BY s.id ORDER BY s.created_at DESC`;
 
   const [rows] = await pool.query<SettlementRow[]>(query, params);
   return rows.map(mapSettlementRow);
@@ -204,12 +261,20 @@ export async function getSettlements(filters?: {
 // 获取单个结算单
 export async function getSettlementById(id: string): Promise<Settlement | undefined> {
   const [rows] = await pool.query<SettlementRow[]>(
-    `SELECT id, settlement_number, type, contract_id, contract_type,
-            customer_id, customer_name, period_start, period_end,
-            repayment_type, principal, interest, total_due,
-            waybill_count, total_amount, details, status, due_date,
-            settled_date, created_at, updated_at
-     FROM settlements WHERE id = ?`,
+    `SELECT s.id, s.settlement_number, s.type, s.contract_id, s.contract_type,
+            s.customer_id, s.customer_name, s.period_start, s.period_end,
+            s.repayment_type, s.principal, s.interest, s.total_due,
+            s.waybill_count, s.total_amount, s.details, s.status, s.due_date,
+            s.payment_proof_url, s.paid_date, s.invoice_number, s.invoice_date,
+            s.invoice_amount, s.invoice_remark, s.invoice_attachment_url,
+            s.settled_date, s.created_at, s.updated_at,
+            GROUP_CONCAT(DISTINCT lp.name SEPARATOR '、') as local_partner_name
+     FROM settlements s
+     LEFT JOIN contract_routes cr ON s.contract_id = cr.contract_id
+     LEFT JOIN routes rt ON cr.route_id = rt.id
+     LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id
+     WHERE s.id = ?
+     GROUP BY s.id`,
     [id]
   );
   return rows[0] ? mapSettlementRow(rows[0]) : undefined;
@@ -292,14 +357,57 @@ export async function confirmSettlement(id: string): Promise<Settlement> {
   return updated;
 }
 
-// 结算结算单
+// 标记已到账（上传水单）
+export async function markSettlementPaid(id: string, paymentProofUrl?: string): Promise<Settlement> {
+  const current = await getSettlementById(id);
+  if (!current) throw new Error("结算单不存在");
+  if (current.status !== "pending" && current.status !== "confirmed") {
+    throw new Error("只能对待处理或已确认状态的结算单标记到账");
+  }
+
+  const today = new Date().toISOString().split("T")[0];
+  await pool.query(
+    `UPDATE settlements SET status = 'paid', paid_date = ?, payment_proof_url = ?, updated_at = NOW() WHERE id = ?`,
+    [today, paymentProofUrl || null, id]
+  );
+
+  const updated = await getSettlementById(id);
+  if (!updated) throw new Error("标记到账失败");
+  return updated;
+}
+
+// 登记发票
+export async function registerSettlementInvoice(id: string, input: {
+  invoiceNumber: string;
+  invoiceDate: string;
+  invoiceAmount: number;
+  invoiceRemark?: string;
+  invoiceAttachmentUrl?: string;
+}): Promise<Settlement> {
+  const current = await getSettlementById(id);
+  if (!current) throw new Error("结算单不存在");
+  if (current.status !== "paid") {
+    throw new Error("只能对已到账状态的结算单登记发票");
+  }
+
+  await pool.query(
+    `UPDATE settlements SET status = 'invoiced', invoice_number = ?, invoice_date = ?, invoice_amount = ?, invoice_remark = ?, invoice_attachment_url = ?, updated_at = NOW() WHERE id = ?`,
+    [input.invoiceNumber, input.invoiceDate, input.invoiceAmount, input.invoiceRemark || null, input.invoiceAttachmentUrl || null, id]
+  );
+
+  const updated = await getSettlementById(id);
+  if (!updated) throw new Error("发票登记失败");
+  return updated;
+}
+
+// 结算结算单（完结）
 export async function settleSettlement(id: string): Promise<Settlement> {
   const current = await getSettlementById(id);
   if (!current) {
     throw new Error("结算单不存在");
   }
-  if (current.status !== "confirmed" && current.status !== "pending") {
-    throw new Error("只能结算待处理或已确认状态的结算单");
+  if (!["confirmed", "pending", "paid", "invoiced"].includes(current.status)) {
+    throw new Error("当前状态无法结算");
   }
 
   const today = new Date().toISOString().split("T")[0];

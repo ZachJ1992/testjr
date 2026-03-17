@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import {
   authenticate,
   AuthenticatedRequest,
@@ -12,6 +12,9 @@ import * as directedPayStore from "./directed-pay-contracts-store.js";
 import { getDirectedPayContractsByFunder } from "./directed-pay-contracts-store.js";
 import directedPaymentRoutes from "./directed-payment-routes.js";
 import crawlerRoutes from "./crawler/crawler-routes.js";
+import * as commissionV2Store from "./commission-v2-store.js";
+import * as reconStore from "./reconciliation-store.js";
+import { createSettlement as createSettlementRecord } from "./settlements-store.js";
 import { verifyPassword } from "./password.js";
 import { getLangFromRequest, getErrorMessage } from "./i18n.js";
 import { sendError, handleError } from "./errorHandler.js";
@@ -104,6 +107,8 @@ import {
   getSettlementById,
   createSettlement,
   confirmSettlement,
+  markSettlementPaid,
+  registerSettlementInvoice,
   settleSettlement,
   getSettlementStats,
   updateOverdueSettlements,
@@ -2220,11 +2225,10 @@ router.post(
   }
 );
 
-// 文件访问接口
+// 文件访问接口（无需认证，文件名为UUID不可猜测）
 router.get(
   "/uploads/:filename",
-  authenticate,
-  async (req: AuthenticatedRequest, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
       const { filename } = req.params;
       const filePath = path.resolve(process.cwd(), "backend", "uploads", filename);
@@ -2403,6 +2407,44 @@ router.put(
   }
 );
 
+// 标记已到账
+router.put(
+  "/settlements/:id/mark-paid",
+  authenticate,
+  requirePermissions("manage_settlements"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { paymentProofUrl } = req.body;
+      const settlement = await markSettlementPaid(id, paymentProofUrl);
+      res.json({ settlement });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// 登记发票
+router.put(
+  "/settlements/:id/register-invoice",
+  authenticate,
+  requirePermissions("manage_settlements"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { invoiceNumber, invoiceDate, invoiceAmount, invoiceRemark, invoiceAttachmentUrl } = req.body;
+      if (!invoiceNumber || !invoiceDate || invoiceAmount == null) {
+        res.status(400).json({ error: "发票号、开票日期和发票金额为必填" });
+        return;
+      }
+      const settlement = await registerSettlementInvoice(id, { invoiceNumber, invoiceDate, invoiceAmount, invoiceRemark, invoiceAttachmentUrl });
+      res.json({ settlement });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
 // 手动触发生成账单（融资还款）
 router.post(
   "/settlements/generate/financing-repayment",
@@ -2526,6 +2568,10 @@ router.get(
         status: status as any,
         customerName: customerName as string
       });
+      // 为每个合同附带关联线路
+      for (const c of result.contracts) {
+        c.routes = await commissionV2Store.getContractRoutes(c.id);
+      }
       res.json(result);
     } catch (err) {
       handleError(res, req, 500, err);
@@ -2560,6 +2606,7 @@ router.get(
         sendError(res, req, 404, "error.commission_contracts.not_found");
         return;
       }
+      contract.routes = await commissionV2Store.getContractRoutes(contract.id);
       res.json({ contract });
     } catch (err) {
       handleError(res, req, 500, err);
@@ -2576,6 +2623,7 @@ router.post(
     try {
       const {
         customerName,
+        financierId,
         customerSystemId,
         startDate,
         endDate,
@@ -2583,20 +2631,28 @@ router.post(
         settlementDay,
         remark,
         commissionConfig,
-        status
+        status,
+        routeIds
       } = req.body ?? {};
 
       const contract = await createCommissionContract({
         customerName: customerName || "",
-        customerSystemId: customerSystemId || "",
+        financierId: financierId || undefined,
+        customerSystemId: customerSystemId || undefined,
         startDate: startDate || new Date().toISOString().split("T")[0],
         endDate: endDate || new Date().toISOString().split("T")[0],
-        settlementCycle: settlementCycle || "monthly",
-        settlementDay: Number(settlementDay) || 10,
+        settlementCycle: settlementCycle || undefined,
+        settlementDay: settlementDay != null ? Number(settlementDay) : undefined,
         remark,
         commissionConfig: commissionConfig || [],
         status
       });
+
+      if (Array.isArray(routeIds) && routeIds.length > 0) {
+        const routes = await commissionV2Store.setContractRoutes(contract.id, routeIds);
+        contract.routes = routes;
+      }
+
       res.status(201).json({ contract });
     } catch (err) {
       handleError(res, req, 400, err);
@@ -2611,7 +2667,13 @@ router.put(
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const contract = await updateCommissionContract(req.params.id, req.body);
+      const { routeIds, ...rest } = req.body ?? {};
+      const contract = await updateCommissionContract(req.params.id, rest);
+
+      if (Array.isArray(routeIds)) {
+        contract.routes = await commissionV2Store.setContractRoutes(contract.id, routeIds);
+      }
+
       res.json({ contract });
     } catch (err) {
       handleError(res, req, 400, err);
@@ -3674,6 +3736,363 @@ router.post(
       });
     } catch (err) {
       handleError(res, req, 500, err);
+    }
+  }
+);
+
+// =============================================
+// 落地合作方 (Local Partners) API
+// =============================================
+
+router.get(
+  "/local-partners",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { financierId, status } = req.query;
+      const items = await commissionV2Store.getLocalPartners({
+        financierId: financierId as string,
+        status: status as string,
+      });
+      res.json({ localPartners: items });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/local-partners/:id",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const item = await commissionV2Store.getLocalPartnerById(req.params.id);
+      if (!item) { sendError(res, req, 404, "落地合作方不存在"); return; }
+      res.json({ localPartner: item });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.post(
+  "/local-partners",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { name, financierId, contactPerson, contactPhone, remark } = req.body ?? {};
+      if (!name || !financierId) {
+        sendError(res, req, 400, "名称和合作方为必填");
+        return;
+      }
+      const item = await commissionV2Store.createLocalPartner({ name, financierId, contactPerson, contactPhone, remark });
+      res.status(201).json({ localPartner: item });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+router.put(
+  "/local-partners/:id",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const item = await commissionV2Store.updateLocalPartner(req.params.id, req.body);
+      res.json({ localPartner: item });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+router.delete(
+  "/local-partners/:id",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      await commissionV2Store.deleteLocalPartner(req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// =============================================
+// 线路 (Routes) API
+// =============================================
+
+router.get(
+  "/routes",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { localPartnerId, financierId, status } = req.query;
+      const items = await commissionV2Store.getRoutes({
+        localPartnerId: localPartnerId as string,
+        financierId: financierId as string,
+        status: status as string,
+      });
+      res.json({ routes: items });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.post(
+  "/routes",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { name, localPartnerId, remark } = req.body ?? {};
+      if (!name || !localPartnerId) {
+        sendError(res, req, 400, "名称和落地合作方为必填");
+        return;
+      }
+      const item = await commissionV2Store.createRoute({ name, localPartnerId, remark });
+      res.status(201).json({ route: item });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+router.put(
+  "/routes/:id",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const item = await commissionV2Store.updateRoute(req.params.id, req.body);
+      res.json({ route: item });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+router.delete(
+  "/routes/:id",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      await commissionV2Store.deleteRoute(req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// =============================================
+// 对账批次 (Reconciliation) API
+// ENABLE_COMMISSION_RECON_V2 灰度开关
+// =============================================
+
+function requireReconV2(_req: Request, res: Response, next: NextFunction) {
+  if (process.env.ENABLE_COMMISSION_RECON_V2 !== "true") {
+    res.status(403).json({ error: "对账 v2 功能尚未启用" });
+    return;
+  }
+  next();
+}
+
+router.get(
+  "/recon-batches",
+  authenticate,
+  requireReconV2,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { contractId, financierId, status, startDate, endDate } = req.query;
+      const batches = await reconStore.getReconBatches({
+        contractId: contractId as string,
+        financierId: financierId as string,
+        status: status as any,
+        startDate: startDate as string,
+        endDate: endDate as string,
+      });
+      res.json({ batches });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/recon-batches/stats",
+  authenticate,
+  requireReconV2,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const stats = await reconStore.getReconStats();
+      res.json(stats);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/recon-batches/:id",
+  authenticate,
+  requireReconV2,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const batch = await reconStore.getReconBatchById(req.params.id);
+      if (!batch) { sendError(res, req, 404, "对账批次不存在"); return; }
+      const recordIds = await reconStore.getBatchRevenueRecordIds(batch.id);
+      res.json({ batch, revenueRecordIds: recordIds });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+// 创建对账批次（选中收益单 → 标记正在对账）
+router.post(
+  "/recon-batches",
+  authenticate,
+  requireReconV2,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { contractId, financierId, financierName, periodStart, periodEnd, revenueRecordIds, remark } = req.body ?? {};
+      if (!contractId || !periodStart || !periodEnd || !Array.isArray(revenueRecordIds) || revenueRecordIds.length === 0) {
+        sendError(res, req, 400, "合同ID、日期范围、收益记录ID列表为必填");
+        return;
+      }
+      const batch = await reconStore.createReconBatch({
+        contractId, financierId, financierName, periodStart, periodEnd, revenueRecordIds, remark,
+      });
+      res.status(201).json({ batch });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// 标记对账完成
+router.post(
+  "/recon-batches/:id/reconciled",
+  authenticate,
+  requireReconV2,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const batch = await reconStore.markReconciled(req.params.id);
+      res.json({ batch });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// 生成结算单
+router.post(
+  "/recon-batches/:id/generate-settlement",
+  authenticate,
+  requireReconV2,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const batch = await reconStore.getReconBatchById(req.params.id);
+      if (!batch) { sendError(res, req, 404, "对账批次不存在"); return; }
+
+      const settlement = await createSettlementRecord({
+        type: "commission",
+        contractId: batch.contractId,
+        contractType: "commission_contract",
+        customerId: batch.financierId || "",
+        customerName: batch.financierName || "",
+        periodStart: batch.periodStart,
+        periodEnd: batch.periodEnd,
+        waybillCount: batch.itemCount,
+        totalAmount: batch.totalAmount,
+        dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split("T")[0],
+      });
+
+      const updated = await reconStore.generateSettlementForBatch(batch.id, settlement.id);
+      res.json({ batch: updated, settlement });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// 标记线下已付款
+router.post(
+  "/recon-batches/:id/paid-offline",
+  authenticate,
+  requireReconV2,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { paymentProofUrl } = req.body ?? {};
+      const batch = await reconStore.markPaidOffline(req.params.id, paymentProofUrl);
+      res.json({ batch });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// 标记已入账
+router.post(
+  "/recon-batches/:id/accounted",
+  authenticate,
+  requireReconV2,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const batch = await reconStore.markAccounted(req.params.id);
+      res.json({ batch });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// 取消对账批次（退回）
+router.post(
+  "/recon-batches/:id/cancel",
+  authenticate,
+  requireReconV2,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const batch = await reconStore.cancelReconBatch(req.params.id);
+      res.json({ batch });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// 获取批次关联的收益记录明细
+router.get(
+  "/recon-batches/:id/records",
+  authenticate,
+  requireReconV2,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const records = await reconStore.getBatchRevenueRecords(req.params.id);
+      res.json({ records });
+    } catch (err) {
+      handleError(res, req, 400, err);
     }
   }
 );

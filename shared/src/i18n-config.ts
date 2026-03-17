@@ -286,7 +286,7 @@ export const defaultTranslations: Record<string, Record<string, string>> = {
     "menu.settlement_center": "结算中心",
     "menu.pending_settlements": "待处理结算单",
     "menu.financing_repayment_settlement": "融资还款结算",
-    "menu.profit_sharing_settlement": "业务分润结算",
+    "menu.profit_sharing_settlement": "业务抽成结算",
     "menu.fund_income_settlement": "资金收益结算",
 
     "payment_approval.title": "财务代付审核",
@@ -1079,7 +1079,7 @@ export const defaultTranslations: Record<string, Record<string, string>> = {
     "menu.settlement_center": "Settlement Center",
     "menu.pending_settlements": "Pending Settlement Orders",
     "menu.financing_repayment_settlement": "Financing Repayment Settlement",
-    "menu.profit_sharing_settlement": "Profit Sharing Settlement",
+    "menu.profit_sharing_settlement": "Commission Settlement",
     "menu.fund_income_settlement": "Fund Income Settlement",
 
     "payment_approval.title": "Financial Payment Approval",

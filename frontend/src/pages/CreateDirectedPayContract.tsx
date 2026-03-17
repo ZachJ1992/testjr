@@ -327,11 +327,11 @@ function CreateDirectedPayContractPage() {
           <Col span={12}>
             <Form.Item
               name="financierId"
-              label="融资方"
-              rules={[{ required: true, message: "请选择融资方" }]}
+              label="合作方"
+              rules={[{ required: true, message: "请选择合作方" }]}
             >
               <Select
-                placeholder="请选择融资方"
+                placeholder="请选择合作方"
                 showSearch
                 optionFilterProp="children"
                 loading={loading}
@@ -639,7 +639,7 @@ function CreateDirectedPayContractPage() {
           <Row gutter={[16, 8]}>
             <Col span={8}><Text type="secondary">资金方：</Text></Col>
             <Col span={16}><Text strong>{selectedFunder?.institutionName || "-"}</Text></Col>
-            <Col span={8}><Text type="secondary">融资方：</Text></Col>
+            <Col span={8}><Text type="secondary">合作方：</Text></Col>
             <Col span={16}><Text strong>{selectedFinancier?.enterpriseName || "-"}</Text></Col>
             <Col span={8}><Text type="secondary">授信总额度：</Text></Col>
             <Col span={16}><Text strong>¥{formData.creditLimit?.toLocaleString()}</Text></Col>

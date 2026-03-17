@@ -671,6 +671,10 @@ export interface RevenueRecord {
   vehiclePlate?: string;
   driverName?: string;
   subFinancier?: string;
+  commissionContractId?: string;
+  routeId?: string;
+  localPartnerName?: string;
+  routeName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -684,7 +688,8 @@ export interface RevenueStats {
   periodRevenue: number;        // 本期新增
   growthRate?: number;          // 环比增长率
   // 业务指标（平台看板用）
-  totalInvestment?: number;     // 在投总额
+  settledRevenue?: number;      // 已结算收益（标记已到账）
+  unsettledRevenue?: number;    // 待结算收益
   dailyAverage?: number;        // 日均收益
   activeContracts?: number;     // 有效合同数
   newContractsPeriod?: number;  // 本期新增合同
@@ -732,16 +737,18 @@ export interface CommissionConfigItem {
 export interface CommissionContract {
   id: string;
   customerName: string;
-  customerSystemId: string;
+  financierId?: string;
+  customerSystemId?: string;
   startDate: string;
   endDate: string;
-  settlementCycle: string;
-  settlementDay: number;
+  settlementCycle?: string;
+  settlementDay?: number;
   remark?: string;
   commissionConfig: CommissionConfigItem[];
   status: CommissionContractStatus;
   createdAt: string;
   updatedAt: string;
+  routes?: ContractRoute[];
 }
 
 // 抽成合同统计
@@ -750,4 +757,74 @@ export interface CommissionContractStats {
   activeCount: number;
   totalConfigCount: number;
   avgRatio: number;
+}
+
+// =============================================
+// 落地合作方 & 线路 (v2)
+// =============================================
+
+export interface LocalPartner {
+  id: string;
+  name: string;
+  financierId: string;
+  financierName?: string;
+  contactPerson?: string;
+  contactPhone?: string;
+  remark?: string;
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Route {
+  id: string;
+  name: string;
+  localPartnerId: string;
+  localPartnerName?: string;
+  remark?: string;
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContractRoute {
+  id: string;
+  contractId: string;
+  routeId: string;
+  routeName?: string;
+  localPartnerName?: string;
+  createdAt: string;
+}
+
+// =============================================
+// 对账批次 (Reconciliation)
+// =============================================
+
+export type ReconBatchStatus = "reconciling" | "reconciled" | "settlement_generated" | "paid_offline" | "accounted" | "cancelled";
+
+export interface ReconBatch {
+  id: string;
+  batchNumber: string;
+  contractId: string;
+  financierId?: string;
+  financierName?: string;
+  localPartnerName?: string;
+  periodStart: string;
+  periodEnd: string;
+  totalAmount: number;
+  itemCount: number;
+  status: ReconBatchStatus;
+  settlementId?: string;
+  exportUrl?: string;
+  paymentProofUrl?: string;
+  remark?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReconItem {
+  id: string;
+  batchId: string;
+  revenueRecordId: string;
+  createdAt: string;
 }

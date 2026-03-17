@@ -71,6 +71,10 @@ function rowToRevenueRecord(row: RowDataPacket): RevenueRecord {
     vehiclePlate: row.vehicle_plate || undefined,
     driverName: row.driver_name || undefined,
     subFinancier: row.sub_financier || undefined,
+    commissionContractId: row.commission_contract_id || undefined,
+    routeId: row.route_id || undefined,
+    localPartnerName: row.local_partner_name || undefined,
+    routeName: row.route_name || undefined,
     createdAt: row.created_at instanceof Date
       ? row.created_at.toISOString()
       : String(row.created_at),
@@ -97,8 +101,9 @@ export async function createRevenueRecord(
       contract_id, contract_number, contract_type,
       funder_id, funder_name, financier_id, financier_name,
       amount, principal_amount, rate, revenue_date, status,
-      settlement_id, payment_request_id, waybill_id, remark
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      settlement_id, payment_request_id, waybill_id, remark,
+      commission_contract_id, route_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.recordType,
@@ -121,6 +126,8 @@ export async function createRevenueRecord(
       input.paymentRequestId || null,
       input.waybillId || null,
       input.remark || null,
+      input.commissionContractId || null,
+      input.routeId || null,
     ]
   );
 
@@ -162,6 +169,8 @@ export async function batchCreateRevenueRecords(
     input.paymentRequestId || null,
     input.waybillId || null,
     input.remark || null,
+    input.commissionContractId || null,
+    input.routeId || null,
   ]);
 
   const [result] = await pool.query<ResultSetHeader>(
@@ -170,7 +179,8 @@ export async function batchCreateRevenueRecords(
       contract_id, contract_number, contract_type,
       funder_id, funder_name, financier_id, financier_name,
       amount, principal_amount, rate, revenue_date, status,
-      settlement_id, payment_request_id, waybill_id, remark
+      settlement_id, payment_request_id, waybill_id, remark,
+      commission_contract_id, route_id
     ) VALUES ?`,
     [values]
   );
@@ -191,6 +201,8 @@ export interface RevenueRecordFilters {
   endDate?: string;
   contractId?: string;
   subFinancier?: string;
+  commissionContractId?: string;
+  localPartnerId?: string;
   page?: number;
   pageSize?: number;
 }
@@ -259,13 +271,25 @@ export async function getRevenueRecords(
     params.push(filters.subFinancier);
   }
 
-  const needsJoin = !!filters.subFinancier;
-  const joinClause = "LEFT JOIN waybills w ON rr.waybill_id = w.id";
+  if (filters.commissionContractId) {
+    conditions.push("rr.commission_contract_id = ?");
+    params.push(filters.commissionContractId);
+  }
+
+  if (filters.localPartnerId) {
+    conditions.push("rt.local_partner_id = ?");
+    params.push(filters.localPartnerId);
+  }
+
+  const joinClause = `
+    LEFT JOIN waybills w ON rr.waybill_id = w.id
+    LEFT JOIN routes rt ON rr.route_id = rt.id
+    LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id`;
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   // 获取总数
   const [countRows] = await pool.query<RowDataPacket[]>(
-    `SELECT COUNT(*) as total FROM revenue_records rr ${needsJoin ? joinClause : ""} ${whereClause}`,
+    `SELECT COUNT(*) as total FROM revenue_records rr ${joinClause} ${whereClause}`,
     params
   );
   const total = countRows[0].total;
@@ -276,7 +300,8 @@ export async function getRevenueRecords(
   const offset = (page - 1) * pageSize;
 
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT rr.*, w.vehicle_plate, w.driver_name, w.sub_financier
+    `SELECT rr.*, w.vehicle_plate, w.driver_name, w.sub_financier,
+            lp.name as local_partner_name, rt.name as route_name
      FROM revenue_records rr
      ${joinClause}
      ${whereClause}
@@ -395,7 +420,8 @@ export async function getRevenueStats(filters: {
   }
 
   // 业务指标 - 只有平台看板需要
-  let totalInvestment: number | undefined;
+  let settledRevenue: number | undefined;
+  let unsettledRevenue: number | undefined;
   let activeContracts: number | undefined;
   let newContractsPeriod: number | undefined;
   let activeFunders: number | undefined;
@@ -404,13 +430,14 @@ export async function getRevenueStats(filters: {
 
   // 如果不是按受益方过滤，则计算业务指标（平台看板）
   if (!filters.beneficiaryType && !filters.beneficiaryId) {
-    // 在投总额 (有效合同的剩余本金总和)
-    const [investmentRows] = await pool.query<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(outstanding_principal), 0) as total 
-       FROM contracts 
-       WHERE status = 'active' AND type = 'financing' AND deleted_at IS NULL`
+    // 已结算收益（settlements 标记已到账: paid/invoiced/settled）
+    const [settledRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(COALESCE(total_due, total_amount, 0)), 0) as total
+       FROM settlements
+       WHERE status IN ('paid', 'invoiced', 'settled')`
     );
-    totalInvestment = Number(investmentRows[0].total);
+    settledRevenue = Number(settledRows[0].total);
+    unsettledRevenue = Math.max(0, Number(totalRows[0].total) - settledRevenue);
 
     // 有效合同数 (四种合同类型总和)
     // 1. contracts 表 (三方融资、撮合业务等)
@@ -494,7 +521,8 @@ export async function getRevenueStats(filters: {
     periodRevenue,
     growthRate,
     dailyAverage,
-    totalInvestment,
+    settledRevenue,
+    unsettledRevenue,
     activeContracts,
     newContractsPeriod,
     activeFunders,

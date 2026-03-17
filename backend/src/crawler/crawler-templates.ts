@@ -90,6 +90,7 @@ export interface WaybillData {
   shipTime?: Date;
   deliveryTime?: Date;
   subFinancier?: string;
+  branch?: string;
   [key: string]: any;
 }
 

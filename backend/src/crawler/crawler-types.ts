@@ -82,6 +82,8 @@ export interface TmsRowData {
   profit?: number;
   profitRate?: number;
   receivableReturn?: number;
+  branch?: string;
+  batchStatusText?: string;
 }
 
 // 测试连接结果

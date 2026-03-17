@@ -439,7 +439,7 @@ function ContractsPage() {
             {t("contracts.financing_title", "三方融资合同管理")}
           </Title>
           <Text type="secondary" style={{ display: "block", marginTop: 4 }}>
-            {t("contracts.financing_subtitle", "资金方与融资方合作协议管理")}
+            {t("contracts.financing_subtitle", "资金方与合作方合作协议管理")}
           </Text>
         </Col>
         <Col>
@@ -577,7 +577,7 @@ function ContractsPage() {
                   <div style={{ fontWeight: 500 }}>{viewingContract.funderName || "-"}</div>
                 </Col>
                 <Col span={8}>
-                  <Text type="secondary">融资方/物流商：</Text>
+                  <Text type="secondary">合作方/物流商：</Text>
                   <div style={{ fontWeight: 500 }}>{viewingContract.logisticsProviderName || "-"}</div>
                 </Col>
                 <Col span={8}>
@@ -643,8 +643,8 @@ function ContractsPage() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="logisticsProviderName" label="融资方/物流商" rules={[{ required: true, message: "请输入融资方" }]}>
-                <Input placeholder="请输入融资方名称" />
+              <Form.Item name="logisticsProviderName" label="合作方/物流商" rules={[{ required: true, message: "请输入合作方" }]}>
+                <Input placeholder="请输入合作方名称" />
               </Form.Item>
             </Col>
             <Col span={12}>

@@ -26,6 +26,8 @@ import { runWaybillsExtendColumnsMigration } from "./migrations/waybills-extend-
 import { createContractLoanTables } from "./migrations/contract-loan-tables.js";
 import { fixInterestRateCalculation } from "./migrations/fix-interest-rate-calculation.js";
 import { trimTestData } from "./migrations/trim-test-data.js";
+import { runCommissionV2Migration } from "./migrations/commission-v2-tables.js";
+import { runRevenueContractLinkMigration } from "./migrations/revenue-contract-link.js";
 import revenueRoutes from "./revenue-routes.js";
 import contractLoanRoutes from "./contract-loan-routes.js";
 import { startRevenueScheduler } from "./revenue-scheduler.js";
@@ -77,6 +79,8 @@ initData()
   .then(() => createContractLoanTables())
   .then(() => fixInterestRateCalculation())
   .then(() => trimTestData())
+  .then(() => runCommissionV2Migration())
+  .then(() => runRevenueContractLinkMigration())
   .then(() => {
     // 清理旧的临时目录
     cleanupOldTempDirectories();

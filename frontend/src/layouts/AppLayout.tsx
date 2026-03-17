@@ -125,12 +125,12 @@ function AppLayout() {
       });
     }
     
-    // 融资方支出（平台用户 + 融资方用户可见）
+    // 合作方支出（平台用户 + 合作方用户可见）
     if (isPlatformUser || user?.orgContext?.orgType === 'financier' || hasPermission(user?.permissions, "view_financier_expense")) {
       const isFinancierView = user?.orgContext?.orgType === 'financier' && !isPlatformUser;
       revenueChildren.push({
         key: "/expense/financier",
-        label: <Link to="/expense/financier">{t("menu.financier_expense", isFinancierView ? "我的支出" : "融资方支出")}</Link>
+        label: <Link to="/expense/financier">{t("menu.financier_expense", isFinancierView ? "我的支出" : "合作方支出")}</Link>
       });
     }
 
@@ -235,7 +235,7 @@ function AppLayout() {
        if (user?.permissions?.includes("manage_settlements") || user?.permissions?.includes("view_directed_pay_settlements")) {
          settlementChildren.push({
            key: "/settlement-dashboard",
-           label: <Link to="/settlement-dashboard">{t("menu.settlement_dashboard", "结算仪表板")}</Link>
+           label: <Link to="/settlement-dashboard">{t("menu.settlement_dashboard", "结算中心")}</Link>
          });
        }
        if (user?.permissions?.includes("manage_settlements")) {
@@ -249,14 +249,14 @@ function AppLayout() {
          });
          settlementChildren.push({
            key: "/profit-sharing-settlement",
-           label: <Link to="/profit-sharing-settlement">{t("menu.profit_sharing_settlement", "业务分润结算")}</Link>
+           label: <Link to="/profit-sharing-settlement">{t("menu.profit_sharing_settlement", "业务抽成结算")}</Link>
          });
          settlementChildren.push({
            key: "/fund-income-settlement",
            label: <Link to="/fund-income-settlement">{t("menu.fund_income_settlement", "资金收益结算")}</Link>
          });
        }
-       // 定向支付结算菜单 - 平台用户和资金方可见，融资方不可见
+       // 定向支付结算菜单 - 平台用户和资金方可见，合作方不可见
        const canViewDirectedPaySettlements = 
          user?.permissions?.includes("*") ||
          user?.permissions?.includes("manage_directed_pay_settlements") || 
@@ -296,7 +296,7 @@ function AppLayout() {
       resourceChildren.push({
         key: "/financiers",
         icon: <DollarOutlined />,
-        label: <Link to="/financiers">{t("menu.financiers", "融资方档案")}</Link>
+        label: <Link to="/financiers">{t("menu.financiers", "合作方档案")}</Link>
       });
     }
 
@@ -547,7 +547,7 @@ function AppLayout() {
       configs.push({
         key: "/financiers",
         path: "/financiers",
-        label: t("menu.financiers", "融资方档案"),
+        label: t("menu.financiers", "合作方档案"),
         icon: <DollarOutlined />,
         element: <FinanciersPage />
       });
@@ -602,12 +602,12 @@ function AppLayout() {
       });
     }
 
-    // 结算仪表板（优先显示）
+    // 结算中心（优先显示）
     if (user?.permissions?.includes("manage_settlements") || user?.permissions?.includes("view_directed_pay_settlements")) {
       configs.push({
         key: "/settlement-dashboard",
         path: "/settlement-dashboard",
-        label: t("menu.settlement_dashboard", "结算仪表板"),
+        label: t("menu.settlement_dashboard", "结算中心"),
         icon: <AccountBookOutlined />,
         element: <SettlementDashboardPage />
       });
@@ -631,7 +631,7 @@ function AppLayout() {
       configs.push({
         key: "/profit-sharing-settlement",
         path: "/profit-sharing-settlement",
-        label: t("menu.profit_sharing_settlement", "业务分润结算"),
+        label: t("menu.profit_sharing_settlement", "业务抽成结算"),
         icon: <AccountBookOutlined />,
         element: <ProfitSharingSettlementPage />
       });
@@ -644,7 +644,7 @@ function AppLayout() {
       });
     }
 
-    // 定向支付结算页面 - 平台用户和资金方可见，融资方不可见
+    // 定向支付结算页面 - 平台用户和资金方可见，合作方不可见
     const canViewDirectedPaySettlementsTab = 
       user?.permissions?.includes("*") ||
       user?.permissions?.includes("manage_directed_pay_settlements") || 
@@ -712,13 +712,13 @@ function AppLayout() {
       });
     }
 
-    // 融资方支出页面（平台用户 + 融资方用户可见）
+    // 合作方支出页面（平台用户 + 合作方用户可见）
     if (isPlatformUserForTabs || user?.orgContext?.orgType === 'financier' || hasPermission(user?.permissions, "view_financier_expense")) {
       const isFinancierView = user?.orgContext?.orgType === 'financier' && !isPlatformUserForTabs;
       configs.push({
         key: "/expense/financier",
         path: "/expense/financier",
-        label: t("menu.financier_expense", isFinancierView ? "我的支出" : "融资方支出"),
+        label: t("menu.financier_expense", isFinancierView ? "我的支出" : "合作方支出"),
         icon: <DollarOutlined />,
         element: <FinancierExpensePage />
       });

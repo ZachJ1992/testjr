@@ -25,7 +25,7 @@ const { RangePicker } = DatePicker;
 
 type TimeRange = 'today' | 'week' | 'month' | 'year' | 'custom';
 
-// 支出类型映射（融资方视角，包含所有四种类型）
+// 支出类型映射（合作方视角，包含所有四种类型）
 const SOURCE_TYPE_MAP: Record<string, string> = {
   financing_interest: '融资利息',
   directed_pay_interest: '定向支付利息',
@@ -33,7 +33,7 @@ const SOURCE_TYPE_MAP: Record<string, string> = {
   commission_fee: '抽成费用',
 };
 
-// 状态映射（融资方视角用"待支付/已支付"）
+// 状态映射（合作方视角用"待支付/已支付"）
 const STATUS_MAP: Record<string, { text: string; color: string }> = {
   pending: { text: '待支付', color: 'orange' },
   confirmed: { text: '已支付', color: 'green' },
@@ -43,7 +43,7 @@ const STATUS_MAP: Record<string, { text: string; color: string }> = {
 const FinancierExpense: React.FC = () => {
   const { user } = useAuth();
   
-  // 检查是否有权限访问（平台用户或融资方用户）
+  // 检查是否有权限访问（平台用户或合作方用户）
   const hasAccess = user?.orgContext?.orgType === 'platform' || 
                     user?.orgContext?.orgType === 'financier' ||
                     user?.permissions?.includes('view_financier_expense') ||
@@ -326,12 +326,12 @@ const FinancierExpense: React.FC = () => {
     window.open(url, '_blank');
   };
 
-  // 非融资方用户显示无权限
+  // 非合作方用户显示无权限
   if (!hasAccess) {
     return (
       <div style={{ padding: 24, textAlign: 'center', marginTop: 100 }}>
         <Empty 
-          description="您没有权限访问此页面，此功能仅对融资方用户开放" 
+          description="您没有权限访问此页面，此功能仅对合作方用户开放" 
           image={Empty.PRESENTED_IMAGE_SIMPLE}
         />
       </div>

@@ -1169,7 +1169,7 @@ function FundersPage() {
                         pagination={false}
                         columns={[
                           {
-                            title: t("contracts.logistics_provider", "融资方"),
+                            title: t("contracts.logistics_provider", "合作方"),
                             dataIndex: "logisticsProviderName",
                             width: 180,
                             ellipsis: true,

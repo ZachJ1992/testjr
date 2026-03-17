@@ -310,7 +310,7 @@ const FunderRevenue: React.FC = () => {
       ),
     },
     { 
-      title: '融资方', 
+      title: '合作方', 
       dataIndex: 'financierName', 
       key: 'financierName', 
       width: 150,
@@ -452,7 +452,7 @@ const FunderRevenue: React.FC = () => {
             </Card>
           </Col>
           <Col span={12}>
-            <Card title="合作融资方排行">
+            <Card title="合作方排行">
               {financierRanking.length === 0 ? (
                 <Empty description="暂无数据" />
               ) : (

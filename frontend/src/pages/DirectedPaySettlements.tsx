@@ -206,7 +206,7 @@ function DirectedPaySettlementsPage() {
       width: 150
     },
     {
-      title: "融资方",
+      title: "合作方",
       dataIndex: "financierName",
       key: "financierName",
       width: 180,
@@ -453,7 +453,7 @@ function DirectedPaySettlementsPage() {
         <Row gutter={16} align="middle">
           <Col span={8}>
             <Input
-              placeholder="搜索结算单号/合同号/融资方"
+              placeholder="搜索结算单号/合同号/合作方"
               prefix={<SearchOutlined />}
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
@@ -537,7 +537,7 @@ function DirectedPaySettlementsPage() {
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="合同号">{selectedSettlement.contractNumber || "-"}</Descriptions.Item>
-              <Descriptions.Item label="融资方">{selectedSettlement.financierName || "-"}</Descriptions.Item>
+              <Descriptions.Item label="合作方">{selectedSettlement.financierName || "-"}</Descriptions.Item>
               <Descriptions.Item label="结算周期" span={2}>
                 {dayjs(selectedSettlement.periodStart).format("YYYY-MM-DD")} ~ {dayjs(selectedSettlement.periodEnd).format("YYYY-MM-DD")}
               </Descriptions.Item>

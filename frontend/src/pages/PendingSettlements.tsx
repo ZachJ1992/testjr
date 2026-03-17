@@ -1,5 +1,12 @@
 import { useAuth } from "../auth";
-import { useI18n } from "../i18n";
+import {
+  getErrorMessage,
+  fetchSettlements,
+  markSettlementPaidApi,
+  uploadFileApi,
+  resolveFileUrl,
+  type Settlement,
+} from "../api";
 import {
   Button,
   Card,
@@ -11,390 +18,287 @@ import {
   Table,
   Tag,
   Typography,
-  message
+  Upload,
+  message,
 } from "antd";
 import {
-  EyeOutlined,
   CheckCircleOutlined,
-  CloseCircleOutlined,
-  FileTextOutlined,
-  WalletOutlined,
-  ClockCircleOutlined
+  BankOutlined,
+  UploadOutlined,
+  EyeOutlined,
+  PaperClipOutlined,
+  FileDoneOutlined,
 } from "@ant-design/icons";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
-import { useNavigate } from "react-router-dom";
 
 const { Title, Text } = Typography;
 
-interface SettlementOrder {
-  id: string;
-  settlementNumber: string;
-  type: "repayment" | "profit_sharing" | "refund";
-  logisticsProviderName: string;
-  contractNumber: string;
-  amount: number;
-  createdAt: string;
-  dueDate?: string;
-  status: "pending" | "approved" | "rejected";
-}
-
-// Mock数据
-const mockSettlements: SettlementOrder[] = [
-  {
-    id: "1",
-    settlementNumber: "JS2024121801",
-    type: "repayment",
-    logisticsProviderName: "顺丰物流有限公司",
-    contractNumber: "RZ2024010001",
-    amount: 125800,
-    createdAt: "2024-12-18T09:30:00Z",
-    dueDate: "2024-12-18",
-    status: "pending"
-  },
-  {
-    id: "2",
-    settlementNumber: "JS2024121802",
-    type: "profit_sharing",
-    logisticsProviderName: "圆通速递股份有限公司",
-    contractNumber: "RZ2024010002",
-    amount: 38900.75,
-    createdAt: "2024-12-18T10:15:00Z",
-    status: "pending"
-  },
-  {
-    id: "3",
-    settlementNumber: "JS2024121803",
-    type: "refund",
-    logisticsProviderName: "中通快递股份有限公司",
-    contractNumber: "RZ2024010003",
-    amount: 56780.5,
-    createdAt: "2024-12-18T11:00:00Z",
-    status: "pending"
-  }
-];
+const STATUS_MAP: Record<string, { text: string; color: string }> = {
+  pending: { text: "待处理", color: "warning" },
+  paid: { text: "已到账", color: "processing" },
+  invoiced: { text: "已开票", color: "blue" },
+  settled: { text: "已结算", color: "success" },
+};
 
 function PendingSettlementsPage() {
-  const { user } = useAuth();
-  const { t } = useI18n();
-  const navigate = useNavigate();
-  const [settlements, setSettlements] = useState<SettlementOrder[]>(mockSettlements);
+  const { token, user } = useAuth();
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [loading, setLoading] = useState(false);
-  const [viewingSettlement, setViewingSettlement] = useState<SettlementOrder | null>(null);
-  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [detailTarget, setDetailTarget] = useState<Settlement | null>(null);
+  const [payTarget, setPayTarget] = useState<Settlement | null>(null);
+  const [payProofUrl, setPayProofUrl] = useState("");
+  const [payLoading, setPayLoading] = useState(false);
 
-  // 计算统计数据
-  const stats = useMemo(() => {
-    const pendingAmount = settlements
-      .filter(s => s.status === "pending")
-      .reduce((sum, s) => sum + s.amount, 0);
-    
-    const pendingCount = settlements.filter(s => s.status === "pending").length;
-    
-    const today = dayjs().format("YYYY-MM-DD");
-    const dueTodayCount = settlements.filter(s => 
-      s.status === "pending" && s.dueDate === today
-    ).length;
-
-    return {
-      pendingAmount,
-      pendingCount,
-      dueTodayCount
-    };
-  }, [settlements]);
-
-  // 格式化金额
-  const formatAmount = (amount: number): string => {
-    if (amount >= 1000000) {
-      return `¥${(amount / 1000000).toFixed(1)}M`;
+  const loadSettlements = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const res = await fetchSettlements(token, { status: "pending" });
+      setSettlements(res.settlements);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
     }
-    return `¥${amount.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
+  }, [token]);
 
-  // 获取类型标签和颜色
-  const getTypeConfig = (type: string) => {
-    const configs: Record<string, { label: string; color: string }> = {
-      repayment: {
-        label: t("settlements.type_repayment", "还款结算"),
-        color: "blue"
-      },
-      profit_sharing: {
-        label: t("settlements.type_profit_sharing", "分润结算"),
-        color: "purple"
-      },
-      refund: {
-        label: t("settlements.type_refund", "退款结算"),
-        color: "green"
-      }
-    };
-    return configs[type] || { label: type, color: "default" };
-  };
+  useEffect(() => { void loadSettlements(); }, [loadSettlements]);
 
-  // 处理审核通过
-  const handleApprove = async (settlement: SettlementOrder) => {
-    Modal.confirm({
-      title: t("settlements.approve_confirm", "确认审核通过"),
-      content: t("settlements.approve_content", "确定要通过结算单 {number} 吗？").replace("{number}", settlement.settlementNumber),
-      okText: t("common.confirm", "确认"),
-      cancelText: t("common.cancel", "取消"),
-      onOk: async () => {
-        // TODO: 调用API
-        setSettlements(prev =>
-          prev.map(s => (s.id === settlement.id ? { ...s, status: "approved" as const } : s))
-        );
-        message.success(t("settlements.approved", "已通过"));
-      }
-    });
-  };
+  const formatAmount = (n: number) =>
+    `¥${n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  // 处理驳回
-  const handleReject = async (settlement: SettlementOrder) => {
-    Modal.confirm({
-      title: t("settlements.reject_confirm", "确认驳回"),
-      content: t("settlements.reject_content", "确定要驳回结算单 {number} 吗？").replace("{number}", settlement.settlementNumber),
-      okText: t("common.confirm", "确认"),
-      cancelText: t("common.cancel", "取消"),
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        // TODO: 调用API
-        setSettlements(prev =>
-          prev.map(s => (s.id === settlement.id ? { ...s, status: "rejected" as const } : s))
-        );
-        message.success(t("settlements.rejected", "已驳回"));
-      }
-    });
-  };
-
-  // 处理查看详情
-  const handleView = (settlement: SettlementOrder) => {
-    setViewingSettlement(settlement);
-    setDetailModalOpen(true);
-  };
-
-  // 处理查看合同
-  const handleViewContract = (contractNumber: string) => {
-    // TODO: 导航到合同详情页面
-    message.info(t("settlements.view_contract_feature", "查看合同功能开发中"));
-  };
-
-  // 只显示待处理的结算单
-  const pendingSettlements = useMemo(() => {
-    return settlements.filter(s => s.status === "pending");
+  const stats = useMemo(() => {
+    const total = settlements.length;
+    const totalAmount = settlements.reduce((s, r) => s + (r.totalDue || r.totalAmount || 0), 0);
+    return { total, totalAmount };
   }, [settlements]);
+
+  const handleMarkPaid = async () => {
+    if (!token || !payTarget) return;
+    setPayLoading(true);
+    try {
+      await markSettlementPaidApi(token, payTarget.id, {
+        paidDate: dayjs().format("YYYY-MM-DD"),
+        paymentProofUrl: payProofUrl || undefined,
+      });
+      message.success("已标记到账");
+      setPayTarget(null);
+      setPayProofUrl("");
+      void loadSettlements();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    } finally {
+      setPayLoading(false);
+    }
+  };
 
   const columns = [
     {
-      title: t("settlements.settlement_number", "结算单号"),
-      key: "settlementNumber",
-      width: 180,
-      render: (_: any, record: SettlementOrder) => (
+      title: "结算单号", dataIndex: "settlementNumber", key: "settlementNumber", width: 180,
+      render: (v: string, r: Settlement) => (
+        <Button type="link" size="small" onClick={() => setDetailTarget(r)}>{v}</Button>
+      ),
+    },
+    {
+      title: "类型", dataIndex: "type", key: "type", width: 100,
+      render: (v: string) => {
+        const map: Record<string, { text: string; color: string }> = {
+          commission: { text: "抽成结算", color: "cyan" },
+          repayment: { text: "还款结算", color: "blue" },
+          directed_pay: { text: "定向支付", color: "purple" },
+        };
+        const cfg = map[v] || { text: v, color: "default" };
+        return <Tag color={cfg.color}>{cfg.text}</Tag>;
+      },
+    },
+    { title: "合作方", dataIndex: "customerName", key: "customerName", width: 120, ellipsis: true },
+    {
+      title: "落地合作方", dataIndex: "localPartnerName", key: "localPartnerName", width: 150, ellipsis: true,
+      render: (v: string) => v ? <Tag color="cyan">{v}</Tag> : "-",
+    },
+    {
+      title: "结算周期", key: "period", width: 200,
+      render: (_: any, r: Settlement) => `${r.periodStart || '-'} ~ ${r.periodEnd || '-'}`,
+    },
+    {
+      title: "应还金额", dataIndex: "totalDue", key: "totalDue", width: 130, align: "right" as const,
+      render: (v: number, r: Settlement) => <Text strong style={{ color: "#1890ff" }}>{formatAmount(v || r.totalAmount || 0)}</Text>,
+    },
+    {
+      title: "状态", dataIndex: "status", key: "status", width: 100,
+      render: (s: string) => {
+        const cfg = STATUS_MAP[s] || { text: s, color: "default" };
+        return <Tag color={cfg.color}>{cfg.text}</Tag>;
+      },
+    },
+    {
+      title: "创建时间", dataIndex: "createdAt", key: "createdAt", width: 170,
+      render: (v: string) => v ? dayjs(v).format("YYYY/M/D HH:mm:ss") : "-",
+    },
+    {
+      title: "操作", key: "actions", width: 140,
+      render: (_: any, r: Settlement) => (
         <Space>
-          <FileTextOutlined />
-          <Text>{record.settlementNumber}</Text>
-        </Space>
-      )
-    },
-    {
-      title: t("settlements.type_tag", "类型标签"),
-      key: "type",
-      width: 120,
-      render: (_: any, record: SettlementOrder) => {
-        const config = getTypeConfig(record.type);
-        return <Tag color={config.color}>{config.label}</Tag>;
-      }
-    },
-    {
-      title: t("settlements.logistics_provider_name", "物流商名称"),
-      key: "logisticsProviderName",
-      width: 200,
-      render: (_: any, record: SettlementOrder) => (
-        <Text>{record.logisticsProviderName}</Text>
-      )
-    },
-    {
-      title: t("settlements.associated_contract", "关联合同"),
-      key: "contractNumber",
-      width: 180,
-      render: (_: any, record: SettlementOrder) => (
-        <Button
-          type="link"
-          onClick={() => handleViewContract(record.contractNumber)}
-          style={{ padding: 0 }}
-        >
-          {record.contractNumber}
-        </Button>
-      )
-    },
-    {
-      title: t("settlements.settlement_amount", "结算金额"),
-      key: "amount",
-      width: 150,
-      render: (_: any, record: SettlementOrder) => (
-        <Text strong style={{ fontSize: 16 }}>
-          {formatAmount(record.amount)}
-        </Text>
-      )
-    },
-    {
-      title: t("settlements.generation_time", "生成时间"),
-      key: "createdAt",
-      width: 180,
-      render: (_: any, record: SettlementOrder) => (
-        <Text>{dayjs(record.createdAt).format("YYYY-MM-DD HH:mm")}</Text>
-      )
-    },
-    {
-      title: t("settlements.operations", "操作"),
-      key: "actions",
-      width: 220,
-      fixed: "right" as const,
-      render: (_: any, record: SettlementOrder) => (
-        <Space>
-          <Button
-            type="primary"
-            size="small"
-            icon={<CheckCircleOutlined />}
-            onClick={() => handleApprove(record)}
-          >
-            {t("settlements.approve", "审核通过")}
-          </Button>
-          <Button
-            danger
-            size="small"
-            icon={<CloseCircleOutlined />}
-            onClick={() => handleReject(record)}
-          >
-            {t("settlements.reject", "驳回")}
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => handleView(record)}
-          >
-            {t("settlements.view_details", "查看详情")}
+          <Button type="primary" size="small" icon={<BankOutlined />} onClick={() => { setPayTarget(r); setPayProofUrl(""); }}>
+            标记已付款
           </Button>
         </Space>
-      )
-    }
+      ),
+    },
   ];
 
-  if (!user?.permissions?.includes("manage_settlements")) {
-    return (
-      <Result
-        status="403"
-        title={t("common.no_permission", "无权限")}
-        subTitle={t("settlements.no_access", "需要 manage_settlements 权限")}
-      />
-    );
+  if (!user?.permissions?.includes("manage_settlements") && !user?.permissions?.includes("manage_contracts")) {
+    return <Result status="403" title="无权限" subTitle="需要 manage_settlements 或 manage_contracts 权限" />;
   }
 
   return (
     <div style={{ padding: 24 }}>
-      {/* Header */}
       <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
         <Col>
-          <Title level={2} style={{ margin: 0 }}>
-            {t("settlements.pending_title", "待处理结算单")}
-          </Title>
-          <Text type="secondary" style={{ display: "block", marginTop: 4 }}>
-            {t("settlements.pending_subtitle", "结算单审核与批量处理")}
-          </Text>
+          <Title level={2} style={{ margin: 0 }}>待处理结算单</Title>
+          <Text type="secondary">显示所有状态为"待处理"的结算单，可在此标记到账</Text>
         </Col>
       </Row>
 
-      {/* Statistics Cards */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={8}>
           <Card>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontSize: 14, color: "#8c8c8c", marginBottom: 8 }}>
-                  {t("settlements.pending_amount", "待审核总额")}
-                </div>
-                <div style={{ fontSize: 24, fontWeight: "bold", marginBottom: 4, color: "#1890ff" }}>
-                  {formatAmount(stats.pendingAmount)}
-                </div>
-              </div>
-              <WalletOutlined style={{ fontSize: 32, color: "#1890ff", opacity: 0.3 }} />
-            </div>
+            <div style={{ fontSize: 14, color: "#8c8c8c", marginBottom: 8 }}>待处理数</div>
+            <div style={{ fontSize: 24, fontWeight: "bold", color: "#faad14" }}>{stats.total}</div>
           </Card>
         </Col>
         <Col span={8}>
           <Card>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontSize: 14, color: "#8c8c8c", marginBottom: 8 }}>
-                  {t("settlements.pending_count", "待处理笔数")}
-                </div>
-                <div style={{ fontSize: 24, fontWeight: "bold", marginBottom: 4, color: "#722ed1" }}>
-                  {stats.pendingCount}
-                </div>
-              </div>
-              <FileTextOutlined style={{ fontSize: 32, color: "#722ed1", opacity: 0.3 }} />
-            </div>
+            <div style={{ fontSize: 14, color: "#8c8c8c", marginBottom: 8 }}>待处理金额</div>
+            <div style={{ fontSize: 24, fontWeight: "bold", color: "#1890ff" }}>{formatAmount(stats.totalAmount)}</div>
           </Card>
         </Col>
         <Col span={8}>
           <Card>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <CheckCircleOutlined style={{ fontSize: 24, color: "#52c41a" }} />
               <div>
-                <div style={{ fontSize: 14, color: "#8c8c8c", marginBottom: 8 }}>
-                  {t("settlements.due_today", "今日截止")}
-                </div>
-                <div style={{ fontSize: 24, fontWeight: "bold", marginBottom: 4, color: "#faad14" }}>
-                  {stats.dueTodayCount}
-                </div>
+                <div style={{ fontSize: 14, color: "#8c8c8c" }}>说明</div>
+                <div style={{ fontSize: 12 }}>结算单从业务抽成结算生成，在此标记到账</div>
               </div>
-              <ClockCircleOutlined style={{ fontSize: 32, color: "#faad14", opacity: 0.3 }} />
             </div>
           </Card>
         </Col>
       </Row>
 
-      {/* Table */}
       <Card>
         <Table
           columns={columns}
-          dataSource={pendingSettlements}
+          dataSource={settlements}
           loading={loading}
           rowKey="id"
           scroll={{ x: 1200 }}
-          pagination={{
-            showSizeChanger: false,
-            showTotal: (total) =>
-              t("settlements.total_records", "显示 1 到 {count} 条, 共 {total} 条")
-                .replace("{count}", String(total))
-                .replace("{total}", String(total))
-          }}
+          size="small"
+          pagination={{ showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
         />
       </Card>
 
-      {/* Detail Modal */}
+      {/* 标记到账弹窗 */}
       <Modal
-        title={t("settlements.settlement_detail", "结算单详情")}
-        open={detailModalOpen}
-        onCancel={() => setDetailModalOpen(false)}
-        footer={[
-          <Button key="close" onClick={() => setDetailModalOpen(false)}>
-            {t("common.close", "关闭")}
-          </Button>
-        ]}
-        width={800}
+        title="标记已到账"
+        open={!!payTarget}
+        onCancel={() => { setPayTarget(null); setPayProofUrl(""); }}
+        onOk={handleMarkPaid}
+        confirmLoading={payLoading}
+        okText="确认到账"
+        cancelText="取消"
       >
-        {viewingSettlement && (
+        {payTarget && (
           <div>
-            <Row gutter={16}>
-              <Col span={12}>
-                <Text strong>{t("settlements.settlement_number", "结算单号")}:</Text>
-                <div>{viewingSettlement.settlementNumber}</div>
-              </Col>
-              <Col span={12}>
-                <Text strong>{t("settlements.logistics_provider_name", "物流商名称")}:</Text>
-                <div>{viewingSettlement.logisticsProviderName}</div>
-              </Col>
-            </Row>
-            {/* Add more detail fields as needed */}
+            <div style={{ background: "#fafafa", padding: 16, borderRadius: 8, marginBottom: 16 }}>
+              <Row gutter={[16, 8]}>
+                <Col span={12}><Text type="secondary">结算单号：</Text><Text strong>{payTarget.settlementNumber}</Text></Col>
+                <Col span={12}><Text type="secondary">金额：</Text><Text strong style={{ color: "#1890ff" }}>{formatAmount(payTarget.totalDue || payTarget.totalAmount || 0)}</Text></Col>
+                <Col span={24}><Text type="secondary">合作方：</Text><Text strong>{payTarget.customerName}</Text></Col>
+              </Row>
+            </div>
+            <div style={{ marginBottom: 8 }}><Text>上传水单（可选）：</Text></div>
+            <Upload.Dragger
+              accept=".jpg,.jpeg,.png,.pdf"
+              maxCount={1}
+              showUploadList={{ showPreviewIcon: true, showRemoveIcon: true }}
+              customRequest={async ({ file, onSuccess, onError }) => {
+                try {
+                  const res = await uploadFileApi(token!, file as File);
+                  setPayProofUrl(res.url);
+                  onSuccess?.(res);
+                  message.success("水单上传成功");
+                } catch (err: any) {
+                  onError?.(err);
+                  message.error(getErrorMessage(err));
+                }
+              }}
+              onRemove={() => { setPayProofUrl(""); }}
+            >
+              <p className="ant-upload-drag-icon"><UploadOutlined style={{ fontSize: 32, color: "#1890ff" }} /></p>
+              <p className="ant-upload-text">点击或拖拽上传水单</p>
+              <p className="ant-upload-hint">支持 JPG、PNG、PDF 格式</p>
+            </Upload.Dragger>
+          </div>
+        )}
+      </Modal>
+
+      {/* 结算单详情弹窗 */}
+      <Modal
+        title={`结算单详情 - ${detailTarget?.settlementNumber || ""}`}
+        open={!!detailTarget}
+        onCancel={() => setDetailTarget(null)}
+        footer={[<Button key="close" onClick={() => setDetailTarget(null)}>关闭</Button>]}
+        width={600}
+      >
+        {detailTarget && (
+          <div>
+            <div style={{ background: "#fafafa", padding: 16, borderRadius: 8, marginBottom: 16 }}>
+              <Row gutter={[16, 12]}>
+                <Col span={12}><Text type="secondary">结算单号：</Text><Text strong>{detailTarget.settlementNumber}</Text></Col>
+                <Col span={12}><Text type="secondary">类型：</Text><Tag color="cyan">{detailTarget.type === "commission" ? "抽成结算" : detailTarget.type}</Tag></Col>
+                <Col span={12}><Text type="secondary">合作方：</Text><Text strong>{detailTarget.customerName}</Text></Col>
+                <Col span={12}><Text type="secondary">落地合作方：</Text>{detailTarget.localPartnerName ? <Tag color="cyan">{detailTarget.localPartnerName}</Tag> : <Text>-</Text>}</Col>
+                <Col span={12}><Text type="secondary">状态：</Text><Tag color={STATUS_MAP[detailTarget.status]?.color || "default"}>{STATUS_MAP[detailTarget.status]?.text || detailTarget.status}</Tag></Col>
+                <Col span={12}><Text type="secondary">结算周期：</Text><Text>{detailTarget.periodStart} ~ {detailTarget.periodEnd}</Text></Col>
+                <Col span={12}><Text type="secondary">应还金额：</Text><Text strong style={{ color: "#1890ff" }}>{formatAmount(detailTarget.totalDue || detailTarget.totalAmount || 0)}</Text></Col>
+                <Col span={12}><Text type="secondary">应还日期：</Text><Text>{detailTarget.dueDate ? dayjs(detailTarget.dueDate).format("YYYY-MM-DD") : "-"}</Text></Col>
+              </Row>
+            </div>
+
+            {detailTarget.paymentProofUrl && (
+              <Card size="small" title={<Space><PaperClipOutlined />到账水单</Space>} style={{ marginBottom: 12 }}>
+                {/\.(jpg|jpeg|png|gif|webp)$/i.test(detailTarget.paymentProofUrl) ? (
+                  <img src={resolveFileUrl(detailTarget.paymentProofUrl)} alt="水单" style={{ maxWidth: "100%", maxHeight: 300, cursor: "pointer" }} onClick={() => window.open(resolveFileUrl(detailTarget.paymentProofUrl!), "_blank")} />
+                ) : (
+                  <Button type="link" href={resolveFileUrl(detailTarget.paymentProofUrl)} target="_blank">
+                    <PaperClipOutlined /> 查看水单附件
+                  </Button>
+                )}
+              </Card>
+            )}
+
+            {detailTarget.invoiceNumber && (
+              <Card size="small" title={<Space><FileDoneOutlined />发票信息</Space>} style={{ marginBottom: 12 }}>
+                <Row gutter={[16, 8]}>
+                  <Col span={12}><Text type="secondary">发票号：</Text><Text>{detailTarget.invoiceNumber}</Text></Col>
+                  <Col span={12}><Text type="secondary">开票日期：</Text><Text>{detailTarget.invoiceDate}</Text></Col>
+                  <Col span={12}><Text type="secondary">发票金额：</Text><Text strong>{formatAmount(detailTarget.invoiceAmount || 0)}</Text></Col>
+                </Row>
+                {detailTarget.invoiceAttachmentUrl && (
+                  <div style={{ marginTop: 8 }}>
+                    {/\.(jpg|jpeg|png|gif|webp)$/i.test(detailTarget.invoiceAttachmentUrl) ? (
+                      <img src={resolveFileUrl(detailTarget.invoiceAttachmentUrl)} alt="发票" style={{ maxWidth: "100%", maxHeight: 300, cursor: "pointer" }} onClick={() => window.open(resolveFileUrl(detailTarget.invoiceAttachmentUrl!), "_blank")} />
+                    ) : (
+                      <Button type="link" href={resolveFileUrl(detailTarget.invoiceAttachmentUrl)} target="_blank">
+                        <PaperClipOutlined /> 查看发票附件
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </Card>
+            )}
           </div>
         )}
       </Modal>
@@ -403,4 +307,3 @@ function PendingSettlementsPage() {
 }
 
 export default PendingSettlementsPage;
-

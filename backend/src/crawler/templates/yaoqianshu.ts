@@ -2227,6 +2227,7 @@ function mapFields(rawData: any): WaybillData {
   // 状态
   const rawStatus = String(item.batch_st || '1');
   const status = statusMap[rawStatus] || 'pending';
+  const batchStatusText = resolveBatchStatusText(item, DEFAULT_STATUS_CODE_TEXT_MAP) || '';
 
   // 发车时间（用作运单日期和shipTime）
   const truckTime = item.truck_t || item.head_truck_t || item.cur_truck_t || item.plan_truck_t || null;
@@ -2253,10 +2254,12 @@ function mapFields(rawData: any): WaybillData {
     payableTotal,
 
     status,
+    batchStatusText,
     remark: String(item.b_remark || ''),
     createTime: truckTime ? new Date(truckTime) : undefined,
     shipTime: truckTime ? new Date(truckTime) : undefined,
     subFinancier: String(item.down_line_text || '').split('->')[0].trim() || TARGET_ORG_NAME,
+    branch: String(item.down_line_text || '').split('->')[0].trim() || extractOutletName(item).split('->')[0].trim() || '',
   };
 }
 

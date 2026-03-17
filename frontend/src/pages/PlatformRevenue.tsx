@@ -406,7 +406,7 @@ const PlatformRevenue: React.FC = () => {
     setColumnWidths(prev => ({ ...prev, [key]: size.width }));
   }, []);
 
-  // 从数据中提取子融资方选项
+  // 从数据中提取线路选项
   const subFinancierOptions = useMemo(() => {
     const set = new Set<string>();
     records.forEach(r => { if ((r as any).subFinancier) set.add((r as any).subFinancier); });
@@ -488,6 +488,24 @@ const PlatformRevenue: React.FC = () => {
       ),
     },
     { title: '资金方', dataIndex: 'funderName', key: 'funderName', width: 100, render: (v: string) => <span style={{ whiteSpace: 'nowrap' }}>{v || '-'}</span> },
+    {
+      title: '结算状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 100,
+      render: (status: string) => {
+        const map: Record<string, { text: string; color: string }> = {
+          pending: { text: '待对账', color: 'default' },
+          confirmed: { text: '待对账', color: 'default' },
+          reconciling: { text: '对账中', color: 'warning' },
+          reconciled: { text: '已对账', color: 'cyan' },
+          settled: { text: '已结算', color: 'success' },
+          accounted: { text: '已入账', color: 'green' },
+        };
+        const cfg = map[status] || { text: status || '-', color: 'default' };
+        return <Tag color={cfg.color} style={{ margin: 0 }}>{cfg.text}</Tag>;
+      },
+    },
     { title: '备注', dataIndex: 'remark', key: 'remark', width: 120, ellipsis: true },
   ];
 
@@ -533,7 +551,8 @@ const PlatformRevenue: React.FC = () => {
             { title: '本期收益', value: stats?.periodRevenue || 0, accent: '#52c41a', showGrowth: true },
             { title: '日均收益', value: stats?.dailyAverage || (stats?.periodRevenue ? stats.periodRevenue / 30 : 0), accent: '#faad14' },
             { title: '预估收益(30天)', value: stats?.estimatedRevenue || 0, accent: '#722ed1' },
-            { title: '在投总额', value: stats?.totalInvestment || 0, accent: '#13c2c2' },
+            { title: '已结算收益', value: stats?.settledRevenue || 0, accent: '#13c2c2' },
+            { title: '待结算收益', value: stats?.unsettledRevenue || 0, accent: '#eb2f96' },
           ].map((item, index) => (
             <Col key={index} flex="1 1 0" style={{ minWidth: 180 }}>
               <Card 
@@ -597,7 +616,7 @@ const PlatformRevenue: React.FC = () => {
                       <span style={{ color: '#1890ff' }}>{stats?.activeFunders || 0}</span>
                       <span style={{ fontSize: 12, color: '#999', margin: '0 4px' }}>资金方</span>
                       <span style={{ color: '#722ed1' }}>{stats?.activeFinanciers || 0}</span>
-                      <span style={{ fontSize: 12, color: '#999', marginLeft: 4 }}>融资方</span>
+                      <span style={{ fontSize: 12, color: '#999', marginLeft: 4 }}>合作方</span>
                     </div>
                   </div>
                 </div>
@@ -689,7 +708,7 @@ const PlatformRevenue: React.FC = () => {
             </Card>
           </Col>
           <Col span={12}>
-            <Card title="TOP5 融资方贡献">
+            <Card title="TOP5 合作方贡献">
               {financierRanking.length === 0 ? (
                 <Empty description="暂无数据" />
               ) : (
