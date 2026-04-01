@@ -1570,6 +1570,7 @@ export interface ContractRoute {
 
 export interface CommissionContract {
   id: string;
+  contractName?: string;
   customerName: string;
   financierId?: string;
   customerSystemId?: string;
@@ -2558,10 +2559,12 @@ export async function fetchPlatformRevenueList(
     sourceType?: RevenueSourceType;
     funderId?: string;
     financierId?: string;
+    financierName?: string;
     status?: RevenueStatus;
     subFinancier?: string;
     commissionContractId?: string;
     localPartnerId?: string;
+    useWaybillDate?: boolean;
     page?: number;
     pageSize?: number;
   }
@@ -2572,10 +2575,12 @@ export async function fetchPlatformRevenueList(
   if (filters?.sourceType) params.append("sourceType", filters.sourceType);
   if (filters?.funderId) params.append("funderId", filters.funderId);
   if (filters?.financierId) params.append("financierId", filters.financierId);
+  if (filters?.financierName) params.append("financierName", filters.financierName);
   if (filters?.status) params.append("status", filters.status);
   if (filters?.subFinancier) params.append("subFinancier", filters.subFinancier);
   if (filters?.commissionContractId) params.append("commissionContractId", filters.commissionContractId);
   if (filters?.localPartnerId) params.append("localPartnerId", filters.localPartnerId);
+  if (filters?.useWaybillDate) params.append("useWaybillDate", "true");
   if (filters?.page) params.append("page", filters.page.toString());
   if (filters?.pageSize) params.append("pageSize", filters.pageSize.toString());
   const queryString = params.toString();

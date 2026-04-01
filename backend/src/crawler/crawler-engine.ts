@@ -154,18 +154,42 @@ function buildRuntimeConfig(config: ExternalSystemConfig): CrawlerRuntimeConfig 
 async function saveWaybillData(
   waybill: WaybillData, 
   financierId: string
-): Promise<{ inserted: boolean; updated: boolean }> {
+): Promise<{ inserted: boolean; updated: boolean; locked?: boolean; lockStatus?: string }> {
   try {
+    const businessDateYmd = String((waybill as any).waybillDateYmd || '').trim();
+    const businessDate = (waybill as any).waybillDate || waybill.createTime || null;
+    const normalizedBusinessDateYmd = businessDateYmd || (businessDate ? new Date(businessDate).toISOString().split('T')[0] : '');
+
     // 检查是否已存在
     const [existing] = await pool.query<any[]>(
       `SELECT id, receivable_total, payable_total, receivable_cash, receivable_collect, 
-              receivable_return, monthly_cost, remark, branch, batch_status FROM waybills 
+              receivable_return, monthly_cost, remark, status, branch, batch_status FROM waybills 
        WHERE waybill_number = ? AND deleted_at IS NULL`,
       [waybill.waybillNumber]
     );
     
     if (existing.length > 0) {
       const existingRow = existing[0];
+      // 已进入对账流转的收益对应运单不再允许被爬虫更新
+      const [lockedRows] = await pool.query<any[]>(
+        `SELECT status
+         FROM revenue_records
+         WHERE source_type = 'waybill_commission'
+           AND waybill_id = ?
+           AND status IN ('reconciling', 'reconciled', 'settled', 'accounted')
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+        [existingRow.id]
+      );
+      if (lockedRows.length > 0) {
+        return {
+          inserted: false,
+          updated: false,
+          locked: true,
+          lockStatus: String(lockedRows[0].status || ''),
+        };
+      }
+
       const needUpdate = 
         Math.abs((existingRow.receivable_total || 0) - (waybill.receivableTotal || 0)) > 0.01 ||
         Math.abs((existingRow.payable_total || 0) - (waybill.payableTotal || 0)) > 0.01 ||
@@ -174,8 +198,9 @@ async function saveWaybillData(
         Math.abs((existingRow.receivable_return || 0) - (waybill.receivableReturn || 0)) > 0.01 ||
         Math.abs((existingRow.monthly_cost || 0) - (waybill.receivableMonthly || 0)) > 0.01 ||
         (existingRow.remark || '') !== (waybill.remark || '') ||
-        (!existingRow.branch && waybill.branch) ||
-        (!existingRow.batch_status && waybill.batchStatusText);
+        (!!waybill.status && (existingRow.status || '') !== (waybill.status || '')) ||
+        (!!waybill.branch && (existingRow.branch || '') !== (waybill.branch || '')) ||
+        (!!waybill.batchStatusText && (existingRow.batch_status || '') !== (waybill.batchStatusText || ''));
       
       if (needUpdate) {
         await pool.query(
@@ -188,6 +213,8 @@ async function saveWaybillData(
             monthly_cost = ?,
             receivable_transport = ?,
             remark = ?,
+            waybill_date = COALESCE(?, waybill_date),
+            status = COALESCE(NULLIF(?, ''), status),
             branch = COALESCE(NULLIF(?, ''), branch),
             batch_status = COALESCE(NULLIF(?, ''), batch_status),
             updated_at = NOW()
@@ -201,6 +228,8 @@ async function saveWaybillData(
             waybill.receivableMonthly || 0,
             waybill.receivableTransport || 0,
             waybill.remark || '',
+            normalizedBusinessDateYmd || null,
+            waybill.status || '',
             waybill.branch || '',
             waybill.batchStatusText || '',
             existingRow.id,
@@ -219,8 +248,8 @@ async function saveWaybillData(
         driver_name, vehicle_plate, departure_place, arrival_place,
         freight_amount, receivable_total, payable_total,
         receivable_cash, receivable_collect, receivable_return, monthly_cost, receivable_transport,
-        status, batch_status, remark, waybill_date, business_mode, sub_financier, branch, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        status, batch_status, remark, waybill_date, business_mode, sub_financier, branch, created_time, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         id,
         waybill.waybillNumber,
@@ -241,10 +270,11 @@ async function saveWaybillData(
         waybill.status || 'pending',
         waybill.batchStatusText || '',
         waybill.remark || '',
-        waybill.createTime ? new Date(waybill.createTime).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        normalizedBusinessDateYmd || new Date().toISOString().split('T')[0],
         'standard',
         waybill.subFinancier || '',
         waybill.branch || '',
+        waybill.createTime ? new Date(waybill.createTime) : null,
       ]
     );
     
@@ -273,6 +303,7 @@ export async function runCrawlerWithTemplate(
   const runtimeConfig = buildRuntimeConfig(config);
   const templateId = template.id;
   const startTime = Date.now();
+  let lockedSkippedCount = 0;
   
   console.log(`[CrawlerEngine] 开始执行爬虫模板: ${templateId}`);
   console.log(`[CrawlerEngine] 配置: 融资方=${runtimeConfig.financierId}, 登录地址=${runtimeConfig.loginUrl}`);
@@ -412,6 +443,12 @@ export async function runCrawlerWithTemplate(
           result.newCount++;
         } else if (saveResult.updated) {
           result.updatedCount++;
+        } else if (saveResult.locked) {
+          lockedSkippedCount++;
+          result.skippedCount++;
+          console.log(
+            `[CrawlerEngine] 运单已锁定，跳过更新: ${waybill.waybillNumber}, 收益状态=${saveResult.lockStatus || 'unknown'}`
+          );
         } else {
           result.skippedCount++;
         }
@@ -423,7 +460,10 @@ export async function runCrawlerWithTemplate(
     
     result.success = true;
     const elapsed = (Date.now() - startTime) / 1000;
-    console.log(`[CrawlerEngine] 任务完成 (耗时${elapsed.toFixed(1)}秒): 新增=${result.newCount}, 更新=${result.updatedCount}, 跳过=${result.skippedCount}, 错误=${result.errorCount}`);
+    console.log(
+      `[CrawlerEngine] 任务完成 (耗时${elapsed.toFixed(1)}秒): 新增=${result.newCount}, 更新=${result.updatedCount}, ` +
+      `跳过=${result.skippedCount}(锁定跳过=${lockedSkippedCount}), 错误=${result.errorCount}`
+    );
     
   } catch (error: any) {
     result.error = error.message;

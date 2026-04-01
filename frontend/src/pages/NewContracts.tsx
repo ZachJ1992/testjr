@@ -8,9 +8,11 @@ import {
   fetchLocalPartners,
   createLocalPartnerApi,
   deleteLocalPartnerApi,
+  updateLocalPartnerApi,
   fetchRoutes,
   createRouteApi,
   deleteRouteApi,
+  updateRouteApi,
   type CommissionContract,
   type CommissionContractStatus,
   type CommissionConfigItem,
@@ -65,9 +67,11 @@ const { Title, Text } = Typography;
 const { TextArea } = Input;
 
 const COMMISSION_FIELDS = [
+  { key: "receivableTotal", label: "撮合运费" },
+  { key: "payableTotal", label: "应付合计" },
+  { key: "priceDiff", label: "承运价差" },
+  { key: "receivableTransport", label: "运输费" },
   { key: "freight", label: "运费" },
-  { key: "waybillFee", label: "面单费" },
-  { key: "trunkLineFee", label: "干线费" },
   { key: "pickupFee", label: "提货费" },
   { key: "deliveryFee", label: "送货费" },
   { key: "receiptFee", label: "回单费" },
@@ -78,6 +82,7 @@ const COMMISSION_FIELDS = [
 ] as const;
 
 interface CommissionContractForm {
+  contractName: string;
   customerName: string;
   financierId: string;
   customerSystemId: string;
@@ -231,6 +236,7 @@ function NewContractsPage() {
     setSelectedFinancierId(fId);
     
     createForm.setFieldsValue({
+      contractName: contract.contractName || "",
       financierId: fId,
       customerName: contract.customerName,
       customerSystemId: contract.customerSystemId || "",
@@ -313,6 +319,7 @@ function NewContractsPage() {
       }));
       
       const payload = {
+        contractName: values.contractName || undefined,
         customerName: values.customerName,
         financierId: values.financierId || undefined,
         customerSystemId: values.customerSystemId || undefined,
@@ -323,7 +330,7 @@ function NewContractsPage() {
         remark: values.remark,
         commissionConfig,
         status: (values.isEnabled ? "active" : "disabled") as CommissionContractStatus,
-        routeIds: values.routeIds || []
+        routeIds: checkedRouteIds
       };
       
       if (editingContract) {
@@ -377,8 +384,13 @@ function NewContractsPage() {
       message.success("落地合作方创建成功");
       setLpModalOpen(false);
       lpForm.resetFields();
-      await loadLocalPartners(selectedFinancierId || undefined);
-      await loadRoutes(selectedFinancierId || undefined);
+      if (manageModalOpen) {
+        await loadLocalPartners();
+        await loadRoutes();
+      } else {
+        await loadLocalPartners(selectedFinancierId || undefined);
+        await loadRoutes(selectedFinancierId || undefined);
+      }
     } catch (err) {
       if (err instanceof Error) message.error(getErrorMessage(err));
     }
@@ -393,7 +405,11 @@ function NewContractsPage() {
       message.success("线路创建成功");
       setRouteModalOpen(false);
       routeForm.resetFields();
-      await loadRoutes(selectedFinancierId || undefined);
+      if (manageModalOpen) {
+        await loadRoutes();
+      } else {
+        await loadRoutes(selectedFinancierId || undefined);
+      }
     } catch (err) {
       if (err instanceof Error) message.error(getErrorMessage(err));
     }
@@ -437,13 +453,53 @@ function NewContractsPage() {
     return routes.filter(r => lpIds.has(r.localPartnerId));
   }, [routes, selectedFinancierId, filteredLocalPartners]);
 
+  const handleDeleteRouteInTree = async (routeId: string, routeName: string) => {
+    if (!token) return;
+    Modal.confirm({
+      title: "删除线路",
+      content: `确定删除线路「${routeName}」吗？`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await deleteRouteApi(token, routeId);
+        message.success("已删除");
+        setCheckedRouteIds(prev => prev.filter(id => id !== routeId));
+        await loadRoutes(selectedFinancierId || undefined);
+      },
+    });
+  };
+
+  const handleDeleteLpInTree = async (lpId: string, lpName: string) => {
+    if (!token) return;
+    Modal.confirm({
+      title: "删除落地合作方",
+      content: `确定删除「${lpName}」及其所有线路吗？`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await deleteLocalPartnerApi(token, lpId);
+        message.success("已删除");
+        const deletedRouteIds = filteredRoutes.filter(r => r.localPartnerId === lpId).map(r => r.id);
+        setCheckedRouteIds(prev => prev.filter(id => !deletedRouteIds.includes(id)));
+        await loadLocalPartners(selectedFinancierId || undefined);
+        await loadRoutes(selectedFinancierId || undefined);
+      },
+    });
+  };
+
   // 构建线路 Tree 数据（按落地合作方分组）
   const routeTreeData = useMemo(() => {
     return filteredLocalPartners.map(lp => {
       const lpRoutes = filteredRoutes.filter(r => r.localPartnerId === lp.id);
       const children = lpRoutes.length > 0
         ? lpRoutes.map(r => ({
-            title: <span><EnvironmentOutlined style={{ marginRight: 4, color: "#52c41a" }} />{r.name}</span>,
+            title: (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <EnvironmentOutlined style={{ color: "#52c41a" }} />{r.name}
+                <DeleteOutlined
+                  style={{ color: "#ff4d4f", fontSize: 12, cursor: "pointer", marginLeft: 8, opacity: 0.6 }}
+                  onClick={(e) => { e.stopPropagation(); handleDeleteRouteInTree(r.id, r.name); }}
+                />
+              </span>
+            ),
             key: r.id,
           }))
         : [{
@@ -453,7 +509,16 @@ function NewContractsPage() {
             disableCheckbox: true,
           }];
       return {
-        title: <span><ApartmentOutlined style={{ marginRight: 4, color: "#13c2c2" }} /><strong>{lp.name}</strong> <span style={{ color: "#8c8c8c", fontSize: 12 }}>（落地合作方）</span></span>,
+        title: (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <ApartmentOutlined style={{ color: "#13c2c2" }} /><strong>{lp.name}</strong>
+            <span style={{ color: "#8c8c8c", fontSize: 12 }}>（落地合作方）</span>
+            <DeleteOutlined
+              style={{ color: "#ff4d4f", fontSize: 12, cursor: "pointer", marginLeft: 8, opacity: 0.6 }}
+              onClick={(e) => { e.stopPropagation(); handleDeleteLpInTree(lp.id, lp.name); }}
+            />
+          </span>
+        ),
         key: `lp_${lp.id}`,
         selectable: false,
         checkable: false,
@@ -464,19 +529,21 @@ function NewContractsPage() {
 
   const columns = [
     {
+      title: "合同名称",
+      dataIndex: "contractName",
+      key: "contractName",
+      width: 200,
+      render: (v: string) => v || <Text type="secondary">-</Text>,
+    },
+    {
       title: "合作方",
       key: "customer",
-      width: 200,
+      width: 140,
       render: (_: any, record: CommissionContract) => (
         <div>
-          <div style={{ fontWeight: 500, marginBottom: 4 }}>
+          <div style={{ fontWeight: 500 }}>
             {record.customerName}
           </div>
-          {record.customerSystemId && (
-            <div style={{ fontSize: 12, color: "#8c8c8c" }}>
-              {record.customerSystemId}
-            </div>
-          )}
         </div>
       )
     },
@@ -485,10 +552,13 @@ function NewContractsPage() {
       key: "localPartners",
       width: 160,
       render: (_: any, record: CommissionContract) => {
-        if (!record.routes || record.routes.length === 0) {
+        let lpNames = [...new Set((record.routes || []).map(r => r.localPartnerName).filter(Boolean))];
+        if (lpNames.length === 0 && record.financierId) {
+          lpNames = localPartners.filter(lp => lp.financierId === record.financierId).map(lp => lp.name);
+        }
+        if (lpNames.length === 0) {
           return <Text type="secondary">未配置</Text>;
         }
-        const lpNames = [...new Set(record.routes.map(r => r.localPartnerName).filter(Boolean))];
         return (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
             {lpNames.slice(0, 2).map((name, i) => (
@@ -880,6 +950,11 @@ function NewContractsPage() {
                 </Form.Item>
               </Col>
               <Col span={12}>
+                <Form.Item name="contractName" label="合同名称">
+                  <Input placeholder="如：金罗抽成合作合同" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
                 <Form.Item name="customerSystemId" label="客户系统ID（选填）">
                   <Input placeholder="选择合作方后自动填充" />
                 </Form.Item>
@@ -1172,7 +1247,7 @@ function NewContractsPage() {
         <Form form={routeForm} layout="vertical">
           <Form.Item name="localPartnerId" label="所属落地合作方" rules={[{ required: true, message: "请选择落地合作方" }]}>
             <Select
-              options={filteredLocalPartners.map(lp => ({ value: lp.id, label: lp.name }))}
+              options={(manageModalOpen ? localPartners : filteredLocalPartners).map(lp => ({ value: lp.id, label: lp.name }))}
               placeholder="选择落地合作方"
             />
           </Form.Item>
@@ -1227,20 +1302,39 @@ function NewContractsPage() {
                       {
                         title: "操作",
                         key: "actions",
-                        width: 80,
+                        width: 120,
                         render: (_: any, record: LocalPartner) => (
-                          <Popconfirm
-                            title="确认删除？相关线路也会一同删除"
-                            onConfirm={async () => {
-                              if (!token) return;
-                              await deleteLocalPartnerApi(token, record.id);
-                              message.success("已删除");
-                              await loadLocalPartners();
-                              await loadRoutes();
-                            }}
-                          >
-                            <Button type="link" size="small" danger>删除</Button>
-                          </Popconfirm>
+                          <Space size={0}>
+                            <Button type="link" size="small" onClick={() => {
+                              Modal.confirm({
+                                title: "编辑落地合作方",
+                                content: (
+                                  <Input id="edit-lp-name" defaultValue={record.name} style={{ marginTop: 8 }} />
+                                ),
+                                onOk: async () => {
+                                  const input = document.getElementById("edit-lp-name") as HTMLInputElement;
+                                  const newName = input?.value?.trim();
+                                  if (!newName || !token) return;
+                                  await updateLocalPartnerApi(token, record.id, { name: newName });
+                                  message.success("已修改");
+                                  await loadLocalPartners();
+                                  await loadRoutes();
+                                },
+                              });
+                            }}>编辑</Button>
+                            <Popconfirm
+                              title="确认删除？相关线路也会一同删除"
+                              onConfirm={async () => {
+                                if (!token) return;
+                                await deleteLocalPartnerApi(token, record.id);
+                                message.success("已删除");
+                                await loadLocalPartners();
+                                await loadRoutes();
+                              }}
+                            >
+                              <Button type="link" size="small" danger>删除</Button>
+                            </Popconfirm>
+                          </Space>
                         )
                       }
                     ]}
@@ -1278,19 +1372,37 @@ function NewContractsPage() {
                       {
                         title: "操作",
                         key: "actions",
-                        width: 80,
+                        width: 120,
                         render: (_: any, record: RouteItem) => (
-                          <Popconfirm
-                            title="确认删除？"
-                            onConfirm={async () => {
-                              if (!token) return;
-                              await deleteRouteApi(token, record.id);
+                          <Space size={0}>
+                            <Button type="link" size="small" onClick={() => {
+                              Modal.confirm({
+                                title: "编辑线路",
+                                content: (
+                                  <Input id="edit-route-name" defaultValue={record.name} style={{ marginTop: 8 }} />
+                                ),
+                                onOk: async () => {
+                                  const input = document.getElementById("edit-route-name") as HTMLInputElement;
+                                  const newName = input?.value?.trim();
+                                  if (!newName || !token) return;
+                                  await updateRouteApi(token, record.id, { name: newName });
+                                  message.success("已修改");
+                                  await loadRoutes();
+                                },
+                              });
+                            }}>编辑</Button>
+                            <Popconfirm
+                              title="确认删除？"
+                              onConfirm={async () => {
+                                if (!token) return;
+                                await deleteRouteApi(token, record.id);
                               message.success("已删除");
                               await loadRoutes();
                             }}
                           >
                             <Button type="link" size="small" danger>删除</Button>
                           </Popconfirm>
+                          </Space>
                         )
                       }
                     ]}

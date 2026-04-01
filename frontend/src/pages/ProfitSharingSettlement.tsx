@@ -72,6 +72,7 @@ function ProfitSharingSettlementPage() {
   const [selectedContractId, setSelectedContractId] = useState<string>("");
   const [localPartners, setLocalPartners] = useState<LocalPartner[]>([]);
   const [selectedLocalPartnerId, setSelectedLocalPartnerId] = useState<string>("");
+  const [selectedFinancierName, setSelectedFinancierName] = useState<string>("");
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([
     dayjs().subtract(1, "year"),
     dayjs(),
@@ -121,17 +122,19 @@ function ProfitSharingSettlementPage() {
         startDate: dateRange[0].format("YYYY-MM-DD"),
         endDate: dateRange[1].format("YYYY-MM-DD"),
         sourceType: "waybill_commission",
+        useWaybillDate: true,
+        financierName: selectedFinancierName || undefined,
         commissionContractId: selectedContractId || undefined,
         localPartnerId: selectedLocalPartnerId || undefined,
-        pageSize: 1000,
+        pageSize: 50000,
       });
-      setRevenueRecords(res.records.filter((r: RevenueRecord) => r.status === "confirmed" || r.status === "pending"));
+      setRevenueRecords(res.records);
     } catch (err) {
       message.error(getErrorMessage(err));
     } finally {
       setRevenueLoading(false);
     }
-  }, [token, dateRange, selectedContractId, selectedLocalPartnerId]);
+  }, [token, dateRange, selectedContractId, selectedLocalPartnerId, selectedFinancierName]);
 
   const loadBatches = useCallback(async () => {
     if (!token) return;
@@ -298,6 +301,20 @@ function ProfitSharingSettlementPage() {
         车牌号: r.vehicle_plate || r.vehiclePlate || "",
         司机: r.driver_name || r.driverName || "",
       }));
+      const totalFreight = data.reduce((s, r) => s + (Number(r.运费金额) || 0), 0);
+      const totalService = data.reduce((s, r) => s + (Number(r.服务费) || 0), 0);
+      data.push({
+        序号: "" as any,
+        合作方: "",
+        落地合作方: "",
+        线路: "",
+        日期: "",
+        关联单号: "合计",
+        运费金额: totalFreight,
+        服务费: totalService,
+        车牌号: "",
+        司机: "",
+      });
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "对账明细");
@@ -415,11 +432,29 @@ function ProfitSharingSettlementPage() {
   ];
 
   // 选中金额合计
-  const selectedTotal = useMemo(() => {
-    return revenueRecords
-      .filter(r => selectedRevenueKeys.includes(r.id))
-      .reduce((sum, r) => sum + (r.amount || 0), 0);
+  const selectedStats = useMemo(() => {
+    const selected = revenueRecords.filter(r => selectedRevenueKeys.includes(r.id));
+    return {
+      totalAmount: selected.reduce((sum, r) => sum + (r.amount || 0), 0),
+      totalFreight: selected.reduce((sum, r) => sum + (r.principalAmount || 0), 0),
+    };
   }, [revenueRecords, selectedRevenueKeys]);
+  const selectedTotal = selectedStats.totalAmount;
+  const selectableRevenueKeys = useMemo(
+    () =>
+      revenueRecords
+        .filter((r) => r.status === "confirmed" || r.status === "pending")
+        .map((r) => r.id),
+    [revenueRecords]
+  );
+  const handleApplyFilters = useCallback(() => {
+    setSelectedRevenueKeys([]);
+    if (activeTab === "revenue") {
+      void loadRevenue();
+    } else {
+      void loadBatches();
+    }
+  }, [activeTab, loadRevenue, loadBatches]);
 
   if (!user?.permissions?.includes("manage_settlements") && !user?.permissions?.includes("manage_contracts")) {
     return (
@@ -490,12 +525,23 @@ function ProfitSharingSettlementPage() {
       <Card style={{ marginBottom: 16 }}>
         <Space wrap>
           <Select
+            style={{ width: 140 }}
+            placeholder="合作方"
+            allowClear
+            value={selectedFinancierName || undefined}
+            onChange={(v) => { setSelectedFinancierName(v || ""); setSelectedRevenueKeys([]); }}
+            options={[
+              { value: "融满", label: "融满" },
+              { value: "金罗", label: "金罗" },
+            ]}
+          />
+          <Select
             style={{ width: 200 }}
             placeholder="筛选合同"
             allowClear
             value={selectedContractId || undefined}
             onChange={(v) => { setSelectedContractId(v || ""); setSelectedRevenueKeys([]); }}
-            options={contracts.map(c => ({ value: c.id, label: c.customerName }))}
+            options={contracts.map(c => ({ value: c.id, label: c.contractName || c.customerName }))}
           />
           <Select
             style={{ width: 180 }}
@@ -510,6 +556,9 @@ function ProfitSharingSettlementPage() {
             onChange={(vals) => { if (vals?.[0] && vals?.[1]) setDateRange([vals[0], vals[1]]); }}
             format="YYYY-MM-DD"
           />
+          <Button type="primary" onClick={handleApplyFilters} loading={activeTab === "revenue" ? revenueLoading : batchLoading}>
+            筛选
+          </Button>
           <Button.Group>
             <Button type={activeTab === "revenue" ? "primary" : "default"} onClick={() => setActiveTab("revenue")}>
               收益明细
@@ -524,13 +573,15 @@ function ProfitSharingSettlementPage() {
       {activeTab === "revenue" ? (
         <Card
           title={<Space><SendOutlined />收益记录（勾选后生成对账单）</Space>}
-          extra={
-            <Space>
-              {selectedRevenueKeys.length > 0 && (
-                <Text type="secondary">
-                  已选 {selectedRevenueKeys.length} 条，合计 <Text strong style={{ color: "#1890ff" }}>{formatAmount(selectedTotal)}</Text>
-                </Text>
-              )}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
+            <Space wrap>
+              <Button onClick={() => setSelectedRevenueKeys(selectableRevenueKeys)} disabled={selectableRevenueKeys.length === 0}>
+                全选可对账（{selectableRevenueKeys.length}）
+              </Button>
+              <Button onClick={() => setSelectedRevenueKeys([])} disabled={selectedRevenueKeys.length === 0}>
+                清空已选
+              </Button>
               <Button
                 type="primary"
                 icon={<FileAddOutlined />}
@@ -540,12 +591,32 @@ function ProfitSharingSettlementPage() {
                 生成对账单 ({selectedRevenueKeys.length})
               </Button>
             </Space>
-          }
-        >
+            {selectedRevenueKeys.length > 0 && (
+              <Text type="secondary">
+                已选 {selectedRevenueKeys.length} 条，总运费 <Text strong>{formatAmount(selectedStats.totalFreight)}</Text>，合计 <Text strong style={{ color: "#1890ff" }}>{formatAmount(selectedTotal)}</Text>
+              </Text>
+            )}
+          </div>
           <Table
             rowSelection={{
+              preserveSelectedRowKeys: true,
               selectedRowKeys: selectedRevenueKeys,
               onChange: (keys) => setSelectedRevenueKeys(keys),
+              getCheckboxProps: (record: RevenueRecord) => ({
+                disabled: !(record.status === "confirmed" || record.status === "pending"),
+              }),
+              selections: [
+                {
+                  key: "select-all-filtered",
+                  text: `全选可对账（${selectableRevenueKeys.length} 条）`,
+                  onSelect: () => setSelectedRevenueKeys(selectableRevenueKeys),
+                },
+                {
+                  key: "clear-all-selected",
+                  text: "清空已选",
+                  onSelect: () => setSelectedRevenueKeys([]),
+                },
+              ],
             }}
             columns={revenueColumns}
             dataSource={revenueRecords}
@@ -553,7 +624,7 @@ function ProfitSharingSettlementPage() {
             rowKey="id"
             scroll={{ x: 1350 }}
             size="small"
-            pagination={{ showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
+            pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100', '200', '500'], showTotal: (t) => `共 ${t} 条` }}
           />
         </Card>
       ) : (

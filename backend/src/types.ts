@@ -736,6 +736,7 @@ export interface CommissionConfigItem {
 // 抽成合同
 export interface CommissionContract {
   id: string;
+  contractName?: string;
   customerName: string;
   financierId?: string;
   customerSystemId?: string;

@@ -18,7 +18,8 @@ let interceptedApiData: any[] = [];
 let tmsTotalRecords: number = 0;
 
 const TARGET_ORG_NAME = '嘉上嘉供应链重庆山东A';
-const DEFAULT_SHIP_TIME_START = '2026-02-28 00:00:00';
+const DEFAULT_SHIP_TIME_START = '';
+const DEFAULT_SHIP_TIME_START_FOR_OTHERS = '2026-03-01';
 const DEFAULT_STATUS_TEXTS = ['已发车', '已到车', '部分卸车', '已卸车', '已完成'];
 const DEFAULT_STATUS_CODE_TEXT_MAP: Record<string, string> = {
   '1': '已创建',
@@ -313,7 +314,7 @@ function buildBusinessCriteria(config: CrawlerRuntimeConfig): {
     config.outletName ??
     config.targetOutletName ??
     config.targetOrgName ??
-    TARGET_ORG_NAME
+    ''
   ).trim();
 
   const shipTimeStartText =
@@ -2075,22 +2076,23 @@ async function fetchData(page: Page, config: CrawlerRuntimeConfig, maxPages: num
   let rejectedByShipTime = 0;
   let rejectedByStatus = 0;
 
-  const filtered = allData.filter((item: any) => {
-    // 业务口径以本地规则为最终准入条件，避免 UI 控件“看起来成功”但实际未生效
-    // 网点字段在接口返回中不稳定，若 UI 网点筛选已成功则信任页面结果，避免误杀
-    if (outletKeywords.length > 0) {
-      const outlet = normalizeText(extractOutletName(item));
-      const outletMatched = !!outlet && outletKeywords.some(k => outlet.includes(k) || k.includes(outlet));
-      if (!outletMatched) {
-        rejectedByOutlet++;
-        return false;
-      }
-    }
+  const targetOutletKeywords = buildOutletKeywords(TARGET_ORG_NAME);
+  const otherShipTimeStart = DEFAULT_SHIP_TIME_START_FOR_OTHERS;
 
+  const filtered = allData.filter((item: any) => {
     const shipTimeText = extractShipTime(item);
     if (!/\d{4}-\d{2}-\d{2}/.test(shipTimeText)) {
       rejectedByShipTime++;
       return false;
+    }
+
+    if (otherShipTimeStart) {
+      const outlet = normalizeText(extractOutletName(item));
+      const isTargetOutlet = !!outlet && targetOutletKeywords.some(k => outlet.includes(k) || k.includes(outlet));
+      if (!isTargetOutlet && shipTimeText.slice(0, 10) < otherShipTimeStart) {
+        rejectedByShipTime++;
+        return false;
+      }
     }
 
     if (statusTextSet.size > 0 || statusCodeSet.size > 0) {

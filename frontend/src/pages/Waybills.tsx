@@ -398,7 +398,7 @@ function WaybillsPage() {
     const totalCount = waybills.length;
     const totalReceivable = waybills.reduce((sum, w) => sum + (w.receivableTotal || 0), 0);
     const totalPayable = waybills.reduce((sum, w) => sum + (w.payableTotal || 0), 0);
-    const totalProfit = waybills.reduce((sum, w) => sum + (w.profit || 0), 0);
+    const totalProfit = waybills.reduce((sum, w) => sum + ((w.receivableTotal || 0) - (w.payableTotal || 0)), 0);
     return { totalCount, totalReceivable, totalPayable, totalProfit };
   }, [waybills]);
 
@@ -561,10 +561,9 @@ function WaybillsPage() {
       { header: "线路", key: (w: WaybillData) => w.subFinancier || "" },
       { header: "批次号", key: (w: WaybillData) => w.waybillNumber },
       { header: "批次状态", key: (w: WaybillData) => w.batchStatus || "" },
-      { header: "应收合计", key: (w: WaybillData) => w.receivableTotal ?? "" },
+      { header: "撮合运费", key: (w: WaybillData) => w.receivableTotal ?? "" },
       { header: "应付合计", key: (w: WaybillData) => w.payableTotal ?? "" },
-      { header: "毛利", key: (w: WaybillData) => w.profit ?? "" },
-      { header: "毛利率", key: (w: WaybillData) => w.profitRate != null ? `${(w.profitRate * 100).toFixed(0)}%` : "" },
+      { header: "承运价差", key: (w: WaybillData) => (w.receivableTotal || 0) - (w.payableTotal || 0) },
       { header: "应收运输费", key: (w: WaybillData) => w.receivableTransport ?? "" },
       { header: "应收点位费", key: (w: WaybillData) => w.receivablePointFee ?? "" },
       { header: "应收上楼费", key: (w: WaybillData) => w.receivableUpstairsFee ?? "" },
@@ -708,7 +707,7 @@ function WaybillsPage() {
       title: "金额汇总",
       children: [
         {
-          title: "应收合计",
+          title: "撮合运费",
           dataIndex: "receivableTotal",
           width: 90,
           align: 'right' as const,
@@ -722,18 +721,14 @@ function WaybillsPage() {
           render: (v: number) => formatMoney(v),
         },
         {
-          title: "毛利",
-          dataIndex: "profit",
-          width: 85,
+          title: "承运价差",
+          key: "priceDiff",
+          width: 90,
           align: 'right' as const,
-          render: (v: number) => formatProfit(v),
-        },
-        {
-          title: "利率",
-          dataIndex: "profitRate",
-          width: 55,
-          align: 'right' as const,
-          render: (v: number) => formatProfitRate(v),
+          render: (_: any, record: WaybillData) => {
+            const diff = (record.receivableTotal || 0) - (record.payableTotal || 0);
+            return formatProfit(diff);
+          },
         },
       ]
     };
@@ -934,6 +929,12 @@ function WaybillsPage() {
             return time ? <span style={{ whiteSpace: 'nowrap' }}>{dayjs(time).format('YY-MM-DD')}</span> : '-';
           },
         },
+        {
+          title: "开单时间",
+          dataIndex: "createdTime",
+          width: 100,
+          render: (v: string) => v ? <span style={{ whiteSpace: 'nowrap' }}>{dayjs(v).format('YY-MM-DD')}</span> : '-',
+        },
       ]
     };
 
@@ -977,7 +978,7 @@ function WaybillsPage() {
             type="link"
             size="small"
             icon={<DollarOutlined />}
-            onClick={() => openPaymentModal(record)}
+            disabled
           >
             申请支付
           </Button>
@@ -1031,7 +1032,7 @@ function WaybillsPage() {
         <Col span={6}>
           <Card size="small">
             <Statistic
-              title="应收运输费合计"
+              title="撮合业务合计"
               value={stats.totalReceivable}
               precision={2}
               prefix="¥"
@@ -1053,7 +1054,7 @@ function WaybillsPage() {
         <Col span={6}>
           <Card size="small">
             <Statistic
-              title="总毛利"
+              title="承运价差合计"
               value={stats.totalProfit}
               precision={2}
               prefix="¥"
@@ -1066,10 +1067,10 @@ function WaybillsPage() {
       {/* 筛选区 */}
       <Card size="small" style={{ marginBottom: 16 }}>
         <Form layout="inline" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <Form.Item label="客户名称">
+          <Form.Item label="合作方">
             <Input
               style={{ width: 150 }}
-              placeholder="客户名称"
+              placeholder="合作方"
               allowClear
               onChange={(e) => setFilters(prev => ({ ...prev, customerName: e.target.value || undefined }))}
             />
@@ -1088,10 +1089,11 @@ function WaybillsPage() {
               placeholder="全部"
               allowClear
               options={[
-                { label: "已到达", value: "已到达" },
                 { label: "已发车", value: "已发车" },
+                { label: "已到车", value: "已到车" },
+                { label: "部分卸车", value: "部分卸车" },
+                { label: "已卸车", value: "已卸车" },
                 { label: "已完成", value: "已完成" },
-                { label: "已取消", value: "已取消" }
               ]}
               onChange={(value) => setFilters(prev => ({ ...prev, batchStatus: value }))}
             />

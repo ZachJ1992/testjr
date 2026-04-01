@@ -134,6 +134,14 @@ export async function runCommissionV2Migration(): Promise<void> {
     console.log("  commission_contracts.financier_id 已存在，跳过");
   }
 
+  // 4b. commission_contracts 新增 contract_name 列
+  if (!(await columnExists("commission_contracts", "contract_name"))) {
+    await pool.query(`ALTER TABLE commission_contracts ADD COLUMN contract_name VARCHAR(200) NULL COMMENT '合同名称' AFTER id`);
+    console.log("  -> contract_name 列已添加");
+  } else {
+    console.log("  commission_contracts.contract_name 已存在，跳过");
+  }
+
   // 5. commission_contracts 将 customer_system_id, settlement_cycle, settlement_day 改为可空
   // 通过 ALTER 把 NOT NULL 去掉（幂等：如果已经是 NULL 不会报错）
   try {

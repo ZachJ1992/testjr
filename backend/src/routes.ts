@@ -1874,7 +1874,7 @@ router.get(
   // requirePermissions("manage_waybills"), // 暂时移除权限检查
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { customerName, contractNumber, businessMode, status, startDate, endDate, waybillNumber, vehiclePlate, batchSource } = req.query ?? {};
+      const { customerName, contractNumber, businessMode, status, startDate, endDate, waybillNumber, vehiclePlate, batchStatus, batchSource } = req.query ?? {};
       
       // 数据权限过滤：非平台用户只能看到自己组织关联的运单
       const orgContext = req.orgContext;
@@ -1905,9 +1905,10 @@ router.get(
         endDate: endDate as string,
         waybillNumber: waybillNumber as string,
         vehiclePlate: vehiclePlate as string,
+        batchStatus: batchStatus as string,
         batchSource: batchSource as string,
         customerId,
-        customerIds  // 新增参数
+        customerIds,
       });
       res.json({ waybills });
     } catch (err) {
@@ -2622,6 +2623,7 @@ router.post(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const {
+        contractName,
         customerName,
         financierId,
         customerSystemId,
@@ -2636,6 +2638,7 @@ router.post(
       } = req.body ?? {};
 
       const contract = await createCommissionContract({
+        contractName: contractName || undefined,
         customerName: customerName || "",
         financierId: financierId || undefined,
         customerSystemId: customerSystemId || undefined,

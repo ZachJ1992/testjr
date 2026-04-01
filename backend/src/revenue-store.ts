@@ -195,10 +195,12 @@ export interface RevenueRecordFilters {
   beneficiaryId?: string;
   sourceType?: RevenueSourceType;
   financierId?: string;
+  financierName?: string;
   funderId?: string;
   status?: RevenueStatus;
   startDate?: string;
   endDate?: string;
+  useWaybillDate?: boolean;
   contractId?: string;
   subFinancier?: string;
   commissionContractId?: string;
@@ -241,6 +243,11 @@ export async function getRevenueRecords(
     params.push(filters.financierId);
   }
 
+  if (filters.financierName) {
+    conditions.push("TRIM(COALESCE(rr.financier_name, '')) = TRIM(?)");
+    params.push(filters.financierName);
+  }
+
   if (filters.funderId) {
     conditions.push("rr.funder_id = ?");
     params.push(filters.funderId);
@@ -251,13 +258,18 @@ export async function getRevenueRecords(
     params.push(filters.status);
   }
 
+  const dateFilterColumn =
+    filters.useWaybillDate && filters.sourceType === "waybill_commission"
+      ? "DATE(COALESCE(w.waybill_date, rr.revenue_date))"
+      : "rr.revenue_date";
+
   if (filters.startDate) {
-    conditions.push("rr.revenue_date >= ?");
+    conditions.push(`${dateFilterColumn} >= ?`);
     params.push(filters.startDate);
   }
 
   if (filters.endDate) {
-    conditions.push("rr.revenue_date <= ?");
+    conditions.push(`${dateFilterColumn} <= ?`);
     params.push(filters.endDate);
   }
 
@@ -267,8 +279,8 @@ export async function getRevenueRecords(
   }
 
   if (filters.subFinancier) {
-    conditions.push("w.sub_financier = ?");
-    params.push(filters.subFinancier);
+    conditions.push("(w.sub_financier = ? OR lp.name = ?)");
+    params.push(filters.subFinancier, filters.subFinancier);
   }
 
   if (filters.commissionContractId) {
