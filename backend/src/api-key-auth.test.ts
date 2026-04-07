@@ -25,13 +25,11 @@ function createResponseRecorder() {
 }
 
 test("requireApiKey allows request when X-API-Key matches configured value", () => {
-  process.env.READONLY_API_KEY = "readonly-test-key";
-
   let nextCalled = false;
   const { response, state } = createResponseRecorder();
   const request = {
     headers: {
-      "X-API-Key": "readonly-test-key",
+      "X-API-Key": "production-readonly-key",
     },
   };
 
@@ -48,15 +46,11 @@ test("requireApiKey allows request when X-API-Key matches configured value", () 
   assert.equal(state.body, undefined);
 });
 
-test("requireApiKey rejects request when READONLY_API_KEY is not configured", () => {
-  delete process.env.READONLY_API_KEY;
-
+test("requireApiKey rejects request when X-API-Key is missing", () => {
   let nextCalled = false;
   const { response, state } = createResponseRecorder();
   const request = {
-    headers: {
-      "x-api-key": "readonly-test-key",
-    },
+    headers: {},
   };
 
   requireApiKey(
@@ -77,8 +71,6 @@ test("requireApiKey rejects request when READONLY_API_KEY is not configured", ()
 });
 
 test("requireApiKey rejects request when X-API-Key does not match configured value", () => {
-  process.env.READONLY_API_KEY = "readonly-test-key";
-
   let nextCalled = false;
   const { response, state } = createResponseRecorder();
   const request = {

@@ -1,5 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 
+const READONLY_API_KEY = "production-readonly-key";
+
 function sendUnauthorized(res: Response): void {
   res.status(401).json({
     code: 401,
@@ -9,8 +11,7 @@ function sendUnauthorized(res: Response): void {
 }
 
 function getReadonlyApiKey(): string | undefined {
-  const value = process.env.READONLY_API_KEY;
-  return value?.trim() || undefined;
+  return READONLY_API_KEY;
 }
 
 function getHeaderValue(req: Request, headerName: string): string | undefined {
