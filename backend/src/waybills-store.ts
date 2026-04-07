@@ -1,6 +1,12 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { pool } from "./db.js";
+import {
+  buildWaybillQueryParts,
+  getWaybillColumnNames,
+  type WaybillAccessScope,
+  type WaybillOverviewFilters,
+} from "./waybills-query.js";
 
 // 运单数据接口 - 支持CSV所有字段
 interface Waybill {
@@ -86,6 +92,11 @@ interface WaybillStats {
   totalReceivable: number;
   totalPayable: number;
   totalProfit: number;
+}
+
+export interface WaybillOverview {
+  waybillCount: number;
+  totalReceivable: number;
 }
 
 interface WaybillRow extends RowDataPacket {
@@ -239,120 +250,48 @@ function mapWaybillRow(row: WaybillRow): Waybill {
   };
 }
 
-export async function getWaybills(filters?: {
-  customerName?: string;
-  vehiclePlate?: string;
-  batchStatus?: string;
-  batchSource?: string;
-  routeName?: string;
-  startDate?: string;
-  endDate?: string;
-  customerId?: string;
-  customerIds?: string[];
-  areaId?: string;
-  contractNumber?: string;
-  businessMode?: string;
-  status?: string;
-  waybillNumber?: string;
-}): Promise<Waybill[]> {
-  // 先检查表结构，获取存在的列
-  const [columns] = await pool.query<RowDataPacket[]>(
-    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'waybills'`
-  );
-  const columnNames = new Set(columns.map((c: any) => c.COLUMN_NAME));
-  
-  // JOIN 融资方表获取融资方名称
-  let query = `SELECT w.*, f.enterprise_name as financier_name, ar.name as area_name
-    FROM waybills w 
-    LEFT JOIN financiers f ON w.customer_id = f.id 
-    LEFT JOIN routes rt ON rt.name = COALESCE(NULLIF(w.sub_financier, ''), w.branch)
-    LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id AND lp.financier_id = w.customer_id
-    LEFT JOIN areas ar ON lp.area_id = ar.id
-    WHERE w.deleted_at IS NULL`;
-  const params: any[] = [];
+export async function getWaybills(filters: WaybillOverviewFilters = {}): Promise<Waybill[]> {
+  const columnNames = await getWaybillColumnNames();
+  const queryParts = buildWaybillQueryParts(filters, {}, columnNames);
 
-  // 单个融资方ID过滤（数据隔离）
-  if (filters?.customerId) {
-    query += ` AND w.customer_id = ?`;
-    params.push(filters.customerId);
-  }
-  
-  // 多个融资方ID过滤（资金方用）
-  if (filters?.customerIds && filters.customerIds.length > 0) {
-    const placeholders = filters.customerIds.map(() => '?').join(',');
-    query += ` AND w.customer_id IN (${placeholders})`;
-    params.push(...filters.customerIds);
-  }
+  const query = `SELECT w.*, f.enterprise_name as financier_name, ar.name as area_name ${queryParts.fromAndJoinSql} ${queryParts.whereSql}
+    ORDER BY COALESCE(w.departure_time, w.created_at) DESC, w.created_at DESC`;
 
-  if (filters?.customerName) {
-    if (columnNames.has('project_name')) {
-      query += ` AND (w.customer_name LIKE ? OR w.project_name LIKE ? OR f.enterprise_name LIKE ?)`;
-      params.push(`%${filters.customerName}%`, `%${filters.customerName}%`, `%${filters.customerName}%`);
-    } else {
-      query += ` AND (w.customer_name LIKE ? OR f.enterprise_name LIKE ?)`;
-      params.push(`%${filters.customerName}%`, `%${filters.customerName}%`);
-    }
-  }
-  if (filters?.vehiclePlate) {
-    query += ` AND w.vehicle_plate LIKE ?`;
-    params.push(`%${filters.vehiclePlate}%`);
-  }
-  if (filters?.batchStatus && columnNames.has('batch_status')) {
-    query += ` AND w.batch_status = ?`;
-    params.push(filters.batchStatus);
-  }
-  if (filters?.batchSource && columnNames.has('batch_source')) {
-    query += ` AND w.batch_source = ?`;
-    params.push(filters.batchSource);
-  }
-  if (filters?.routeName && columnNames.has('sub_financier')) {
-    query += ` AND w.sub_financier LIKE ?`;
-    params.push(`%${filters.routeName}%`);
-  }
-  if (filters?.startDate) {
-    if (columnNames.has('departure_time')) {
-      query += ` AND (DATE(w.departure_time) >= ? OR w.waybill_date >= ?)`;
-      params.push(filters.startDate, filters.startDate);
-    } else {
-      query += ` AND w.waybill_date >= ?`;
-      params.push(filters.startDate);
-    }
-  }
-  if (filters?.endDate) {
-    if (columnNames.has('departure_time')) {
-      query += ` AND (DATE(w.departure_time) <= ? OR w.waybill_date <= ?)`;
-      params.push(filters.endDate, filters.endDate);
-    } else {
-      query += ` AND w.waybill_date <= ?`;
-      params.push(filters.endDate);
-    }
-  }
-  if (filters?.waybillNumber) {
-    query += ` AND w.waybill_number LIKE ?`;
-    params.push(`%${filters.waybillNumber}%`);
-  }
-  if (filters?.contractNumber && columnNames.has('contract_number')) {
-    query += ` AND w.contract_number LIKE ?`;
-    params.push(`%${filters.contractNumber}%`);
-  }
-  if (filters?.businessMode && columnNames.has('business_mode')) {
-    query += ` AND w.business_mode = ?`;
-    params.push(filters.businessMode);
-  }
-  if (filters?.status && columnNames.has('status')) {
-    query += ` AND w.status = ?`;
-    params.push(filters.status);
-  }
-  if (filters?.areaId) {
-    query += ` AND lp.area_id = ?`;
-    params.push(filters.areaId);
-  }
-
-  // 优先按发车时间降序排列（最新在前），发车时间为空的按创建时间排序
-  query += ` ORDER BY COALESCE(w.departure_time, w.created_at) DESC, w.created_at DESC`;
-
-  const [rows] = await pool.query<WaybillRow[]>(query, params);
+  const [rows] = await pool.query<WaybillRow[]>(query, queryParts.params);
   return rows.map(mapWaybillRow);
+}
+
+function roundMoney(value: unknown): number {
+  return Number((Number(value) || 0).toFixed(2));
+}
+
+export async function getWaybillsOverview(
+  filters: WaybillOverviewFilters = {},
+  scope: WaybillAccessScope = {}
+): Promise<WaybillOverview> {
+  if (scope.emptyResult) {
+    return {
+      waybillCount: 0,
+      totalReceivable: 0,
+    };
+  }
+
+  const columnNames = await getWaybillColumnNames();
+  const queryParts = buildWaybillQueryParts(filters, scope, columnNames);
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT
+      COUNT(*) AS waybill_count,
+      COALESCE(ROUND(SUM(w.receivable_total), 2), 0) AS total_receivable
+     ${queryParts.fromAndJoinSql}
+     ${queryParts.whereSql}`,
+    queryParts.params
+  );
+
+  const row = rows[0] || {};
+  return {
+    waybillCount: Number(row.waybill_count) || 0,
+    totalReceivable: roundMoney(row.total_receivable),
+  };
 }
 
 export async function getWaybillById(id: string): Promise<Waybill | undefined> {
