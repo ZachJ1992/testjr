@@ -30,6 +30,7 @@ import { runCommissionV2Migration } from "./migrations/commission-v2-tables.js";
 import { runRevenueContractLinkMigration } from "./migrations/revenue-contract-link.js";
 import revenueRoutes from "./revenue-routes.js";
 import contractLoanRoutes from "./contract-loan-routes.js";
+import dashboardRoutes from "./dashboard-routes.js";
 import { startRevenueScheduler } from "./revenue-scheduler.js";
 import { startScheduler, handleShutdownSignals } from "./crawler/crawler-scheduler.js";
 import { startSettlementScheduler } from "./settlement-scheduler.js";
@@ -53,6 +54,7 @@ app.use("/api/uploads", express.static("backend/uploads"));
 app.use("/api", apiRouter);
 app.use("/api", revenueRoutes);
 app.use("/api", contractLoanRoutes);
+app.use("/api", dashboardRoutes);
 app.use("/api", createAiRouter());
 
 // 提供前端静态文件（生产环境）

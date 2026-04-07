@@ -9,7 +9,6 @@ import {
 import { pool } from "./db.js";
 import { RowDataPacket } from "mysql2";
 import * as directedPayStore from "./directed-pay-contracts-store.js";
-import { getDirectedPayContractsByFunder } from "./directed-pay-contracts-store.js";
 import directedPaymentRoutes from "./directed-payment-routes.js";
 import crawlerRoutes from "./crawler/crawler-routes.js";
 import * as commissionV2Store from "./commission-v2-store.js";
@@ -179,6 +178,7 @@ import {
 import { syncPaymentCodeToTms, verifyTmsCallback, type TmsCallbackPayload } from "./tms-service.js";
 import path from "path";
 import fs from "fs/promises";
+import { resolveWaybillAccessScope } from "./waybills-query.js";
 
 const router = Router();
 
@@ -1874,28 +1874,24 @@ router.get(
   // requirePermissions("manage_waybills"), // 暂时移除权限检查
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { customerName, contractNumber, businessMode, status, startDate, endDate, waybillNumber, vehiclePlate, batchSource } = req.query ?? {};
-      
-      // 数据权限过滤：非平台用户只能看到自己组织关联的运单
-      const orgContext = req.orgContext;
-      let customerId: string | undefined;
-      let customerIds: string[] | undefined;  // 新增：支持多个融资方
-      
-      if (orgContext && !orgContext.isPlatformUser) {
-        if (orgContext.orgType === "financier") {
-          // 融资方员工只能看到自己融资方的运单
-          customerId = orgContext.relatedEntityId;
-        } else if (orgContext.orgType === "funder") {
-          // 资金方：查询有合同关系的融资方运单
-          const contracts = await getDirectedPayContractsByFunder(orgContext.relatedEntityId!);
-          customerIds = contracts.map(c => c.financierId);
-          if (customerIds.length === 0) {
-            // 没有合同关系，返回空
-            return res.json({ waybills: [] });
-          }
-        }
+      const {
+        customerName,
+        contractNumber,
+        businessMode,
+        status,
+        startDate,
+        endDate,
+        waybillNumber,
+        vehiclePlate,
+        batchStatus,
+        batchSource,
+      } = req.query ?? {};
+
+      const scope = await resolveWaybillAccessScope(req.orgContext);
+      if (scope.emptyResult) {
+        return res.json({ waybills: [] });
       }
-      
+
       const waybills = await getWaybills({
         customerName: customerName as string,
         contractNumber: contractNumber as string,
@@ -1905,9 +1901,10 @@ router.get(
         endDate: endDate as string,
         waybillNumber: waybillNumber as string,
         vehiclePlate: vehiclePlate as string,
+        batchStatus: batchStatus as string,
         batchSource: batchSource as string,
-        customerId,
-        customerIds  // 新增参数
+        customerId: scope.customerId,
+        customerIds: scope.customerIds,
       });
       res.json({ waybills });
     } catch (err) {
