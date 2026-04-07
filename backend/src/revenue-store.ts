@@ -73,6 +73,7 @@ function rowToRevenueRecord(row: RowDataPacket): RevenueRecord {
     subFinancier: row.sub_financier || undefined,
     commissionContractId: row.commission_contract_id || undefined,
     routeId: row.route_id || undefined,
+    areaName: row.area_name || undefined,
     localPartnerName: row.local_partner_name || undefined,
     routeName: row.route_name || undefined,
     createdAt: row.created_at instanceof Date
@@ -205,6 +206,7 @@ export interface RevenueRecordFilters {
   subFinancier?: string;
   commissionContractId?: string;
   localPartnerId?: string;
+  areaId?: string;
   page?: number;
   pageSize?: number;
 }
@@ -292,11 +294,16 @@ export async function getRevenueRecords(
     conditions.push("rt.local_partner_id = ?");
     params.push(filters.localPartnerId);
   }
+  if (filters.areaId) {
+    conditions.push("lp.area_id = ?");
+    params.push(filters.areaId);
+  }
 
   const joinClause = `
     LEFT JOIN waybills w ON rr.waybill_id = w.id
     LEFT JOIN routes rt ON rr.route_id = rt.id
-    LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id`;
+    LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id
+    LEFT JOIN areas ar ON lp.area_id = ar.id`;
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   // 获取总数
@@ -313,7 +320,7 @@ export async function getRevenueRecords(
 
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT rr.*, w.vehicle_plate, w.driver_name, w.sub_financier,
-            lp.name as local_partner_name, rt.name as route_name
+            lp.name as local_partner_name, rt.name as route_name, ar.name as area_name
      FROM revenue_records rr
      ${joinClause}
      ${whereClause}

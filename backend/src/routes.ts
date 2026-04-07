@@ -1874,7 +1874,7 @@ router.get(
   // requirePermissions("manage_waybills"), // 暂时移除权限检查
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { customerName, contractNumber, businessMode, status, startDate, endDate, waybillNumber, vehiclePlate, batchStatus, batchSource } = req.query ?? {};
+      const { customerName, contractNumber, businessMode, status, startDate, endDate, waybillNumber, vehiclePlate, batchStatus, batchSource, routeName, areaId } = req.query ?? {};
       
       // 数据权限过滤：非平台用户只能看到自己组织关联的运单
       const orgContext = req.orgContext;
@@ -1907,6 +1907,8 @@ router.get(
         vehiclePlate: vehiclePlate as string,
         batchStatus: batchStatus as string,
         batchSource: batchSource as string,
+        routeName: routeName as string,
+        areaId: areaId as string,
         customerId,
         customerIds,
       });
@@ -3744,6 +3746,75 @@ router.post(
 );
 
 // =============================================
+// 区域 (Areas) API
+// =============================================
+
+router.get(
+  "/areas",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { financierId, status } = req.query;
+      const items = await commissionV2Store.getAreas({
+        financierId: financierId as string,
+        status: status as string,
+      });
+      res.json({ areas: items });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.post(
+  "/areas",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { name, financierId, remark } = req.body ?? {};
+      if (!name || !financierId) {
+        sendError(res, req, 400, "区域名称和合作方为必填");
+        return;
+      }
+      const item = await commissionV2Store.createArea({ name, financierId, remark });
+      res.status(201).json({ area: item });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+router.put(
+  "/areas/:id",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const item = await commissionV2Store.updateArea(req.params.id, req.body);
+      res.json({ area: item });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+router.delete(
+  "/areas/:id",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      await commissionV2Store.deleteArea(req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// =============================================
 // 落地合作方 (Local Partners) API
 // =============================================
 
@@ -3753,9 +3824,10 @@ router.get(
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { financierId, status } = req.query;
+      const { financierId, areaId, status } = req.query;
       const items = await commissionV2Store.getLocalPartners({
         financierId: financierId as string,
+        areaId: areaId as string,
         status: status as string,
       });
       res.json({ localPartners: items });
@@ -3786,12 +3858,12 @@ router.post(
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { name, financierId, contactPerson, contactPhone, remark } = req.body ?? {};
+      const { name, financierId, areaId, contactPerson, contactPhone, remark } = req.body ?? {};
       if (!name || !financierId) {
         sendError(res, req, 400, "名称和合作方为必填");
         return;
       }
-      const item = await commissionV2Store.createLocalPartner({ name, financierId, contactPerson, contactPhone, remark });
+      const item = await commissionV2Store.createLocalPartner({ name, financierId, areaId, contactPerson, contactPhone, remark });
       res.status(201).json({ localPartner: item });
     } catch (err) {
       handleError(res, req, 400, err);
@@ -3837,10 +3909,11 @@ router.get(
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { localPartnerId, financierId, status } = req.query;
+      const { localPartnerId, financierId, areaId, status } = req.query;
       const items = await commissionV2Store.getRoutes({
         localPartnerId: localPartnerId as string,
         financierId: financierId as string,
+        areaId: areaId as string,
         status: status as string,
       });
       res.json({ routes: items });
@@ -3917,10 +3990,11 @@ router.get(
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { contractId, financierId, status, startDate, endDate } = req.query;
+      const { contractId, financierId, areaId, status, startDate, endDate } = req.query;
       const batches = await reconStore.getReconBatches({
         contractId: contractId as string,
         financierId: financierId as string,
+        areaId: areaId as string,
         status: status as any,
         startDate: startDate as string,
         endDate: endDate as string,

@@ -12,6 +12,8 @@ import {
   markReconReconciled,
   generateReconSettlement,
   fetchLocalPartners,
+  fetchAreas,
+  type Area,
   type CommissionContract,
   type RevenueRecord,
   type ReconBatch as ReconBatchType,
@@ -71,6 +73,8 @@ function ProfitSharingSettlementPage() {
   const [contracts, setContracts] = useState<CommissionContract[]>([]);
   const [selectedContractId, setSelectedContractId] = useState<string>("");
   const [localPartners, setLocalPartners] = useState<LocalPartner[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
+  const [selectedAreaId, setSelectedAreaId] = useState<string>("");
   const [selectedLocalPartnerId, setSelectedLocalPartnerId] = useState<string>("");
   const [selectedFinancierName, setSelectedFinancierName] = useState<string>("");
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([
@@ -114,6 +118,16 @@ function ProfitSharingSettlementPage() {
     }
   }, [token]);
 
+  const loadAreas = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetchAreas(token, { status: "active" });
+      setAreas(res.areas);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [token]);
+
   const loadRevenue = useCallback(async () => {
     if (!token) return;
     setRevenueLoading(true);
@@ -124,6 +138,7 @@ function ProfitSharingSettlementPage() {
         sourceType: "waybill_commission",
         useWaybillDate: true,
         financierName: selectedFinancierName || undefined,
+        areaId: selectedAreaId || undefined,
         commissionContractId: selectedContractId || undefined,
         localPartnerId: selectedLocalPartnerId || undefined,
         pageSize: 50000,
@@ -134,7 +149,7 @@ function ProfitSharingSettlementPage() {
     } finally {
       setRevenueLoading(false);
     }
-  }, [token, dateRange, selectedContractId, selectedLocalPartnerId, selectedFinancierName]);
+  }, [token, dateRange, selectedContractId, selectedAreaId, selectedLocalPartnerId, selectedFinancierName]);
 
   const loadBatches = useCallback(async () => {
     if (!token) return;
@@ -142,6 +157,7 @@ function ProfitSharingSettlementPage() {
     try {
       const res = await fetchReconBatches(token, {
         contractId: selectedContractId || undefined,
+        areaId: selectedAreaId || undefined,
       });
       setBatches(res.batches.filter(b => b.status !== "cancelled"));
     } catch (err) {
@@ -149,7 +165,7 @@ function ProfitSharingSettlementPage() {
     } finally {
       setBatchLoading(false);
     }
-  }, [token, selectedContractId]);
+  }, [token, selectedContractId, selectedAreaId]);
 
   const loadStats = useCallback(async () => {
     if (!token) return;
@@ -166,9 +182,10 @@ function ProfitSharingSettlementPage() {
 
   useEffect(() => {
     void loadContracts();
+    void loadAreas();
     void loadLocalPartners();
     void loadStats();
-  }, [loadContracts, loadLocalPartners, loadStats]);
+  }, [loadContracts, loadAreas, loadLocalPartners, loadStats]);
 
   useEffect(() => {
     if (activeTab === "revenue") void loadRevenue();
@@ -328,6 +345,7 @@ function ProfitSharingSettlementPage() {
   // 收益表格列
   const revenueColumns = [
     { title: "日期", dataIndex: "revenueDate", key: "date", width: 110 },
+    { title: "区域", dataIndex: "areaName", key: "areaName", width: 120, render: (v: string) => v || <Tag>无区域</Tag> },
     { title: "合作方", dataIndex: "financierName", key: "financierName", width: 120 },
     { title: "落地合作方", key: "localPartner", width: 130,
       render: (_: any, r: RevenueRecord) => {
@@ -367,6 +385,7 @@ function ProfitSharingSettlementPage() {
         </Button>
       )},
     { title: "合作方", dataIndex: "financierName", key: "financierName", width: 100 },
+    { title: "区域", dataIndex: "areaName", key: "areaName", width: 120, render: (v: string) => v || <Tag>无区域</Tag> },
     { title: "落地合作方", dataIndex: "localPartnerName", key: "localPartnerName", width: 150,
       render: (v: string) => v ? <Tag color="cyan">{v}</Tag> : "-" },
     { title: "对账周期", key: "period", width: 200,
@@ -542,6 +561,14 @@ function ProfitSharingSettlementPage() {
             value={selectedContractId || undefined}
             onChange={(v) => { setSelectedContractId(v || ""); setSelectedRevenueKeys([]); }}
             options={contracts.map(c => ({ value: c.id, label: c.contractName || c.customerName }))}
+          />
+          <Select
+            style={{ width: 180 }}
+            placeholder="筛选区域"
+            allowClear
+            value={selectedAreaId || undefined}
+            onChange={(v) => { setSelectedAreaId(v || ""); setSelectedRevenueKeys([]); }}
+            options={areas.map(a => ({ value: a.id, label: a.name }))}
           />
           <Select
             style={{ width: 180 }}

@@ -21,6 +21,7 @@ function mapRow(row: RowDataPacket): ReconBatch {
     contractId: row.contract_id,
     financierId: row.financier_id ?? undefined,
     financierName: row.financier_name ?? undefined,
+    areaName: row.area_name ?? undefined,
     localPartnerName: row.local_partner_name ?? undefined,
     periodStart: typeof row.period_start === "object" ? (row.period_start as Date).toISOString().split("T")[0] : String(row.period_start).split("T")[0],
     periodEnd: typeof row.period_end === "object" ? (row.period_end as Date).toISOString().split("T")[0] : String(row.period_end).split("T")[0],
@@ -41,20 +42,24 @@ function mapRow(row: RowDataPacket): ReconBatch {
 export async function getReconBatches(filters?: {
   contractId?: string;
   financierId?: string;
+  areaId?: string;
   status?: ReconBatchStatus;
   startDate?: string;
   endDate?: string;
 }): Promise<ReconBatch[]> {
-  let sql = `SELECT b.*, GROUP_CONCAT(DISTINCT lp.name SEPARATOR '、') as local_partner_name
+  let sql = `SELECT b.*, GROUP_CONCAT(DISTINCT lp.name SEPARATOR '、') as local_partner_name,
+                    GROUP_CONCAT(DISTINCT ar.name SEPARATOR '、') as area_name
     FROM commission_recon_batches b
     LEFT JOIN contract_routes cr ON b.contract_id = cr.contract_id
     LEFT JOIN routes rt ON cr.route_id = rt.id
     LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id
+    LEFT JOIN areas ar ON lp.area_id = ar.id
     WHERE 1=1`;
   const vals: any[] = [];
 
   if (filters?.contractId) { sql += " AND b.contract_id = ?"; vals.push(filters.contractId); }
   if (filters?.financierId) { sql += " AND b.financier_id = ?"; vals.push(filters.financierId); }
+  if (filters?.areaId) { sql += " AND lp.area_id = ?"; vals.push(filters.areaId); }
   if (filters?.status) { sql += " AND b.status = ?"; vals.push(filters.status); }
   if (filters?.startDate) { sql += " AND b.period_start >= ?"; vals.push(filters.startDate); }
   if (filters?.endDate) { sql += " AND b.period_end <= ?"; vals.push(filters.endDate); }

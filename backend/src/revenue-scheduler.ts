@@ -359,25 +359,28 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
     const [backfillRevenueDateResult] = await pool.query<ResultSetHeader>(`
       UPDATE revenue_records rr
       JOIN waybills w ON rr.waybill_id = w.id
+      LEFT JOIN financiers f ON w.customer_id = f.id
       SET rr.revenue_date = COALESCE(
-        DATE(w.created_at),
-        DATE(w.created_time),
-        DATE(w.departure_time),
-        DATE(w.waybill_date),
+        CASE
+          WHEN f.enterprise_name = '融满'
+            THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), rr.revenue_date)
+          ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date)
+        END,
         rr.revenue_date
       )
       WHERE rr.source_type = 'waybill_commission'
         AND w.deleted_at IS NULL
         AND rr.revenue_date <> COALESCE(
-          DATE(w.created_at),
-          DATE(w.created_time),
-          DATE(w.departure_time),
-          DATE(w.waybill_date),
+          CASE
+            WHEN f.enterprise_name = '融满'
+              THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), rr.revenue_date)
+            ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date)
+          END,
           rr.revenue_date
         )
     `);
     if (Number(backfillRevenueDateResult.affectedRows || 0) > 0) {
-      console.log(`[WaybillRevenue] 已按入库时间回填历史收益日期 ${backfillRevenueDateResult.affectedRows} 条`);
+      console.log(`[WaybillRevenue] 已按最新口径回填历史收益日期 ${backfillRevenueDateResult.affectedRows} 条`);
     }
 
     // 字段映射（与 commission-calculation.ts 保持一致）
@@ -508,8 +511,13 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
         rate = 0;
       }
 
-      // 业务口径：收益生成时间取运单入库时间（created_at）
-      const revenueDateSource = w.created_at || w.created_time || w.departure_time || w.waybill_date;
+      // 收益日期口径：
+      // - 融满：created_time（TMS发车时间）优先
+      // - 其他：保持入库时间(created_at)优先
+      const isRongman = String(w.financier_name || routeConfig.financierName || "").trim() === "融满";
+      const revenueDateSource = isRongman
+        ? (w.created_time || w.departure_time || w.waybill_date || w.created_at)
+        : (w.created_at || w.created_time || w.departure_time || w.waybill_date);
       const revenueDate = revenueDateSource
         ? formatDateOnly(revenueDateSource)
         : new Date().toISOString().split('T')[0];
@@ -582,7 +590,11 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
         END,
         rr.record_type = 'revenue',
         rr.beneficiary_type = 'platform',
-        rr.revenue_date = COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date),
+        rr.revenue_date = CASE
+          WHEN f.enterprise_name = '融满'
+            THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), rr.revenue_date)
+          ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date)
+        END,
         rr.status = 'confirmed'
       WHERE rr.source_type = 'waybill_commission'
         AND w.deleted_at IS NULL
@@ -615,7 +627,11 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
           WHEN f.enterprise_name = '融满' THEN 0.025
           ELSE 0
         END AS rate,
-        COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), CURRENT_DATE) AS revenue_date,
+        CASE
+          WHEN f.enterprise_name = '融满'
+            THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), CURRENT_DATE)
+          ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), CURRENT_DATE)
+        END AS revenue_date,
         'confirmed' AS status,
         w.id AS waybill_id
       FROM waybills w

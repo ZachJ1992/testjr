@@ -133,6 +133,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Prom
   });
 }
 
+function formatDateLocalYmd(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 // ==================== 构建运行时配置 ====================
 function buildRuntimeConfig(config: ExternalSystemConfig): CrawlerRuntimeConfig {
   const crawlerConfig = config.crawlerConfig || {};
@@ -158,12 +165,14 @@ async function saveWaybillData(
   try {
     const businessDateYmd = String((waybill as any).waybillDateYmd || '').trim();
     const businessDate = (waybill as any).waybillDate || waybill.createTime || null;
-    const normalizedBusinessDateYmd = businessDateYmd || (businessDate ? new Date(businessDate).toISOString().split('T')[0] : '');
+    const normalizedBusinessDateYmd =
+      businessDateYmd ||
+      (businessDate ? formatDateLocalYmd(new Date(businessDate)) : '');
 
     // 检查是否已存在
     const [existing] = await pool.query<any[]>(
       `SELECT id, receivable_total, payable_total, receivable_cash, receivable_collect, 
-              receivable_return, monthly_cost, remark, status, branch, batch_status FROM waybills 
+              receivable_return, monthly_cost, remark, status, branch, batch_status, waybill_date FROM waybills 
        WHERE waybill_number = ? AND deleted_at IS NULL`,
       [waybill.waybillNumber]
     );
@@ -190,6 +199,10 @@ async function saveWaybillData(
         };
       }
 
+      const existingWaybillDateRaw = String(existingRow.waybill_date || '').trim();
+      const existingWaybillDateYmd = /^\d{4}-\d{2}-\d{2}/.test(existingWaybillDateRaw)
+        ? existingWaybillDateRaw.slice(0, 10)
+        : (existingRow.waybill_date ? formatDateLocalYmd(new Date(existingRow.waybill_date)) : '');
       const needUpdate = 
         Math.abs((existingRow.receivable_total || 0) - (waybill.receivableTotal || 0)) > 0.01 ||
         Math.abs((existingRow.payable_total || 0) - (waybill.payableTotal || 0)) > 0.01 ||
@@ -200,7 +213,8 @@ async function saveWaybillData(
         (existingRow.remark || '') !== (waybill.remark || '') ||
         (!!waybill.status && (existingRow.status || '') !== (waybill.status || '')) ||
         (!!waybill.branch && (existingRow.branch || '') !== (waybill.branch || '')) ||
-        (!!waybill.batchStatusText && (existingRow.batch_status || '') !== (waybill.batchStatusText || ''));
+        (!!waybill.batchStatusText && (existingRow.batch_status || '') !== (waybill.batchStatusText || '')) ||
+        (!!normalizedBusinessDateYmd && existingWaybillDateYmd !== normalizedBusinessDateYmd);
       
       if (needUpdate) {
         await pool.query(

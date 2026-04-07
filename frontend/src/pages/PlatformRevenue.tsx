@@ -50,6 +50,7 @@ import {
   RevenueSourceType,
   getErrorMessage,
   fetchLocalPartners,
+  fetchAreas,
 } from '../api';
 
 const { RangePicker } = DatePicker;
@@ -90,6 +91,7 @@ const PlatformRevenue: React.FC = () => {
     funderId: undefined as string | undefined,
     financierId: undefined as string | undefined,
     subFinancier: undefined as string | undefined,
+    areaId: undefined as string | undefined,
     detailStartDate: undefined as string | undefined,
     detailEndDate: undefined as string | undefined,
     page: 1,
@@ -161,6 +163,7 @@ const PlatformRevenue: React.FC = () => {
         funderId: filters.funderId,
         financierId: filters.financierId,
         subFinancier: filters.subFinancier,
+        areaId: (filters as any).areaId,
         page: filters.page,
         pageSize: filters.pageSize,
       };
@@ -316,6 +319,7 @@ const PlatformRevenue: React.FC = () => {
 
   const exportColumns = [
     { header: '序号', key: (_: any, i: number) => i + 1 },
+    { header: '区域', key: (r: any) => r.areaName || '无区域' },
     { header: '落地合作方', key: (r: any) => r.localPartnerName || r.subFinancier || '' },
     { header: '日期', key: (r: any) => r.revenueDate || '' },
     { header: '关联单号', key: (r: any) => r.contractNumber || '' },
@@ -361,7 +365,7 @@ const PlatformRevenue: React.FC = () => {
 
   const handleExport = () => {
     if (!token) return;
-    const hasFilter = filters.sourceType || filters.subFinancier || filters.detailStartDate;
+    const hasFilter = filters.sourceType || filters.subFinancier || (filters as any).areaId || filters.detailStartDate;
     Modal.confirm({
       title: '导出收益明细',
       icon: <FileExcelOutlined style={{ color: '#52c41a' }} />,
@@ -379,6 +383,7 @@ const PlatformRevenue: React.FC = () => {
             endDate: filters.detailEndDate || dateRange.endDate,
             sourceType: filters.sourceType,
             subFinancier: filters.subFinancier,
+            areaId: (filters as any).areaId,
             page: 1,
             pageSize: 9999,
           };
@@ -420,11 +425,16 @@ const PlatformRevenue: React.FC = () => {
 
   // 从合同落地合作方加载选项
   const [lpOptions, setLpOptions] = useState<{ label: string; value: string }[]>([]);
+  const [areaOptions, setAreaOptions] = useState<{ label: string; value: string }[]>([]);
   useEffect(() => {
     if (!token) return;
     fetchLocalPartners(token, { status: 'active' }).then(res => {
       const opts = (res.localPartners || []).map((lp: any) => ({ label: lp.name, value: lp.name }));
       setLpOptions(opts);
+    }).catch(() => {});
+    fetchAreas(token, { status: 'active' }).then(res => {
+      const opts = (res.areas || []).map((a: any) => ({ label: a.name, value: a.id }));
+      setAreaOptions(opts);
     }).catch(() => {});
   }, [token]);
 
@@ -441,6 +451,12 @@ const PlatformRevenue: React.FC = () => {
         const name = r.localPartnerName || r.subFinancier;
         return name ? <Tag color="cyan" style={{ margin: 0 }}>{name}</Tag> : '-';
       },
+    },
+    {
+      title: '区域',
+      key: 'areaName',
+      width: 110,
+      render: (_: any, r: any) => <Tag style={{ margin: 0 }}>{r.areaName || '无区域'}</Tag>,
     },
     { title: '日期', dataIndex: 'revenueDate', key: 'revenueDate', width: 110, render: (v: string) => <span style={{ whiteSpace: 'nowrap' }}>{v}</span> },
     { 
@@ -785,6 +801,14 @@ const PlatformRevenue: React.FC = () => {
                 <Select.Option key={key} value={key}>{label}</Select.Option>
               ))}
             </Select>
+            <Select
+              placeholder="区域"
+              allowClear
+              style={{ width: 180 }}
+              value={(filters as any).areaId}
+              onChange={(v) => setFilters({ ...filters, areaId: v, page: 1 } as any)}
+              options={areaOptions}
+            />
             <Select
               placeholder="落地合作方"
               allowClear

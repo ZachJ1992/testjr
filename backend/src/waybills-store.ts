@@ -75,6 +75,7 @@ interface Waybill {
   subFinancier?: string;
   // JOIN 融资方表的字段
   financierName?: string;
+  areaName?: string;
 }
 
 interface WaybillStats {
@@ -159,6 +160,7 @@ interface WaybillRow extends RowDataPacket {
   sub_financier: string | null;
   // JOIN 融资方表的字段
   financier_name: string | null;
+  area_name: string | null;
 }
 
 function mapWaybillRow(row: WaybillRow): Waybill {
@@ -232,7 +234,8 @@ function mapWaybillRow(row: WaybillRow): Waybill {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     subFinancier: row.sub_financier || undefined,
-    financierName: row.financier_name || undefined
+    financierName: row.financier_name || undefined,
+    areaName: row.area_name || undefined
   };
 }
 
@@ -241,10 +244,12 @@ export async function getWaybills(filters?: {
   vehiclePlate?: string;
   batchStatus?: string;
   batchSource?: string;
+  routeName?: string;
   startDate?: string;
   endDate?: string;
   customerId?: string;
   customerIds?: string[];
+  areaId?: string;
   contractNumber?: string;
   businessMode?: string;
   status?: string;
@@ -257,9 +262,12 @@ export async function getWaybills(filters?: {
   const columnNames = new Set(columns.map((c: any) => c.COLUMN_NAME));
   
   // JOIN 融资方表获取融资方名称
-  let query = `SELECT w.*, f.enterprise_name as financier_name 
+  let query = `SELECT w.*, f.enterprise_name as financier_name, ar.name as area_name
     FROM waybills w 
     LEFT JOIN financiers f ON w.customer_id = f.id 
+    LEFT JOIN routes rt ON rt.name = COALESCE(NULLIF(w.sub_financier, ''), w.branch)
+    LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id AND lp.financier_id = w.customer_id
+    LEFT JOIN areas ar ON lp.area_id = ar.id
     WHERE w.deleted_at IS NULL`;
   const params: any[] = [];
 
@@ -297,6 +305,10 @@ export async function getWaybills(filters?: {
     query += ` AND w.batch_source = ?`;
     params.push(filters.batchSource);
   }
+  if (filters?.routeName && columnNames.has('sub_financier')) {
+    query += ` AND w.sub_financier LIKE ?`;
+    params.push(`%${filters.routeName}%`);
+  }
   if (filters?.startDate) {
     if (columnNames.has('departure_time')) {
       query += ` AND (DATE(w.departure_time) >= ? OR w.waybill_date >= ?)`;
@@ -330,6 +342,10 @@ export async function getWaybills(filters?: {
   if (filters?.status && columnNames.has('status')) {
     query += ` AND w.status = ?`;
     params.push(filters.status);
+  }
+  if (filters?.areaId) {
+    query += ` AND lp.area_id = ?`;
+    params.push(filters.areaId);
   }
 
   // 优先按发车时间降序排列（最新在前），发车时间为空的按创建时间排序

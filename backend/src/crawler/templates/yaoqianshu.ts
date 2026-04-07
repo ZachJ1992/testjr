@@ -380,6 +380,8 @@ async function fetchBatchListPageByNode(params: {
   pageSize: number;
   query: Record<string, any>;
   filter: Record<string, any>;
+  sort?: Record<string, any>;
+  tab?: string;
 }): Promise<{
   success: boolean;
   records: any[];
@@ -389,23 +391,27 @@ async function fetchBatchListPageByNode(params: {
 }> {
   try {
     const apiUrl = new URL('/api/Table/Search/batchList', params.baseUrl);
+    apiUrl.searchParams.set('logid', params.logid || `${Date.now()}`);
+    apiUrl.searchParams.set('gid', params.gid || '100020');
     const requestBody: Record<string, any> = {
-      page: params.page,
+      category: 'Batch',
+      tab: params.tab || 'tr_up',
+      sort: (params.sort && Object.keys(params.sort).length > 0)
+        ? params.sort
+        : { batch_st: 'asc', truck_t: 'asc' },
+      page_num: params.page,
       page_size: params.pageSize,
-      sort_field: 'create_time',
-      sort_type: 'desc',
+      fetch_mode: 'body',
+      cid: '',
+      query: params.query || {},
+      filter: params.filter || {},
     };
-    if (Object.keys(params.query).length > 0) {
-      requestBody.query = params.query;
-    }
-    if (Object.keys(params.filter).length > 0) {
-      requestBody.filter = params.filter;
-    }
+    const body = new URLSearchParams({ req: JSON.stringify(requestBody) }).toString();
 
     const response = await fetch(apiUrl.toString(), {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'Cookie': params.cookieHeader,
         'Accept': 'application/json',
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
@@ -416,7 +422,7 @@ async function fetchBatchListPageByNode(params: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
         'X-Requested-With': 'XMLHttpRequest',
       },
-      body: JSON.stringify(requestBody),
+      body,
     });
 
     const rawText = await response.text();
@@ -1967,92 +1973,60 @@ async function fetchData(page: Page, config: CrawlerRuntimeConfig, maxPages: num
     console.log(`[摇钱树] 初始API首条键: ${Object.keys(first).slice(0, 80).join(',')}`);
   }
 
-  // 清空页面初始加载阶段捕获的数据，只保留“网点筛选 + 查询”之后的响应
+  // 改为接口直连抓取：跳过 UI 自动筛选，避免页面结构变化导致异常
   uiCapturedData.length = 0;
-  const outletFilterAppliedRaw = await applyOutletFilterOnPage(page, criteria.local.outletName);
-  const outletVerify = await verifyOutletRowsOnPage(page, criteria.local.outletName);
-  const outletFilterApplied = outletFilterAppliedRaw && outletVerify.matchedRows > 0;
-  console.log(
-    `[摇钱树] 网点UI筛选执行结果: raw=${outletFilterAppliedRaw ? 'success' : 'failed'}, verify=${outletVerify.matchedRows}/${outletVerify.totalRows}, final=${outletFilterApplied ? 'success' : 'failed'}`
-  );
-  // 继续按“发车时间 + 批次状态”筛选，并再次触发查询，确保捕获到最终筛选结果
-  uiCapturedData.length = 0;
-  const extraFilterResult = await applyShipTimeAndStatusFilterOnPage(
-    page,
-    criteria.local.shipTimeStartText,
-    criteria.local.statusTexts
-  );
-  const shipTimeFilterApplied = extraFilterResult.shipTimeApplied;
-  const statusFilterApplied = extraFilterResult.statusApplied;
-  console.log(
-    `[摇钱树] 时间/状态UI筛选执行结果: shipTime=${shipTimeFilterApplied ? 'success' : 'failed'}, status=${statusFilterApplied ? 'success' : 'failed'}, query=${extraFilterResult.queryClicked ? 'clicked' : 'no-click'}`
-  );
-  const domSelectionStats = await getDomSelectionStats(page);
-  console.log(`[摇钱树] 表格选择态: totalRows=${domSelectionStats.totalRows}, selectedRows=${domSelectionStats.selectedRows}`);
+  console.log('[摇钱树] 跳过页面网点/时间/状态筛选，改用 batchList 接口直连分页');
 
   const { cookieMap, cookieHeader } = buildCookieHeader(await page.cookies());
   const logid = cookieMap.get('user_id') || cookieMap.get('logid') || cookieMap.get('uid') || '';
   const gid = cookieMap.get('group_id') || cookieMap.get('gid') || cookieMap.get('company_id') || '';
   console.log(`[摇钱树] Cookie上下文: hasCookie=${cookieHeader.length > 0}, logid=${logid ? 'Y' : 'N'}, gid=${gid ? 'Y' : 'N'}`);
 
-  // ====== 新策略：用捕获的请求模板分页拉取全量 API 数据，然后本地过滤 ======
+  // ====== 接口直连分页拉取全量 API 数据，然后本地过滤 ======
   const allData: any[] = [];
 
   await sleep(1200);
 
-  // 第一步：把初始加载捕获的数据放入池
-  const firstPageData = initialApiData.length > 0 ? initialApiData : (uiCapturedData.length > 0 ? uiCapturedData : []);
-  if (firstPageData.length > 0) {
-    allData.push(...firstPageData);
-    console.log(`[摇钱树] 第1页API数据: ${firstPageData.length} 条`);
-  }
+  // 第一步：禁用页面首包复用，统一走接口第1页开始，确保与人工筛选口径一致
+  const firstPageData: any[] = [];
+  console.log('[摇钱树] 第1页开始使用 API 直连，不复用页面首包数据');
 
-  // 第二步：用捕获的请求模板分页拉取后续页（浏览器上下文，保留 session/cookie）
-  if (lastCapturedBatchReq && lastCapturedBatchUrl && firstPageData.length >= 100) {
-    const apiPageSize = Number((lastCapturedBatchReq as Record<string, any>).page_size || 300);
-    let apiPageNum = 2;
-    const maxApiPages = Math.min(maxFetchPages, 20);
-    while (apiPageNum <= maxApiPages) {
-      const nextPageResult = await page.evaluate(async (payload: {
-        reqTemplate: Record<string, any>;
-        url: string;
-        pageNum: number;
-      }) => {
-        try {
-          const req = JSON.parse(JSON.stringify(payload.reqTemplate));
-          req.page_num = payload.pageNum;
-          const body = new URLSearchParams({ req: JSON.stringify(req) }).toString();
-          const response = await fetch(payload.url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-              'Accept': 'application/json',
-            },
-            body,
-            credentials: 'include',
-          });
-          const data = await response.json();
-          if (data?.errno === 0 && Array.isArray(data?.res?.data)) {
-            return { success: true, records: data.res.data, total: data.res.total?.count || data.res.total || 0 };
-          }
-          return { success: false, records: [], total: 0, error: `errno=${data?.errno}` };
-        } catch (e: any) {
-          return { success: false, records: [], total: 0, error: e?.message || 'unknown' };
-        }
-      }, { reqTemplate: lastCapturedBatchReq, url: lastCapturedBatchUrl, pageNum: apiPageNum });
-
-      if (!nextPageResult.success || !nextPageResult.records || nextPageResult.records.length === 0) {
-        console.log(`[摇钱树] API第${apiPageNum}页: ${nextPageResult.error || '无数据'}, 停止翻页`);
-        break;
-      }
-
-      allData.push(...nextPageResult.records);
-      console.log(`[摇钱树] API第${apiPageNum}页: ${nextPageResult.records.length} 条, 累计 ${allData.length}`);
-
-      if (nextPageResult.records.length < apiPageSize) break;
-      apiPageNum++;
-      await sleep(300);
+  // 第二步：按 curl 口径直接请求 batchList 接口分页
+  const apiPageSize = Math.max(50, Math.min(500, Number(config.pageSize ?? 300) || 300));
+  // 固定使用已验证的 curl 口径（避免页面捕获模板漂移）
+  const tab = 'tr_up';
+  const sort = { batch_st: 'asc', truck_t: 'asc' };
+  const baseFilter: Record<string, any> = {};
+  // 按业务约定固定口径：start=2026-03-01 00:00:00，end=触发时当前时间
+  const truckStart = `${DEFAULT_SHIP_TIME_START_FOR_OTHERS} 00:00:00`;
+  const truckEnd = `${toDateTimeString(new Date()).slice(0, 10)} 23:59:59`;
+  const finalFilter = Array.isArray(baseFilter.truck_t)
+    ? baseFilter
+    : { ...baseFilter, truck_t: [['>=', truckStart], ['<=', truckEnd]] };
+  const finalQuery: Record<string, any> = {};
+  const startPage = 1;
+  const maxApiPages = Math.min(maxFetchPages, 80);
+  for (let apiPageNum = startPage; apiPageNum <= maxApiPages; apiPageNum++) {
+    const nextPageResult = await fetchBatchListPageByNode({
+      baseUrl,
+      cookieHeader,
+      logid,
+      gid,
+      page: apiPageNum,
+      pageSize: apiPageSize,
+      query: finalQuery,
+      filter: finalFilter,
+      sort,
+      tab,
+    });
+    if (!nextPageResult.success || !nextPageResult.records || nextPageResult.records.length === 0) {
+      console.log(`[摇钱树] API第${apiPageNum}页(直连): ${nextPageResult.error || '无数据'}, 停止翻页`);
+      break;
     }
+    allData.push(...nextPageResult.records);
+    console.log(`[摇钱树] API第${apiPageNum}页(直连): ${nextPageResult.records.length} 条, 累计 ${allData.length}`);
+    if (nextPageResult.records.length < apiPageSize) break;
+    await sleep(250);
   }
 
   const hasDate = (v: any) => /\d{4}-\d{2}-\d{2}/.test(String(v || '').trim());
