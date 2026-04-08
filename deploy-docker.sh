@@ -152,6 +152,7 @@ cd source
 # 复制 .env 文件（如果存在）
 if [ -f "../backend/.env" ]; then
     cp ../backend/.env backend/.env
+    cp ../backend/.env .env
     # 从 .env 文件加载环境变量（用于 docker-compose）
     set -a
     source backend/.env

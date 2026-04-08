@@ -2293,7 +2293,13 @@ export async function updateUser(
     );
 
     if (input.groupIds) {
-      await setUserGroups(userId, input.groupIds);
+      await conn.query("DELETE FROM user_group_members WHERE user_id = ?", [userId]);
+      if (input.groupIds.length) {
+        const values = input.groupIds.map((g) => [userId, g]);
+        await conn.query("INSERT INTO user_group_members (user_id, group_id) VALUES ?", [values]);
+      }
+      clearGroupsCache();
+      clearUsersCache();
     }
 
     await conn.commit();
@@ -3758,6 +3764,7 @@ export async function resetSystemParameters(updatedBy?: string): Promise<SystemP
 function mapCommissionContractRow(row: any): CommissionContract {
   return {
     id: row.id,
+    contractName: row.contract_name || undefined,
     customerName: row.customer_name,
     financierId: row.financier_id ?? undefined,
     customerSystemId: row.customer_system_id ?? undefined,
@@ -3809,6 +3816,7 @@ export async function getCommissionContractById(id: string): Promise<CommissionC
 }
 
 export async function createCommissionContract(input: {
+  contractName?: string;
   customerName: string;
   financierId?: string;
   customerSystemId?: string;
@@ -3835,11 +3843,12 @@ export async function createCommissionContract(input: {
 
   await pool.query(
     `INSERT INTO commission_contracts 
-     (id, customer_name, financier_id, customer_system_id, start_date, end_date, 
+     (id, contract_name, customer_name, financier_id, customer_system_id, start_date, end_date, 
       settlement_cycle, settlement_day, remark, commission_config, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
     [
       id,
+      input.contractName || null,
       input.customerName,
       input.financierId || null,
       input.customerSystemId || null,
@@ -3863,6 +3872,7 @@ export async function createCommissionContract(input: {
 export async function updateCommissionContract(
   id: string,
   input: Partial<{
+    contractName: string;
     customerName: string;
     financierId: string;
     customerSystemId: string;
@@ -3878,6 +3888,10 @@ export async function updateCommissionContract(
   const updates: string[] = [];
   const values: any[] = [];
 
+  if (input.contractName !== undefined) {
+    updates.push("contract_name = ?");
+    values.push(input.contractName);
+  }
   if (input.customerName !== undefined) {
     updates.push("customer_name = ?");
     values.push(input.customerName);

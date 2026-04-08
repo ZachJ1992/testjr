@@ -6,15 +6,22 @@ import {
   updateCommissionContractApi,
   deleteCommissionContractApi,
   fetchLocalPartners,
+  fetchAreas,
+  createAreaApi,
+  updateAreaApi,
+  deleteAreaApi,
   createLocalPartnerApi,
   deleteLocalPartnerApi,
+  updateLocalPartnerApi,
   fetchRoutes,
   createRouteApi,
   deleteRouteApi,
+  updateRouteApi,
   type CommissionContract,
   type CommissionContractStatus,
   type CommissionConfigItem,
   type LocalPartner,
+  type Area,
   type RouteItem
 } from "../api";
 import { useAuth } from "../auth";
@@ -65,9 +72,11 @@ const { Title, Text } = Typography;
 const { TextArea } = Input;
 
 const COMMISSION_FIELDS = [
+  { key: "receivableTotal", label: "撮合运费" },
+  { key: "payableTotal", label: "应付合计" },
+  { key: "priceDiff", label: "承运价差" },
+  { key: "receivableTransport", label: "运输费" },
   { key: "freight", label: "运费" },
-  { key: "waybillFee", label: "面单费" },
-  { key: "trunkLineFee", label: "干线费" },
   { key: "pickupFee", label: "提货费" },
   { key: "deliveryFee", label: "送货费" },
   { key: "receiptFee", label: "回单费" },
@@ -78,6 +87,7 @@ const COMMISSION_FIELDS = [
 ] as const;
 
 interface CommissionContractForm {
+  contractName: string;
   customerName: string;
   financierId: string;
   customerSystemId: string;
@@ -113,10 +123,13 @@ function NewContractsPage() {
 
   // v2: 落地合作方 & 线路
   const [localPartners, setLocalPartners] = useState<LocalPartner[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
   const [routes, setRoutes] = useState<RouteItem[]>([]);
   const [selectedFinancierId, setSelectedFinancierId] = useState<string>("");
   const [lpModalOpen, setLpModalOpen] = useState(false);
   const [lpForm] = Form.useForm();
+  const [areaModalOpen, setAreaModalOpen] = useState(false);
+  const [areaForm] = Form.useForm();
   const [routeModalOpen, setRouteModalOpen] = useState(false);
   const [routeForm] = Form.useForm();
 
@@ -147,6 +160,16 @@ function NewContractsPage() {
     }
   }, [token]);
 
+  const loadAreas = useCallback(async (financierId?: string) => {
+    if (!token) return;
+    try {
+      const res = await fetchAreas(token, { financierId, status: "active" });
+      setAreas(res.areas);
+    } catch (err) {
+      console.error("Failed to load areas:", err);
+    }
+  }, [token]);
+
   const loadRoutes = useCallback(async (financierId?: string) => {
     if (!token) return;
     try {
@@ -159,9 +182,10 @@ function NewContractsPage() {
 
   useEffect(() => {
     void loadFinanciers();
+    void loadAreas();
     void loadLocalPartners();
     void loadRoutes();
-  }, [loadFinanciers, loadLocalPartners, loadRoutes]);
+  }, [loadFinanciers, loadAreas, loadLocalPartners, loadRoutes]);
 
   const generateId = () => `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -200,6 +224,7 @@ function NewContractsPage() {
       createForm.setFieldValue("customerSystemId", financier.unifiedSocialCreditCode);
     }
     createForm.setFieldValue("routeIds", []);
+    void loadAreas(financierId);
     await loadLocalPartners(financierId);
     await loadRoutes(financierId);
   };
@@ -231,6 +256,7 @@ function NewContractsPage() {
     setSelectedFinancierId(fId);
     
     createForm.setFieldsValue({
+      contractName: contract.contractName || "",
       financierId: fId,
       customerName: contract.customerName,
       customerSystemId: contract.customerSystemId || "",
@@ -313,6 +339,7 @@ function NewContractsPage() {
       }));
       
       const payload = {
+        contractName: values.contractName || undefined,
         customerName: values.customerName,
         financierId: values.financierId || undefined,
         customerSystemId: values.customerSystemId || undefined,
@@ -323,7 +350,7 @@ function NewContractsPage() {
         remark: values.remark,
         commissionConfig,
         status: (values.isEnabled ? "active" : "disabled") as CommissionContractStatus,
-        routeIds: values.routeIds || []
+        routeIds: checkedRouteIds
       };
       
       if (editingContract) {
@@ -368,6 +395,26 @@ function NewContractsPage() {
     setDetailModalOpen(true);
   };
 
+  const handleCreateArea = async () => {
+    if (!token) return;
+    try {
+      const values = await areaForm.validateFields();
+      await createAreaApi(token, values);
+      message.success("区域创建成功");
+      setAreaModalOpen(false);
+      areaForm.resetFields();
+      if (manageModalOpen) {
+        await loadAreas();
+        await loadLocalPartners();
+      } else {
+        await loadAreas(selectedFinancierId || undefined);
+        await loadLocalPartners(selectedFinancierId || undefined);
+      }
+    } catch (err) {
+      if (err instanceof Error) message.error(getErrorMessage(err));
+    }
+  };
+
   // 创建落地合作方
   const handleCreateLP = async () => {
     if (!token) return;
@@ -377,8 +424,15 @@ function NewContractsPage() {
       message.success("落地合作方创建成功");
       setLpModalOpen(false);
       lpForm.resetFields();
-      await loadLocalPartners(selectedFinancierId || undefined);
-      await loadRoutes(selectedFinancierId || undefined);
+      if (manageModalOpen) {
+        await loadAreas();
+        await loadLocalPartners();
+        await loadRoutes();
+      } else {
+        await loadAreas(selectedFinancierId || undefined);
+        await loadLocalPartners(selectedFinancierId || undefined);
+        await loadRoutes(selectedFinancierId || undefined);
+      }
     } catch (err) {
       if (err instanceof Error) message.error(getErrorMessage(err));
     }
@@ -393,7 +447,11 @@ function NewContractsPage() {
       message.success("线路创建成功");
       setRouteModalOpen(false);
       routeForm.resetFields();
-      await loadRoutes(selectedFinancierId || undefined);
+      if (manageModalOpen) {
+        await loadRoutes();
+      } else {
+        await loadRoutes(selectedFinancierId || undefined);
+      }
     } catch (err) {
       if (err instanceof Error) message.error(getErrorMessage(err));
     }
@@ -425,7 +483,7 @@ function NewContractsPage() {
     weekly: "按周结算"
   };
 
-  // 按落地合作方分组线路
+  // 按区域/落地合作方分组线路
   const filteredLocalPartners = useMemo(() => {
     if (!selectedFinancierId) return localPartners;
     return localPartners.filter(lp => lp.financierId === selectedFinancierId);
@@ -437,13 +495,69 @@ function NewContractsPage() {
     return routes.filter(r => lpIds.has(r.localPartnerId));
   }, [routes, selectedFinancierId, filteredLocalPartners]);
 
+  const filteredAreas = useMemo(() => {
+    if (!selectedFinancierId) return areas;
+    return areas.filter((a) => a.financierId === selectedFinancierId);
+  }, [areas, selectedFinancierId]);
+
+  const handleDeleteRouteInTree = async (routeId: string, routeName: string) => {
+    if (!token) return;
+    Modal.confirm({
+      title: "删除线路",
+      content: `确定删除线路「${routeName}」吗？`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await deleteRouteApi(token, routeId);
+        message.success("已删除");
+        setCheckedRouteIds(prev => prev.filter(id => id !== routeId));
+        await loadRoutes(selectedFinancierId || undefined);
+      },
+    });
+  };
+
+  const handleDeleteLpInTree = async (lpId: string, lpName: string) => {
+    if (!token) return;
+    Modal.confirm({
+      title: "删除落地合作方",
+      content: `确定删除「${lpName}」及其所有线路吗？`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await deleteLocalPartnerApi(token, lpId);
+        message.success("已删除");
+        const deletedRouteIds = filteredRoutes.filter(r => r.localPartnerId === lpId).map(r => r.id);
+        setCheckedRouteIds(prev => prev.filter(id => !deletedRouteIds.includes(id)));
+        await loadLocalPartners(selectedFinancierId || undefined);
+        await loadRoutes(selectedFinancierId || undefined);
+      },
+    });
+  };
+
   // 构建线路 Tree 数据（按落地合作方分组）
   const routeTreeData = useMemo(() => {
-    return filteredLocalPartners.map(lp => {
+    const areaGroups = new Map<string, { id: string; name: string; partners: LocalPartner[] }>();
+    filteredLocalPartners.forEach((lp) => {
+      const key = lp.areaId || "__NO_AREA__";
+      const name = lp.areaName || "无区域";
+      if (!areaGroups.has(key)) {
+        areaGroups.set(key, { id: key, name, partners: [] });
+      }
+      areaGroups.get(key)!.partners.push(lp);
+    });
+
+    return Array.from(areaGroups.values()).map((area) => {
+      const areaChildren = area.partners.map(lp => {
       const lpRoutes = filteredRoutes.filter(r => r.localPartnerId === lp.id);
       const children = lpRoutes.length > 0
         ? lpRoutes.map(r => ({
-            title: <span><EnvironmentOutlined style={{ marginRight: 4, color: "#52c41a" }} />{r.name}</span>,
+            title: (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <EnvironmentOutlined style={{ color: "#52c41a" }} />{r.name}
+                <DeleteOutlined
+                  style={{ color: "#ff4d4f", fontSize: 12, cursor: "pointer", marginLeft: 8, opacity: 0.6 }}
+                  onClick={(e) => { e.stopPropagation(); handleDeleteRouteInTree(r.id, r.name); }}
+                />
+              </span>
+            ),
             key: r.id,
           }))
         : [{
@@ -453,30 +567,56 @@ function NewContractsPage() {
             disableCheckbox: true,
           }];
       return {
-        title: <span><ApartmentOutlined style={{ marginRight: 4, color: "#13c2c2" }} /><strong>{lp.name}</strong> <span style={{ color: "#8c8c8c", fontSize: 12 }}>（落地合作方）</span></span>,
+        title: (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <ApartmentOutlined style={{ color: "#13c2c2" }} /><strong>{lp.name}</strong>
+            <span style={{ color: "#8c8c8c", fontSize: 12 }}>（落地合作方）</span>
+            <DeleteOutlined
+              style={{ color: "#ff4d4f", fontSize: 12, cursor: "pointer", marginLeft: 8, opacity: 0.6 }}
+              onClick={(e) => { e.stopPropagation(); handleDeleteLpInTree(lp.id, lp.name); }}
+            />
+          </span>
+        ),
         key: `lp_${lp.id}`,
         selectable: false,
         checkable: false,
         children,
+      };
+      });
+
+      return {
+        title: (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <EnvironmentOutlined style={{ color: "#1677ff" }} />
+            <strong>{area.name}</strong>
+            <span style={{ color: "#8c8c8c", fontSize: 12 }}>（区域）</span>
+          </span>
+        ),
+        key: `area_${area.id}`,
+        selectable: false,
+        checkable: false,
+        children: areaChildren,
       };
     });
   }, [filteredLocalPartners, filteredRoutes]);
 
   const columns = [
     {
+      title: "合同名称",
+      dataIndex: "contractName",
+      key: "contractName",
+      width: 200,
+      render: (v: string) => v || <Text type="secondary">-</Text>,
+    },
+    {
       title: "合作方",
       key: "customer",
-      width: 200,
+      width: 140,
       render: (_: any, record: CommissionContract) => (
         <div>
-          <div style={{ fontWeight: 500, marginBottom: 4 }}>
+          <div style={{ fontWeight: 500 }}>
             {record.customerName}
           </div>
-          {record.customerSystemId && (
-            <div style={{ fontSize: 12, color: "#8c8c8c" }}>
-              {record.customerSystemId}
-            </div>
-          )}
         </div>
       )
     },
@@ -485,10 +625,13 @@ function NewContractsPage() {
       key: "localPartners",
       width: 160,
       render: (_: any, record: CommissionContract) => {
-        if (!record.routes || record.routes.length === 0) {
+        let lpNames = [...new Set((record.routes || []).map(r => r.localPartnerName).filter(Boolean))];
+        if (lpNames.length === 0 && record.financierId) {
+          lpNames = localPartners.filter(lp => lp.financierId === record.financierId).map(lp => lp.name);
+        }
+        if (lpNames.length === 0) {
           return <Text type="secondary">未配置</Text>;
         }
-        const lpNames = [...new Set(record.routes.map(r => r.localPartnerName).filter(Boolean))];
         return (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
             {lpNames.slice(0, 2).map((name, i) => (
@@ -533,6 +676,26 @@ function NewContractsPage() {
           </div>
         </div>
       )
+    },
+    {
+      title: "区域",
+      key: "areas",
+      width: 140,
+      render: (_: any, record: CommissionContract) => {
+        let areaNames = [...new Set((record.routes || []).map(r => r.areaName).filter(Boolean))] as string[];
+        if (areaNames.length === 0 && record.financierId) {
+          areaNames = localPartners
+            .filter(lp => lp.financierId === record.financierId)
+            .map(lp => lp.areaName || "无区域");
+        }
+        areaNames = [...new Set(areaNames)];
+        if (areaNames.length === 0) return <Text type="secondary">无区域</Text>;
+        return (
+          <Space size={[4, 4]} wrap>
+            {areaNames.map((a, idx) => <Tag key={`${a}_${idx}`}>{a}</Tag>)}
+          </Space>
+        );
+      },
     },
     {
       title: "抽成配置",
@@ -880,6 +1043,11 @@ function NewContractsPage() {
                 </Form.Item>
               </Col>
               <Col span={12}>
+                <Form.Item name="contractName" label="合同名称">
+                  <Input placeholder="如：金罗抽成合作合同" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
                 <Form.Item name="customerSystemId" label="客户系统ID（选填）">
                   <Input placeholder="选择合作方后自动填充" />
                 </Form.Item>
@@ -1147,11 +1315,49 @@ function NewContractsPage() {
           <Form.Item name="name" label="落地合作方名称" rules={[{ required: true, message: "请输入名称" }]}>
             <Input placeholder="如：重庆XX物流" />
           </Form.Item>
+          <Form.Item name="areaId" label="所属区域">
+            <Select
+              allowClear
+              options={areas
+                .filter(a => {
+                  const fid = lpForm.getFieldValue("financierId");
+                  return !fid || a.financierId === fid;
+                })
+                .map(a => ({ value: a.id, label: a.name }))}
+              placeholder="可不选，默认无区域"
+            />
+          </Form.Item>
           <Form.Item name="contactPerson" label="联系人">
             <Input placeholder="选填" />
           </Form.Item>
           <Form.Item name="contactPhone" label="联系电话">
             <Input placeholder="选填" />
+          </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <TextArea rows={2} placeholder="选填" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 新建区域弹窗 */}
+      <Modal
+        title="新建区域"
+        open={areaModalOpen}
+        onCancel={() => { setAreaModalOpen(false); areaForm.resetFields(); }}
+        onOk={handleCreateArea}
+        okText="创建"
+        cancelText="取消"
+        zIndex={1100}
+      >
+        <Form form={areaForm} layout="vertical">
+          <Form.Item name="financierId" label="所属合作方" rules={[{ required: true, message: "请选择合作方" }]}>
+            <Select
+              options={financiers.map(f => ({ value: f.id, label: f.enterpriseName }))}
+              placeholder="请选择合作方"
+            />
+          </Form.Item>
+          <Form.Item name="name" label="区域名称" rules={[{ required: true, message: "请输入区域名称" }]}>
+            <Input placeholder="如：西南大区" />
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <TextArea rows={2} placeholder="选填" />
@@ -1172,7 +1378,7 @@ function NewContractsPage() {
         <Form form={routeForm} layout="vertical">
           <Form.Item name="localPartnerId" label="所属落地合作方" rules={[{ required: true, message: "请选择落地合作方" }]}>
             <Select
-              options={filteredLocalPartners.map(lp => ({ value: lp.id, label: lp.name }))}
+              options={(manageModalOpen ? localPartners : filteredLocalPartners).map(lp => ({ value: lp.id, label: lp.name }))}
               placeholder="选择落地合作方"
             />
           </Form.Item>
@@ -1195,6 +1401,73 @@ function NewContractsPage() {
       >
         <Tabs
           items={[
+            {
+              key: "areas",
+              label: "区域",
+              children: (
+                <div>
+                  <div style={{ marginBottom: 16 }}>
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      size="small"
+                      onClick={() => {
+                        areaForm.resetFields();
+                        setAreaModalOpen(true);
+                      }}
+                    >
+                      新建
+                    </Button>
+                  </div>
+                  <Table
+                    dataSource={areas}
+                    rowKey="id"
+                    size="small"
+                    pagination={false}
+                    columns={[
+                      { title: "区域名称", dataIndex: "name", key: "name" },
+                      { title: "所属合作方", dataIndex: "financierName", key: "financierName" },
+                      {
+                        title: "操作",
+                        key: "actions",
+                        width: 120,
+                        render: (_: any, record: Area) => (
+                          <Space size={0}>
+                            <Button type="link" size="small" onClick={() => {
+                              Modal.confirm({
+                                title: "编辑区域",
+                                content: <Input id="edit-area-name" defaultValue={record.name} style={{ marginTop: 8 }} />,
+                                onOk: async () => {
+                                  const input = document.getElementById("edit-area-name") as HTMLInputElement;
+                                  const newName = input?.value?.trim();
+                                  if (!newName || !token) return;
+                                  await updateAreaApi(token, record.id, { name: newName });
+                                  message.success("已修改");
+                                  await loadAreas();
+                                  await loadLocalPartners();
+                                },
+                              });
+                            }}>编辑</Button>
+                            <Popconfirm
+                              title="确认删除区域？该区域下落地合作方将回到无区域"
+                              onConfirm={async () => {
+                                if (!token) return;
+                                await deleteAreaApi(token, record.id);
+                                message.success("已删除");
+                                await loadAreas();
+                                await loadLocalPartners();
+                              }}
+                            >
+                              <Button type="link" size="small" danger>删除</Button>
+                            </Popconfirm>
+                          </Space>
+                        ),
+                      },
+                    ]}
+                  />
+                </div>
+              ),
+            },
             {
               key: "local-partners",
               label: "落地合作方",
@@ -1221,26 +1494,64 @@ function NewContractsPage() {
                     pagination={false}
                     columns={[
                       { title: "名称", dataIndex: "name", key: "name" },
+                      { title: "区域", dataIndex: "areaName", key: "areaName", render: (v: string) => v || <Tag>无区域</Tag> },
                       { title: "所属合作方", dataIndex: "financierName", key: "financierName" },
                       { title: "联系人", dataIndex: "contactPerson", key: "contactPerson" },
                       { title: "电话", dataIndex: "contactPhone", key: "contactPhone" },
                       {
                         title: "操作",
                         key: "actions",
-                        width: 80,
+                        width: 120,
                         render: (_: any, record: LocalPartner) => (
-                          <Popconfirm
-                            title="确认删除？相关线路也会一同删除"
-                            onConfirm={async () => {
-                              if (!token) return;
-                              await deleteLocalPartnerApi(token, record.id);
-                              message.success("已删除");
-                              await loadLocalPartners();
-                              await loadRoutes();
-                            }}
-                          >
-                            <Button type="link" size="small" danger>删除</Button>
-                          </Popconfirm>
+                          <Space size={0}>
+                            <Button type="link" size="small" onClick={() => {
+                              Modal.confirm({
+                                title: "编辑落地合作方",
+                                content: (
+                                  <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                                    <Input id="edit-lp-name" defaultValue={record.name} />
+                                    <select
+                                      id="edit-lp-area"
+                                      defaultValue={record.areaId || ""}
+                                      style={{ width: "100%", height: 32, border: "1px solid #d9d9d9", borderRadius: 6, padding: "0 8px" }}
+                                    >
+                                      <option value="">无区域</option>
+                                      {areas
+                                        .filter(a => a.financierId === record.financierId)
+                                        .map(a => (
+                                          <option key={a.id} value={a.id}>{a.name}</option>
+                                        ))}
+                                    </select>
+                                  </div>
+                                ),
+                                onOk: async () => {
+                                  const input = document.getElementById("edit-lp-name") as HTMLInputElement;
+                                  const newName = input?.value?.trim();
+                                  const areaSel = document.getElementById("edit-lp-area") as HTMLInputElement;
+                                  if (!newName || !token) return;
+                                  await updateLocalPartnerApi(token, record.id, {
+                                    name: newName,
+                                    areaId: (areaSel as any)?.value || null,
+                                  });
+                                  message.success("已修改");
+                                  await loadLocalPartners();
+                                  await loadRoutes();
+                                },
+                              });
+                            }}>编辑</Button>
+                            <Popconfirm
+                              title="确认删除？相关线路也会一同删除"
+                              onConfirm={async () => {
+                                if (!token) return;
+                                await deleteLocalPartnerApi(token, record.id);
+                                message.success("已删除");
+                                await loadLocalPartners();
+                                await loadRoutes();
+                              }}
+                            >
+                              <Button type="link" size="small" danger>删除</Button>
+                            </Popconfirm>
+                          </Space>
                         )
                       }
                     ]}
@@ -1274,23 +1585,42 @@ function NewContractsPage() {
                     pagination={false}
                     columns={[
                       { title: "线路名称", dataIndex: "name", key: "name" },
+                      { title: "区域", dataIndex: "areaName", key: "areaName", render: (v: string) => v || <Tag>无区域</Tag> },
                       { title: "所属落地合作方", dataIndex: "localPartnerName", key: "localPartnerName" },
                       {
                         title: "操作",
                         key: "actions",
-                        width: 80,
+                        width: 120,
                         render: (_: any, record: RouteItem) => (
-                          <Popconfirm
-                            title="确认删除？"
-                            onConfirm={async () => {
-                              if (!token) return;
-                              await deleteRouteApi(token, record.id);
+                          <Space size={0}>
+                            <Button type="link" size="small" onClick={() => {
+                              Modal.confirm({
+                                title: "编辑线路",
+                                content: (
+                                  <Input id="edit-route-name" defaultValue={record.name} style={{ marginTop: 8 }} />
+                                ),
+                                onOk: async () => {
+                                  const input = document.getElementById("edit-route-name") as HTMLInputElement;
+                                  const newName = input?.value?.trim();
+                                  if (!newName || !token) return;
+                                  await updateRouteApi(token, record.id, { name: newName });
+                                  message.success("已修改");
+                                  await loadRoutes();
+                                },
+                              });
+                            }}>编辑</Button>
+                            <Popconfirm
+                              title="确认删除？"
+                              onConfirm={async () => {
+                                if (!token) return;
+                                await deleteRouteApi(token, record.id);
                               message.success("已删除");
                               await loadRoutes();
                             }}
                           >
                             <Button type="link" size="small" danger>删除</Button>
                           </Popconfirm>
+                          </Space>
                         )
                       }
                     ]}

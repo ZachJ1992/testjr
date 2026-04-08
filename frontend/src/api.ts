@@ -1207,8 +1207,10 @@ export async function fetchWaybills(
     status?: WaybillStatus;
     batchStatus?: string;
     batchSource?: string;
+    routeName?: string;
     startDate?: string;
     endDate?: string;
+    areaId?: string;
     waybillNumber?: string;
     vehiclePlate?: string;
   }
@@ -1220,8 +1222,10 @@ export async function fetchWaybills(
   if (filters?.status) params.append("status", filters.status);
   if (filters?.batchStatus) params.append("batchStatus", filters.batchStatus);
   if (filters?.batchSource) params.append("batchSource", filters.batchSource);
+  if (filters?.routeName) params.append("routeName", filters.routeName);
   if (filters?.startDate) params.append("startDate", filters.startDate);
   if (filters?.endDate) params.append("endDate", filters.endDate);
+  if (filters?.areaId) params.append("areaId", filters.areaId);
   if (filters?.waybillNumber) params.append("waybillNumber", filters.waybillNumber);
   if (filters?.vehiclePlate) params.append("vehiclePlate", filters.vehiclePlate);
   const queryString = params.toString();
@@ -1564,12 +1568,14 @@ export interface ContractRoute {
   contractId: string;
   routeId: string;
   routeName?: string;
+  areaName?: string;
   localPartnerName?: string;
   createdAt: string;
 }
 
 export interface CommissionContract {
   id: string;
+  contractName?: string;
   customerName: string;
   financierId?: string;
   customerSystemId?: string;
@@ -2530,6 +2536,7 @@ export interface RevenueRecord {
   subFinancier?: string;
   commissionContractId?: string;
   routeId?: string;
+  areaName?: string;
   localPartnerName?: string;
   routeName?: string;
   createdAt: string;
@@ -2558,10 +2565,13 @@ export async function fetchPlatformRevenueList(
     sourceType?: RevenueSourceType;
     funderId?: string;
     financierId?: string;
+    financierName?: string;
     status?: RevenueStatus;
     subFinancier?: string;
     commissionContractId?: string;
     localPartnerId?: string;
+    areaId?: string;
+    useWaybillDate?: boolean;
     page?: number;
     pageSize?: number;
   }
@@ -2572,10 +2582,13 @@ export async function fetchPlatformRevenueList(
   if (filters?.sourceType) params.append("sourceType", filters.sourceType);
   if (filters?.funderId) params.append("funderId", filters.funderId);
   if (filters?.financierId) params.append("financierId", filters.financierId);
+  if (filters?.financierName) params.append("financierName", filters.financierName);
   if (filters?.status) params.append("status", filters.status);
   if (filters?.subFinancier) params.append("subFinancier", filters.subFinancier);
   if (filters?.commissionContractId) params.append("commissionContractId", filters.commissionContractId);
   if (filters?.localPartnerId) params.append("localPartnerId", filters.localPartnerId);
+  if (filters?.areaId) params.append("areaId", filters.areaId);
+  if (filters?.useWaybillDate) params.append("useWaybillDate", "true");
   if (filters?.page) params.append("page", filters.page.toString());
   if (filters?.pageSize) params.append("pageSize", filters.pageSize.toString());
   const queryString = params.toString();
@@ -2891,6 +2904,8 @@ export interface LocalPartner {
   name: string;
   financierId: string;
   financierName?: string;
+  areaId?: string;
+  areaName?: string;
   contactPerson?: string;
   contactPhone?: string;
   remark?: string;
@@ -2901,10 +2916,11 @@ export interface LocalPartner {
 
 export async function fetchLocalPartners(
   token: string,
-  params?: { financierId?: string; status?: string }
+  params?: { financierId?: string; areaId?: string; status?: string }
 ): Promise<{ localPartners: LocalPartner[] }> {
   const sp = new URLSearchParams();
   if (params?.financierId) sp.append("financierId", params.financierId);
+  if (params?.areaId) sp.append("areaId", params.areaId);
   if (params?.status) sp.append("status", params.status);
   const q = sp.toString();
   return request(`/local-partners${q ? `?${q}` : ""}`, {
@@ -2914,7 +2930,7 @@ export async function fetchLocalPartners(
 
 export async function createLocalPartnerApi(
   token: string,
-  payload: { name: string; financierId: string; contactPerson?: string; contactPhone?: string; remark?: string }
+  payload: { name: string; financierId: string; areaId?: string; contactPerson?: string; contactPhone?: string; remark?: string }
 ): Promise<{ localPartner: LocalPartner }> {
   return request("/local-partners", {
     method: "POST",
@@ -2926,7 +2942,7 @@ export async function createLocalPartnerApi(
 export async function updateLocalPartnerApi(
   token: string,
   id: string,
-  payload: Partial<{ name: string; financierId: string; contactPerson: string; contactPhone: string; remark: string; status: "active" | "disabled" }>
+  payload: Partial<{ name: string; financierId: string; areaId: string | null; contactPerson: string; contactPhone: string; remark: string; status: "active" | "disabled" }>
 ): Promise<{ localPartner: LocalPartner }> {
   return request(`/local-partners/${id}`, {
     method: "PUT",
@@ -2949,11 +2965,69 @@ export async function deleteLocalPartnerApi(
 // 线路 (Routes) API
 // =============================================
 
+export interface Area {
+  id: string;
+  name: string;
+  financierId: string;
+  financierName?: string;
+  remark?: string;
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function fetchAreas(
+  token: string,
+  params?: { financierId?: string; status?: string }
+): Promise<{ areas: Area[] }> {
+  const sp = new URLSearchParams();
+  if (params?.financierId) sp.append("financierId", params.financierId);
+  if (params?.status) sp.append("status", params.status);
+  const q = sp.toString();
+  return request(`/areas${q ? `?${q}` : ""}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createAreaApi(
+  token: string,
+  payload: { name: string; financierId: string; remark?: string }
+): Promise<{ area: Area }> {
+  return request("/areas", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAreaApi(
+  token: string,
+  id: string,
+  payload: Partial<{ name: string; financierId: string; remark: string; status: "active" | "disabled" }>
+): Promise<{ area: Area }> {
+  return request(`/areas/${id}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAreaApi(
+  token: string,
+  id: string
+): Promise<{ success: boolean }> {
+  return request(`/areas/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export interface RouteItem {
   id: string;
   name: string;
   localPartnerId: string;
   localPartnerName?: string;
+  areaName?: string;
   remark?: string;
   status: "active" | "disabled";
   createdAt: string;
@@ -2962,11 +3036,12 @@ export interface RouteItem {
 
 export async function fetchRoutes(
   token: string,
-  params?: { localPartnerId?: string; financierId?: string; status?: string }
+  params?: { localPartnerId?: string; financierId?: string; areaId?: string; status?: string }
 ): Promise<{ routes: RouteItem[] }> {
   const sp = new URLSearchParams();
   if (params?.localPartnerId) sp.append("localPartnerId", params.localPartnerId);
   if (params?.financierId) sp.append("financierId", params.financierId);
+  if (params?.areaId) sp.append("areaId", params.areaId);
   if (params?.status) sp.append("status", params.status);
   const q = sp.toString();
   return request(`/routes${q ? `?${q}` : ""}`, {
@@ -3019,6 +3094,7 @@ export interface ReconBatch {
   contractId: string;
   financierId?: string;
   financierName?: string;
+  areaName?: string;
   localPartnerName?: string;
   periodStart: string;
   periodEnd: string;
@@ -3041,11 +3117,12 @@ export interface ReconStats {
 
 export async function fetchReconBatches(
   token: string,
-  params?: { contractId?: string; financierId?: string; status?: ReconBatchStatus; startDate?: string; endDate?: string }
+  params?: { contractId?: string; financierId?: string; areaId?: string; status?: ReconBatchStatus; startDate?: string; endDate?: string }
 ): Promise<{ batches: ReconBatch[] }> {
   const sp = new URLSearchParams();
   if (params?.contractId) sp.append("contractId", params.contractId);
   if (params?.financierId) sp.append("financierId", params.financierId);
+  if (params?.areaId) sp.append("areaId", params.areaId);
   if (params?.status) sp.append("status", params.status);
   if (params?.startDate) sp.append("startDate", params.startDate);
   if (params?.endDate) sp.append("endDate", params.endDate);

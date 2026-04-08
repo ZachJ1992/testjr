@@ -50,9 +50,10 @@ export interface CommissionSettlementSummary {
 
 // 运单表中对应的字段名映射
 const WAYBILL_FIELD_MAP: Record<string, string> = {
+  receivableTotal: "receivable_total",
+  payableTotal: "payable_total",
+  receivableTransport: "receivable_transport",
   freight: "freight_amount",
-  waybillFee: "waybill_fee",
-  trunkLineFee: "trunk_line_fee",
   pickupFee: "pickup_fee",
   deliveryFee: "delivery_fee",
   receiptFee: "receipt_fee",
@@ -63,6 +64,10 @@ const WAYBILL_FIELD_MAP: Record<string, string> = {
   oilCardAmount: "oil_card_amount",
   etcAmount: "etc_amount",
   cashAmount: "cash_amount"
+};
+
+const COMPUTED_FIELDS: Record<string, (waybill: any) => number> = {
+  priceDiff: (w) => Number(w.receivable_total || 0) - Number(w.payable_total || 0),
 };
 
 // ==================== 核心计算函数 ====================
@@ -87,8 +92,10 @@ export async function calculateWaybillCommission(
   let totalCommission = 0;
   
   for (const config of commissionConfig) {
-    const dbField = WAYBILL_FIELD_MAP[config.fieldKey] || config.fieldKey;
-    const baseAmount = Number(waybill[dbField] || 0);
+    const computeFn = COMPUTED_FIELDS[config.fieldKey];
+    const baseAmount = computeFn
+      ? computeFn(waybill)
+      : Number(waybill[WAYBILL_FIELD_MAP[config.fieldKey] || config.fieldKey] || 0);
     
     let commissionAmount = 0;
     if (config.mode === "percentage") {

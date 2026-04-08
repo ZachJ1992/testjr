@@ -73,6 +73,7 @@ function rowToRevenueRecord(row: RowDataPacket): RevenueRecord {
     subFinancier: row.sub_financier || undefined,
     commissionContractId: row.commission_contract_id || undefined,
     routeId: row.route_id || undefined,
+    areaName: row.area_name || undefined,
     localPartnerName: row.local_partner_name || undefined,
     routeName: row.route_name || undefined,
     createdAt: row.created_at instanceof Date
@@ -195,14 +196,17 @@ export interface RevenueRecordFilters {
   beneficiaryId?: string;
   sourceType?: RevenueSourceType;
   financierId?: string;
+  financierName?: string;
   funderId?: string;
   status?: RevenueStatus;
   startDate?: string;
   endDate?: string;
+  useWaybillDate?: boolean;
   contractId?: string;
   subFinancier?: string;
   commissionContractId?: string;
   localPartnerId?: string;
+  areaId?: string;
   page?: number;
   pageSize?: number;
 }
@@ -241,6 +245,11 @@ export async function getRevenueRecords(
     params.push(filters.financierId);
   }
 
+  if (filters.financierName) {
+    conditions.push("TRIM(COALESCE(rr.financier_name, '')) = TRIM(?)");
+    params.push(filters.financierName);
+  }
+
   if (filters.funderId) {
     conditions.push("rr.funder_id = ?");
     params.push(filters.funderId);
@@ -251,13 +260,18 @@ export async function getRevenueRecords(
     params.push(filters.status);
   }
 
+  const dateFilterColumn =
+    filters.useWaybillDate && filters.sourceType === "waybill_commission"
+      ? "DATE(COALESCE(w.waybill_date, rr.revenue_date))"
+      : "rr.revenue_date";
+
   if (filters.startDate) {
-    conditions.push("rr.revenue_date >= ?");
+    conditions.push(`${dateFilterColumn} >= ?`);
     params.push(filters.startDate);
   }
 
   if (filters.endDate) {
-    conditions.push("rr.revenue_date <= ?");
+    conditions.push(`${dateFilterColumn} <= ?`);
     params.push(filters.endDate);
   }
 
@@ -267,8 +281,8 @@ export async function getRevenueRecords(
   }
 
   if (filters.subFinancier) {
-    conditions.push("w.sub_financier = ?");
-    params.push(filters.subFinancier);
+    conditions.push("(w.sub_financier = ? OR lp.name = ?)");
+    params.push(filters.subFinancier, filters.subFinancier);
   }
 
   if (filters.commissionContractId) {
@@ -280,11 +294,16 @@ export async function getRevenueRecords(
     conditions.push("rt.local_partner_id = ?");
     params.push(filters.localPartnerId);
   }
+  if (filters.areaId) {
+    conditions.push("lp.area_id = ?");
+    params.push(filters.areaId);
+  }
 
   const joinClause = `
     LEFT JOIN waybills w ON rr.waybill_id = w.id
     LEFT JOIN routes rt ON rr.route_id = rt.id
-    LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id`;
+    LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id
+    LEFT JOIN areas ar ON lp.area_id = ar.id`;
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   // 获取总数
@@ -301,7 +320,7 @@ export async function getRevenueRecords(
 
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT rr.*, w.vehicle_plate, w.driver_name, w.sub_financier,
-            lp.name as local_partner_name, rt.name as route_name
+            lp.name as local_partner_name, rt.name as route_name, ar.name as area_name
      FROM revenue_records rr
      ${joinClause}
      ${whereClause}

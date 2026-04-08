@@ -15,10 +15,12 @@ export interface WaybillOverviewFilters {
   vehiclePlate?: string;
   batchStatus?: string;
   batchSource?: string;
+  routeName?: string;
   startDate?: string;
   endDate?: string;
   customerId?: string;
   customerIds?: string[];
+  areaId?: string;
   contractNumber?: string;
   businessMode?: string;
   status?: string;
@@ -131,6 +133,11 @@ export function buildWaybillQueryParts(
     params.push(filters.batchSource);
   }
 
+  if (filters.routeName && columnNames.has("sub_financier")) {
+    whereConditions.push("w.sub_financier LIKE ?");
+    params.push(`%${filters.routeName}%`);
+  }
+
   if (filters.startDate) {
     if (columnNames.has("departure_time")) {
       whereConditions.push("(DATE(w.departure_time) >= ? OR w.waybill_date >= ?)");
@@ -171,8 +178,18 @@ export function buildWaybillQueryParts(
     params.push(filters.status);
   }
 
+  if (filters.areaId) {
+    whereConditions.push("lp.area_id = ?");
+    params.push(filters.areaId);
+  }
+
   return {
-    fromAndJoinSql: "FROM waybills w LEFT JOIN financiers f ON w.customer_id = f.id",
+    fromAndJoinSql:
+      "FROM waybills w " +
+      "LEFT JOIN financiers f ON w.customer_id = f.id " +
+      "LEFT JOIN routes rt ON rt.name = COALESCE(NULLIF(w.sub_financier, ''), w.branch) " +
+      "LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id AND lp.financier_id = w.customer_id " +
+      "LEFT JOIN areas ar ON lp.area_id = ar.id",
     whereSql: `WHERE ${whereConditions.join(" AND ")}`,
     params,
   };

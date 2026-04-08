@@ -55,17 +55,16 @@ mkdir -p $DEPLOY_DIR
 
 # 复制必要文件
 mkdir -p $DEPLOY_DIR/backend/dist
+mkdir -p $DEPLOY_DIR/frontend/dist
 cp -r backend/dist/* $DEPLOY_DIR/backend/dist/
-cp -r frontend/dist $DEPLOY_DIR/frontend/
+cp -r frontend/dist/* $DEPLOY_DIR/frontend/dist/
 cp -r shared $DEPLOY_DIR/shared/
 cp backend/package.json $DEPLOY_DIR/backend/
 cp package.json $DEPLOY_DIR/
 cp package-lock.json $DEPLOY_DIR/ 2>/dev/null || true
 
-# 复制配置文件（如果存在）
-if [ -f "backend/.env" ]; then
-    cp backend/.env $DEPLOY_DIR/backend/
-fi
+# 不打包本地 backend/.env，避免覆盖线上数据库配置
+# 线上环境变量应由服务器本地维护（/opt/testapp/app/backend/.env）
 
 # 复制 PM2 配置文件
 if [ -f "ecosystem.config.js" ]; then

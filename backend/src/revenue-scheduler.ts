@@ -351,41 +351,112 @@ export async function createCommissionFeeRecord(params: {
 
 /**
  * 计算运单平台抽成收益
- * 融满: 每单应付合计 * 2.5%
- * 金罗: 每单固定 200 元
- * 遍历所有未计算过收益的运单，按融资方规则生成 revenue_records
+ * 从 commission_contracts 的 commission_config 动态读取抽成规则
+ * 匹配路径: waybills.branch -> routes.name -> contract_routes -> commission_contracts
  */
 export async function calculateWaybillPlatformRevenue(): Promise<number> {
   try {
-    // 融资方规则配置
-    const FINANCIER_RULES: Record<string, { type: 'percentage' | 'fixed'; value: number; name: string }> = {};
-
-    // 动态查询融资方 ID
-    const [financiers] = await pool.query<RowDataPacket[]>(
-      `SELECT id, enterprise_name FROM financiers WHERE enterprise_name IN ('金罗', '融满') AND deleted_at IS NULL`
-    );
-
-    for (const f of financiers) {
-      if (f.enterprise_name === '融满') {
-        FINANCIER_RULES[f.id] = { type: 'percentage', value: 0.025, name: '融满' };
-      } else if (f.enterprise_name === '金罗') {
-        FINANCIER_RULES[f.id] = { type: 'fixed', value: 200, name: '金罗' };
-      }
+    const [backfillRevenueDateResult] = await pool.query<ResultSetHeader>(`
+      UPDATE revenue_records rr
+      JOIN waybills w ON rr.waybill_id = w.id
+      LEFT JOIN financiers f ON w.customer_id = f.id
+      SET rr.revenue_date = COALESCE(
+        CASE
+          WHEN f.enterprise_name = '融满'
+            THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), rr.revenue_date)
+          ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date)
+        END,
+        rr.revenue_date
+      )
+      WHERE rr.source_type = 'waybill_commission'
+        AND w.deleted_at IS NULL
+        AND rr.revenue_date <> COALESCE(
+          CASE
+            WHEN f.enterprise_name = '融满'
+              THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), rr.revenue_date)
+            ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date)
+          END,
+          rr.revenue_date
+        )
+    `);
+    if (Number(backfillRevenueDateResult.affectedRows || 0) > 0) {
+      console.log(`[WaybillRevenue] 已按最新口径回填历史收益日期 ${backfillRevenueDateResult.affectedRows} 条`);
     }
 
-    if (Object.keys(FINANCIER_RULES).length === 0) {
-      console.log("[WaybillRevenue] 未找到金罗/融满融资方配置，跳过");
+    // 字段映射（与 commission-calculation.ts 保持一致）
+    const FIELD_MAP: Record<string, string> = {
+      receivableTotal: "receivable_total",
+      payableTotal: "payable_total",
+      receivableTransport: "receivable_transport",
+      freight: "freight_amount",
+      pickupFee: "pickup_fee",
+      deliveryFee: "delivery_fee",
+      receiptFee: "receipt_fee",
+      packagingFee: "packaging_fee",
+      insuranceFee: "insurance_fee",
+      premiumFee: "premium_fee",
+      handlingFee: "handling_fee",
+    };
+    const COMPUTED: Record<string, (w: any) => number> = {
+      priceDiff: (w) => Number(w.receivable_total || 0) - Number(w.payable_total || 0),
+    };
+
+    // 1. 加载所有 active 合同及其线路、落地合作方
+    const [contractRows] = await pool.query<RowDataPacket[]>(`
+      SELECT cc.id as contract_id, cc.commission_config, cc.financier_id, cc.customer_name,
+             r.id as route_id, r.name as route_name
+      FROM commission_contracts cc
+      JOIN contract_routes cr ON cc.id = cr.contract_id
+      JOIN routes r ON cr.route_id = r.id
+      WHERE cc.status = 'active' AND r.status = 'active'
+    `);
+
+    if (contractRows.length === 0) {
+      console.log("[WaybillRevenue] 无 active 合同或线路配置，跳过");
       return 0;
     }
 
-    const financierIds = Object.keys(FINANCIER_RULES);
+    // 2. 构建 route_name -> 合同配置映射
+    const routeConfigMap = new Map<string, {
+      contractId: string;
+      routeId: string;
+      commissionConfig: any[];
+      financierId: string;
+      financierName: string;
+    }>();
+
+    const financierIdSet = new Set<string>();
+
+    for (const row of contractRows) {
+      let config = row.commission_config;
+      if (typeof config === 'string') {
+        try { config = JSON.parse(config); } catch { config = []; }
+      }
+      if (!Array.isArray(config) || config.length === 0) continue;
+
+      routeConfigMap.set(row.route_name, {
+        contractId: row.contract_id,
+        routeId: row.route_id,
+        commissionConfig: config,
+        financierId: row.financier_id,
+        financierName: row.customer_name,
+      });
+      if (row.financier_id) financierIdSet.add(row.financier_id);
+    }
+
+    if (routeConfigMap.size === 0 || financierIdSet.size === 0) {
+      console.log("[WaybillRevenue] 无有效的线路-合同配置，跳过");
+      return 0;
+    }
+
+    console.log(`[WaybillRevenue] 加载到 ${routeConfigMap.size} 条线路配置，涉及 ${financierIdSet.size} 个合作方`);
+
+    // 3. 查询这些合作方下未计算收益的运单
+    const financierIds = Array.from(financierIdSet);
     const placeholders = financierIds.map(() => '?').join(',');
 
-    // 查询未计算过收益的运单（通过 LEFT JOIN 排除已有记录的运单）
     const [waybills] = await pool.query<RowDataPacket[]>(
-      `SELECT w.id, w.waybill_number, w.customer_id, w.receivable_total, w.payable_total, w.waybill_date, w.departure_time,
-              w.branch,
-              f.enterprise_name as financier_name
+      `SELECT w.*, f.enterprise_name as financier_name
        FROM waybills w
        LEFT JOIN financiers f ON w.customer_id = f.id
        LEFT JOIN revenue_records rr ON rr.waybill_id = w.id AND rr.source_type = 'waybill_commission'
@@ -395,75 +466,87 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
       financierIds
     );
 
-    // 预加载 route → contract 映射
-    const [routeMappings] = await pool.query<RowDataPacket[]>(
-      `SELECT r.id as route_id, r.name as route_name, cr.contract_id
-       FROM routes r
-       JOIN contract_routes cr ON r.id = cr.route_id
-       WHERE r.status = 'active'`
-    );
-    const routeByName = new Map<string, { routeId: string; contractId: string }>();
-    for (const rm of routeMappings) {
-      routeByName.set(rm.route_name, { routeId: rm.route_id, contractId: rm.contract_id });
-    }
-
     if (waybills.length === 0) {
       console.log("[WaybillRevenue] 无新运单需要计算收益");
       return 0;
     }
 
+    // 4. 逐条匹配并计算
     const records: CreateRevenueRecordInput[] = [];
+    let skippedNoRoute = 0;
+    let skippedNoBase = 0;
 
     for (const w of waybills) {
-      const rule = FINANCIER_RULES[w.customer_id];
-      if (!rule) continue;
+      const routeConfig = w.branch ? routeConfigMap.get(w.branch) : undefined;
+      if (!routeConfig) {
+        skippedNoRoute++;
+        continue;
+      }
+
+      const cfg = routeConfig.commissionConfig[0];
+      if (!cfg || !cfg.fieldKey) {
+        skippedNoRoute++;
+        continue;
+      }
+
+      // 读取基数金额
+      const computeFn = COMPUTED[cfg.fieldKey];
+      const baseAmount = computeFn
+        ? computeFn(w)
+        : Number(w[FIELD_MAP[cfg.fieldKey] || cfg.fieldKey] || 0);
+
+      if (baseAmount <= 0) {
+        skippedNoBase++;
+        continue;
+      }
 
       let amount: number;
       let rate: number;
-      const payableTotal = Number(w.payable_total) || 0;
 
-      if (rule.type === 'percentage') {
-        if (payableTotal <= 0) continue;
-        amount = Math.round(payableTotal * rule.value * 100) / 100;
-        rate = rule.value;
+      if (cfg.mode === 'percentage') {
+        rate = cfg.value / 100;
+        amount = Math.round(baseAmount * rate * 100) / 100;
       } else {
-        amount = rule.value;
+        amount = cfg.value;
         rate = 0;
       }
 
-      // 运单抽成日期优先使用“发车时间”，其次运单日期
-      const revenueDateSource = w.departure_time || w.waybill_date;
+      // 收益日期口径：
+      // - 融满：created_time（TMS发车时间）优先
+      // - 其他：保持入库时间(created_at)优先
+      const isRongman = String(w.financier_name || routeConfig.financierName || "").trim() === "融满";
+      const revenueDateSource = isRongman
+        ? (w.created_time || w.departure_time || w.waybill_date || w.created_at)
+        : (w.created_at || w.created_time || w.departure_time || w.waybill_date);
       const revenueDate = revenueDateSource
         ? formatDateOnly(revenueDateSource)
         : new Date().toISOString().split('T')[0];
-
-      const routeMatch = w.branch ? routeByName.get(w.branch) : undefined;
 
       records.push({
         recordType: "revenue",
         beneficiaryType: "platform",
         sourceType: "waybill_commission",
-        contractId: w.customer_id,
+        contractId: routeConfig.contractId,
         contractNumber: w.waybill_number,
         contractType: "waybill",
         financierId: w.customer_id,
-        financierName: w.financier_name || rule.name,
+        financierName: w.financier_name || routeConfig.financierName,
         amount,
-        principalAmount: payableTotal,
+        principalAmount: baseAmount,
         rate,
         revenueDate,
         status: "confirmed",
         waybillId: w.id,
-        commissionContractId: routeMatch?.contractId,
-        routeId: routeMatch?.routeId,
+        commissionContractId: routeConfig.contractId,
+        routeId: routeConfig.routeId,
       });
     }
 
     if (records.length > 0) {
       await revenueStore.batchCreateRevenueRecords(records);
-      console.log(`[WaybillRevenue] 生成 ${records.length} 条运单平台抽成记录`);
     }
 
+    console.log(`[WaybillRevenue] 运单 ${waybills.length} 条: 生成收益 ${records.length} 条, 无匹配线路 ${skippedNoRoute}, 基数为0 ${skippedNoBase}`);
     return records.length;
   } catch (err) {
     console.error("[WaybillRevenue] 计算运单平台抽成失败:", err);
@@ -507,7 +590,11 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
         END,
         rr.record_type = 'revenue',
         rr.beneficiary_type = 'platform',
-        rr.revenue_date = COALESCE(DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date),
+        rr.revenue_date = CASE
+          WHEN f.enterprise_name = '融满'
+            THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), rr.revenue_date)
+          ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date)
+        END,
         rr.status = 'confirmed'
       WHERE rr.source_type = 'waybill_commission'
         AND w.deleted_at IS NULL
@@ -540,7 +627,11 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
           WHEN f.enterprise_name = '融满' THEN 0.025
           ELSE 0
         END AS rate,
-        COALESCE(DATE(w.departure_time), DATE(w.waybill_date), CURRENT_DATE) AS revenue_date,
+        CASE
+          WHEN f.enterprise_name = '融满'
+            THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), CURRENT_DATE)
+          ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), CURRENT_DATE)
+        END AS revenue_date,
         'confirmed' AS status,
         w.id AS waybill_id
       FROM waybills w

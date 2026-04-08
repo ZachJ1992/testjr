@@ -2,6 +2,7 @@
  * 业务抽成合同 v2 数据模型迁移
  * 
  * 新增：
+ *   - areas            区域（属于某个合作方/financier）
  *   - local_partners  落地合作方（属于某个合作方/financier）
  *   - routes           线路（属于某个落地合作方）
  *   - contract_routes  合同-线路关联表
@@ -34,7 +35,7 @@ export async function runCommissionV2Migration(): Promise<void> {
   console.log("\n========== 业务抽成合同 v2 迁移 ==========");
 
   // 0. 修复已存在表的 collation（统一到 utf8mb4_0900_ai_ci 与数据库其他表一致）
-  const tablesToFixCollation = ["local_partners", "routes", "contract_routes", "commission_recon_batches", "commission_recon_items"];
+  const tablesToFixCollation = ["areas", "local_partners", "routes", "contract_routes", "commission_recon_batches", "commission_recon_items"];
   for (const tbl of tablesToFixCollation) {
     if (await tableExists(tbl)) {
       try {
@@ -46,7 +47,29 @@ export async function runCommissionV2Migration(): Promise<void> {
     }
   }
 
-  // 1. 落地合作方
+  // 1. 区域
+  if (!(await tableExists("areas"))) {
+    console.log("创建 areas 表...");
+    await pool.query(`
+      CREATE TABLE areas (
+        id VARCHAR(36) PRIMARY KEY,
+        name VARCHAR(200) NOT NULL,
+        financier_id VARCHAR(36) NOT NULL COMMENT '所属合作方(financiers.id)',
+        remark TEXT,
+        status ENUM('active','disabled') NOT NULL DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_area_financier_name (financier_id, name),
+        INDEX idx_area_financier (financier_id),
+        INDEX idx_area_name (name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+    `);
+    console.log("  -> areas 已创建");
+  } else {
+    console.log("  areas 已存在，跳过");
+  }
+
+  // 2. 落地合作方
   if (!(await tableExists("local_partners"))) {
     console.log("创建 local_partners 表...");
     await pool.query(`
@@ -69,7 +92,16 @@ export async function runCommissionV2Migration(): Promise<void> {
     console.log("  local_partners 已存在，跳过");
   }
 
-  // 2. 线路
+  // 2b. local_partners 新增 area_id（非必填，兼容历史数据）
+  if (!(await columnExists("local_partners", "area_id"))) {
+    await pool.query(`ALTER TABLE local_partners ADD COLUMN area_id VARCHAR(36) NULL COMMENT '所属区域ID' AFTER financier_id`);
+    await pool.query(`CREATE INDEX idx_lp_area ON local_partners (area_id)`);
+    console.log("  -> local_partners.area_id 已添加");
+  } else {
+    console.log("  local_partners.area_id 已存在，跳过");
+  }
+
+  // 3. 线路
   if (!(await tableExists("routes"))) {
     console.log("创建 routes 表...");
     await pool.query(`
@@ -90,7 +122,7 @@ export async function runCommissionV2Migration(): Promise<void> {
     console.log("  routes 已存在，跳过");
   }
 
-  // 3. 合同-线路关联表
+  // 4. 合同-线路关联表
   if (!(await tableExists("contract_routes"))) {
     console.log("创建 contract_routes 表...");
     await pool.query(`
@@ -109,7 +141,7 @@ export async function runCommissionV2Migration(): Promise<void> {
     console.log("  contract_routes 已存在，跳过");
   }
 
-  // 4. commission_contracts 新增 financier_id 列
+  // 5. commission_contracts 新增 financier_id 列
   if (!(await columnExists("commission_contracts", "financier_id"))) {
     console.log("为 commission_contracts 添加 financier_id 列...");
     await pool.query(`
@@ -134,7 +166,15 @@ export async function runCommissionV2Migration(): Promise<void> {
     console.log("  commission_contracts.financier_id 已存在，跳过");
   }
 
-  // 5. commission_contracts 将 customer_system_id, settlement_cycle, settlement_day 改为可空
+  // 5b. commission_contracts 新增 contract_name 列
+  if (!(await columnExists("commission_contracts", "contract_name"))) {
+    await pool.query(`ALTER TABLE commission_contracts ADD COLUMN contract_name VARCHAR(200) NULL COMMENT '合同名称' AFTER id`);
+    console.log("  -> contract_name 列已添加");
+  } else {
+    console.log("  commission_contracts.contract_name 已存在，跳过");
+  }
+
+  // 6. commission_contracts 将 customer_system_id, settlement_cycle, settlement_day 改为可空
   // 通过 ALTER 把 NOT NULL 去掉（幂等：如果已经是 NULL 不会报错）
   try {
     await pool.query(`
@@ -148,7 +188,7 @@ export async function runCommissionV2Migration(): Promise<void> {
     console.log("  注意：修改列可空属性时出错（可能已为可空），继续", e.message);
   }
 
-  // 6. 对账批次表
+  // 7. 对账批次表
   if (!(await tableExists("commission_recon_batches"))) {
     console.log("创建 commission_recon_batches 表...");
     await pool.query(`
@@ -180,7 +220,7 @@ export async function runCommissionV2Migration(): Promise<void> {
     console.log("  commission_recon_batches 已存在，跳过");
   }
 
-  // 7. 对账批次明细（关联收益记录）
+  // 8. 对账批次明细（关联收益记录）
   if (!(await tableExists("commission_recon_items"))) {
     console.log("创建 commission_recon_items 表...");
     await pool.query(`
@@ -199,7 +239,7 @@ export async function runCommissionV2Migration(): Promise<void> {
     console.log("  commission_recon_items 已存在，跳过");
   }
 
-  // 8. 扩展 revenue_records status 枚举以支持对账状态
+  // 9. 扩展 revenue_records status 枚举以支持对账状态
   try {
     await pool.query(`
       ALTER TABLE revenue_records 
@@ -210,7 +250,7 @@ export async function runCommissionV2Migration(): Promise<void> {
     console.log("  注意：扩展 revenue_records status 时出错（可能已扩展），继续", e.message);
   }
 
-  // 9. 扩展 commission_recon_batches status 枚举以支持 cancelled
+  // 10. 扩展 commission_recon_batches status 枚举以支持 cancelled
   try {
     await pool.query(`
       ALTER TABLE commission_recon_batches

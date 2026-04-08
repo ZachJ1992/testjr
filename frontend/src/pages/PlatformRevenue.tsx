@@ -49,6 +49,8 @@ import {
   RevenueRankItem,
   RevenueSourceType,
   getErrorMessage,
+  fetchLocalPartners,
+  fetchAreas,
 } from '../api';
 
 const { RangePicker } = DatePicker;
@@ -89,6 +91,7 @@ const PlatformRevenue: React.FC = () => {
     funderId: undefined as string | undefined,
     financierId: undefined as string | undefined,
     subFinancier: undefined as string | undefined,
+    areaId: undefined as string | undefined,
     detailStartDate: undefined as string | undefined,
     detailEndDate: undefined as string | undefined,
     page: 1,
@@ -160,6 +163,7 @@ const PlatformRevenue: React.FC = () => {
         funderId: filters.funderId,
         financierId: filters.financierId,
         subFinancier: filters.subFinancier,
+        areaId: (filters as any).areaId,
         page: filters.page,
         pageSize: filters.pageSize,
       };
@@ -315,7 +319,8 @@ const PlatformRevenue: React.FC = () => {
 
   const exportColumns = [
     { header: '序号', key: (_: any, i: number) => i + 1 },
-    { header: '落地合作方', key: (r: any) => r.subFinancier || '' },
+    { header: '区域', key: (r: any) => r.areaName || '无区域' },
+    { header: '落地合作方', key: (r: any) => r.localPartnerName || r.subFinancier || '' },
     { header: '日期', key: (r: any) => r.revenueDate || '' },
     { header: '关联单号', key: (r: any) => r.contractNumber || '' },
     { header: '运费金额', key: (r: any) => r.principalAmount ?? '' },
@@ -336,6 +341,17 @@ const PlatformRevenue: React.FC = () => {
   const doExportExcel = (data: RevenueRecord[], filename: string) => {
     const headers = exportColumns.map(c => c.header);
     const rows = data.map((r, i) => exportColumns.map(c => c.key(r, i)));
+    const totalFreight = data.reduce((s, r) => s + (Number((r as any).principalAmount) || 0), 0);
+    const totalFee = data.reduce((s, r) => s + (Number((r as any).amount) || 0), 0);
+    const freightIdx = headers.indexOf('运费金额');
+    const feeIdx = headers.indexOf('服务费');
+    const totalRow = headers.map((_, i) => {
+      if (i === 0) return '合计';
+      if (i === freightIdx) return totalFreight;
+      if (i === feeIdx) return totalFee;
+      return '';
+    });
+    rows.push(totalRow);
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     ws['!cols'] = headers.map((h, i) => {
       let maxLen = h.length;
@@ -349,7 +365,7 @@ const PlatformRevenue: React.FC = () => {
 
   const handleExport = () => {
     if (!token) return;
-    const hasFilter = filters.sourceType || filters.subFinancier || filters.detailStartDate;
+    const hasFilter = filters.sourceType || filters.subFinancier || (filters as any).areaId || filters.detailStartDate;
     Modal.confirm({
       title: '导出收益明细',
       icon: <FileExcelOutlined style={{ color: '#52c41a' }} />,
@@ -367,6 +383,7 @@ const PlatformRevenue: React.FC = () => {
             endDate: filters.detailEndDate || dateRange.endDate,
             sourceType: filters.sourceType,
             subFinancier: filters.subFinancier,
+            areaId: (filters as any).areaId,
             page: 1,
             pageSize: 9999,
           };
@@ -406,22 +423,40 @@ const PlatformRevenue: React.FC = () => {
     setColumnWidths(prev => ({ ...prev, [key]: size.width }));
   }, []);
 
-  // 从数据中提取线路选项
-  const subFinancierOptions = useMemo(() => {
-    const set = new Set<string>();
-    records.forEach(r => { if ((r as any).subFinancier) set.add((r as any).subFinancier); });
-    return Array.from(set).map(v => ({ label: v, value: v }));
-  }, [records]);
+  // 从合同落地合作方加载选项
+  const [lpOptions, setLpOptions] = useState<{ label: string; value: string }[]>([]);
+  const [areaOptions, setAreaOptions] = useState<{ label: string; value: string }[]>([]);
+  useEffect(() => {
+    if (!token) return;
+    fetchLocalPartners(token, { status: 'active' }).then(res => {
+      const opts = (res.localPartners || []).map((lp: any) => ({ label: lp.name, value: lp.name }));
+      setLpOptions(opts);
+    }).catch(() => {});
+    fetchAreas(token, { status: 'active' }).then(res => {
+      const opts = (res.areas || []).map((a: any) => ({ label: a.name, value: a.id }));
+      setAreaOptions(opts);
+    }).catch(() => {});
+  }, [token]);
+
+  const subFinancierOptions = lpOptions;
 
   // 表格列定义
   const baseColumns = [
     { title: '合作方', dataIndex: 'financierName', key: 'financierName', width: 80, render: (v: string) => <span style={{ whiteSpace: 'nowrap' }}>{v || '-'}</span> },
     {
       title: '落地合作方',
-      dataIndex: 'subFinancier',
-      key: 'subFinancier',
+      key: 'localPartner',
       width: 150,
-      render: (v: string) => v ? <Tag color="cyan" style={{ margin: 0 }}>{v}</Tag> : '-',
+      render: (_: any, r: any) => {
+        const name = r.localPartnerName || r.subFinancier;
+        return name ? <Tag color="cyan" style={{ margin: 0 }}>{name}</Tag> : '-';
+      },
+    },
+    {
+      title: '区域',
+      key: 'areaName',
+      width: 110,
+      render: (_: any, r: any) => <Tag style={{ margin: 0 }}>{r.areaName || '无区域'}</Tag>,
     },
     { title: '日期', dataIndex: 'revenueDate', key: 'revenueDate', width: 110, render: (v: string) => <span style={{ whiteSpace: 'nowrap' }}>{v}</span> },
     { 
@@ -766,6 +801,14 @@ const PlatformRevenue: React.FC = () => {
                 <Select.Option key={key} value={key}>{label}</Select.Option>
               ))}
             </Select>
+            <Select
+              placeholder="区域"
+              allowClear
+              style={{ width: 180 }}
+              value={(filters as any).areaId}
+              onChange={(v) => setFilters({ ...filters, areaId: v, page: 1 } as any)}
+              options={areaOptions}
+            />
             <Select
               placeholder="落地合作方"
               allowClear

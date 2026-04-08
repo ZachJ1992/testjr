@@ -7,9 +7,11 @@ import {
   fetchDirectedPayContracts,
   fetchFinanciers,
   fetchRoutes,
+  fetchAreas,
   getErrorMessage,
   type AvailablePaymentCategory,
   type RouteItem,
+  type Area,
 } from "../api";
 import type { Financier } from "../types";
 import { useAuth } from "../auth";
@@ -52,7 +54,7 @@ import {
   ReceiverType,
   WaybillStatus
 } from "../types";
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import type { ColumnsType } from "antd/es/table";
 import { Resizable } from "react-resizable";
 import "react-resizable/css/styles.css";
@@ -152,6 +154,7 @@ interface WaybillData {
   subFinancier?: string;
   // 合作方名称（从后端 JOIN 获取）
   financierName?: string;
+  areaName?: string;
 }
 
 function WaybillsPage() {
@@ -174,6 +177,8 @@ function WaybillsPage() {
     vehiclePlate?: string;
     batchStatus?: string;
     batchSource?: string;
+    routeName?: string;
+    areaId?: string;
     startDate?: string;
     endDate?: string;
   }>({});
@@ -215,19 +220,26 @@ function WaybillsPage() {
   const [selectedFinancierId, setSelectedFinancierId] = useState<string>();
   // 线路 → 落地合作方映射
   const [routeToLpMap, setRouteToLpMap] = useState<Record<string, string>>({});
+  const [routeOptions, setRouteOptions] = useState<{ label: string; value: string }[]>([]);
+  const [areaOptions, setAreaOptions] = useState<{ label: string; value: string }[]>([]);
 
   // 列宽拖动状态
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const refreshRequestIdRef = useRef(0);
 
   const refresh = async () => {
     if (!token) return;
+    const requestId = ++refreshRequestIdRef.current;
     setLoading(true);
     try {
       const res = await fetchWaybills(token, filters as any);
+      if (requestId !== refreshRequestIdRef.current) return;
       setWaybills(res.waybills as any);
     } catch (err) {
+      if (requestId !== refreshRequestIdRef.current) return;
       message.error(getErrorMessage(err));
     } finally {
+      if (requestId !== refreshRequestIdRef.current) return;
       setLoading(false);
     }
   };
@@ -243,15 +255,25 @@ function WaybillsPage() {
     }
   }, [token, user]);
 
+  useEffect(() => {
+    if (!token) return;
+    fetchAreas(token, { status: "active" }).then(res => {
+      setAreaOptions((res.areas || []).map((a: Area) => ({ label: a.name, value: a.id })));
+    }).catch(() => {});
+  }, [token]);
+
   // 加载线路数据，构建 线路名称 → 落地合作方名称 映射
   useEffect(() => {
     if (!token) return;
     fetchRoutes(token).then(res => {
       const map: Record<string, string> = {};
+      const options: { label: string; value: string }[] = [];
       res.routes.forEach((r: RouteItem) => {
         if (r.name && r.localPartnerName) map[r.name] = r.localPartnerName;
+        if (r.name) options.push({ label: r.name, value: r.name });
       });
       setRouteToLpMap(map);
+      setRouteOptions(options);
     }).catch(() => {});
   }, [token]);
 
@@ -398,7 +420,7 @@ function WaybillsPage() {
     const totalCount = waybills.length;
     const totalReceivable = waybills.reduce((sum, w) => sum + (w.receivableTotal || 0), 0);
     const totalPayable = waybills.reduce((sum, w) => sum + (w.payableTotal || 0), 0);
-    const totalProfit = waybills.reduce((sum, w) => sum + (w.profit || 0), 0);
+    const totalProfit = waybills.reduce((sum, w) => sum + ((w.receivableTotal || 0) - (w.payableTotal || 0)), 0);
     return { totalCount, totalReceivable, totalPayable, totalProfit };
   }, [waybills]);
 
@@ -557,14 +579,14 @@ function WaybillsPage() {
 
     const exportColumns = [
       { header: "合作方", key: (w: WaybillData) => w.financierName || w.customerName || "" },
+      { header: "区域", key: (w: WaybillData) => w.areaName || "无区域" },
       { header: "落地合作方", key: (w: WaybillData) => w.subFinancier ? (routeToLpMap[w.subFinancier] || "") : "" },
       { header: "线路", key: (w: WaybillData) => w.subFinancier || "" },
       { header: "批次号", key: (w: WaybillData) => w.waybillNumber },
       { header: "批次状态", key: (w: WaybillData) => w.batchStatus || "" },
-      { header: "应收合计", key: (w: WaybillData) => w.receivableTotal ?? "" },
+      { header: "撮合运费", key: (w: WaybillData) => w.receivableTotal ?? "" },
       { header: "应付合计", key: (w: WaybillData) => w.payableTotal ?? "" },
-      { header: "毛利", key: (w: WaybillData) => w.profit ?? "" },
-      { header: "毛利率", key: (w: WaybillData) => w.profitRate != null ? `${(w.profitRate * 100).toFixed(0)}%` : "" },
+      { header: "承运价差", key: (w: WaybillData) => (w.receivableTotal || 0) - (w.payableTotal || 0) },
       { header: "应收运输费", key: (w: WaybillData) => w.receivableTransport ?? "" },
       { header: "应收点位费", key: (w: WaybillData) => w.receivablePointFee ?? "" },
       { header: "应收上楼费", key: (w: WaybillData) => w.receivableUpstairsFee ?? "" },
@@ -660,6 +682,13 @@ function WaybillsPage() {
         }
       },
       {
+        title: "区域",
+        dataIndex: "areaName",
+        width: 100,
+        fixed: 'left',
+        render: (v: string) => v ? <Tag style={{ margin: 0 }}>{v}</Tag> : <Tag style={{ margin: 0 }}>无区域</Tag>,
+      },
+      {
         title: "落地合作方",
         key: "localPartner",
         width: 120,
@@ -708,7 +737,7 @@ function WaybillsPage() {
       title: "金额汇总",
       children: [
         {
-          title: "应收合计",
+          title: "撮合运费",
           dataIndex: "receivableTotal",
           width: 90,
           align: 'right' as const,
@@ -722,18 +751,14 @@ function WaybillsPage() {
           render: (v: number) => formatMoney(v),
         },
         {
-          title: "毛利",
-          dataIndex: "profit",
-          width: 85,
+          title: "承运价差",
+          key: "priceDiff",
+          width: 90,
           align: 'right' as const,
-          render: (v: number) => formatProfit(v),
-        },
-        {
-          title: "利率",
-          dataIndex: "profitRate",
-          width: 55,
-          align: 'right' as const,
-          render: (v: number) => formatProfitRate(v),
+          render: (_: any, record: WaybillData) => {
+            const diff = (record.receivableTotal || 0) - (record.payableTotal || 0);
+            return formatProfit(diff);
+          },
         },
       ]
     };
@@ -934,6 +959,12 @@ function WaybillsPage() {
             return time ? <span style={{ whiteSpace: 'nowrap' }}>{dayjs(time).format('YY-MM-DD')}</span> : '-';
           },
         },
+        {
+          title: "开单时间",
+          dataIndex: "createdTime",
+          width: 100,
+          render: (v: string) => v ? <span style={{ whiteSpace: 'nowrap' }}>{dayjs(v).format('YY-MM-DD')}</span> : '-',
+        },
       ]
     };
 
@@ -977,7 +1008,7 @@ function WaybillsPage() {
             type="link"
             size="small"
             icon={<DollarOutlined />}
-            onClick={() => openPaymentModal(record)}
+            disabled
           >
             申请支付
           </Button>
@@ -1031,7 +1062,7 @@ function WaybillsPage() {
         <Col span={6}>
           <Card size="small">
             <Statistic
-              title="应收运输费合计"
+              title="撮合业务合计"
               value={stats.totalReceivable}
               precision={2}
               prefix="¥"
@@ -1053,7 +1084,7 @@ function WaybillsPage() {
         <Col span={6}>
           <Card size="small">
             <Statistic
-              title="总毛利"
+              title="承运价差合计"
               value={stats.totalProfit}
               precision={2}
               prefix="¥"
@@ -1066,10 +1097,10 @@ function WaybillsPage() {
       {/* 筛选区 */}
       <Card size="small" style={{ marginBottom: 16 }}>
         <Form layout="inline" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <Form.Item label="客户名称">
+          <Form.Item label="合作方">
             <Input
               style={{ width: 150 }}
-              placeholder="客户名称"
+              placeholder="合作方"
               allowClear
               onChange={(e) => setFilters(prev => ({ ...prev, customerName: e.target.value || undefined }))}
             />
@@ -1088,10 +1119,11 @@ function WaybillsPage() {
               placeholder="全部"
               allowClear
               options={[
-                { label: "已到达", value: "已到达" },
                 { label: "已发车", value: "已发车" },
+                { label: "已到车", value: "已到车" },
+                { label: "部分卸车", value: "部分卸车" },
+                { label: "已卸车", value: "已卸车" },
                 { label: "已完成", value: "已完成" },
-                { label: "已取消", value: "已取消" }
               ]}
               onChange={(value) => setFilters(prev => ({ ...prev, batchStatus: value }))}
             />
@@ -1103,6 +1135,25 @@ function WaybillsPage() {
               allowClear
               options={batchSourceOptions}
               onChange={(value) => setFilters(prev => ({ ...prev, batchSource: value }))}
+            />
+          </Form.Item>
+          <Form.Item label="线路">
+            <Select
+              style={{ width: 180 }}
+              placeholder="全部线路"
+              allowClear
+              showSearch
+              options={routeOptions}
+              onChange={(value) => setFilters(prev => ({ ...prev, routeName: value }))}
+            />
+          </Form.Item>
+          <Form.Item label="区域">
+            <Select
+              style={{ width: 140 }}
+              placeholder="全部区域"
+              allowClear
+              options={areaOptions}
+              onChange={(value) => setFilters(prev => ({ ...prev, areaId: value }))}
             />
           </Form.Item>
           <Form.Item label="日期范围">

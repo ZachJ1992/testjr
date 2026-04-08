@@ -81,6 +81,7 @@ interface Waybill {
   subFinancier?: string;
   // JOIN 融资方表的字段
   financierName?: string;
+  areaName?: string;
 }
 
 interface WaybillStats {
@@ -170,6 +171,7 @@ interface WaybillRow extends RowDataPacket {
   sub_financier: string | null;
   // JOIN 融资方表的字段
   financier_name: string | null;
+  area_name: string | null;
 }
 
 function mapWaybillRow(row: WaybillRow): Waybill {
@@ -243,7 +245,8 @@ function mapWaybillRow(row: WaybillRow): Waybill {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     subFinancier: row.sub_financier || undefined,
-    financierName: row.financier_name || undefined
+    financierName: row.financier_name || undefined,
+    areaName: row.area_name || undefined
   };
 }
 
@@ -251,7 +254,7 @@ export async function getWaybills(filters: WaybillOverviewFilters = {}): Promise
   const columnNames = await getWaybillColumnNames();
   const queryParts = buildWaybillQueryParts(filters, {}, columnNames);
 
-  const query = `SELECT w.*, f.enterprise_name as financier_name ${queryParts.fromAndJoinSql} ${queryParts.whereSql}
+  const query = `SELECT w.*, f.enterprise_name as financier_name, ar.name as area_name ${queryParts.fromAndJoinSql} ${queryParts.whereSql}
     ORDER BY COALESCE(w.departure_time, w.created_at) DESC, w.created_at DESC`;
 
   const [rows] = await pool.query<WaybillRow[]>(query, queryParts.params);

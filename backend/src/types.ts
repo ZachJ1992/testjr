@@ -673,6 +673,7 @@ export interface RevenueRecord {
   subFinancier?: string;
   commissionContractId?: string;
   routeId?: string;
+  areaName?: string;
   localPartnerName?: string;
   routeName?: string;
   createdAt: string;
@@ -736,6 +737,7 @@ export interface CommissionConfigItem {
 // 抽成合同
 export interface CommissionContract {
   id: string;
+  contractName?: string;
   customerName: string;
   financierId?: string;
   customerSystemId?: string;
@@ -768,8 +770,21 @@ export interface LocalPartner {
   name: string;
   financierId: string;
   financierName?: string;
+  areaId?: string;
+  areaName?: string;
   contactPerson?: string;
   contactPhone?: string;
+  remark?: string;
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Area {
+  id: string;
+  name: string;
+  financierId: string;
+  financierName?: string;
   remark?: string;
   status: "active" | "disabled";
   createdAt: string;
@@ -781,6 +796,7 @@ export interface Route {
   name: string;
   localPartnerId: string;
   localPartnerName?: string;
+  areaName?: string;
   remark?: string;
   status: "active" | "disabled";
   createdAt: string;
@@ -792,6 +808,7 @@ export interface ContractRoute {
   contractId: string;
   routeId: string;
   routeName?: string;
+  areaName?: string;
   localPartnerName?: string;
   createdAt: string;
 }
@@ -808,6 +825,7 @@ export interface ReconBatch {
   contractId: string;
   financierId?: string;
   financierName?: string;
+  areaName?: string;
   localPartnerName?: string;
   periodStart: string;
   periodEnd: string;

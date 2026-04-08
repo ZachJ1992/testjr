@@ -7,6 +7,7 @@
 
 // 导入所有模板（导入时会自动注册）
 import './zo-cloud.js';
+import './zo-cloud-orders.js';
 import './yaoqianshu.js';
 
 // 导出模板注册表相关功能

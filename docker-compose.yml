@@ -5,8 +5,7 @@ services:
     image: testapp:latest
     container_name: testapp
     restart: unless-stopped
-    ports:
-      - "3001:3001"
+    network_mode: "host"
     environment:
       - NODE_ENV=production
       - PORT=3001
@@ -22,9 +21,3 @@ services:
     volumes:
       - ./backend/uploads:/app/backend/uploads
       - ./backend/.env:/app/backend/.env:ro
-    networks:
-      - app-network
-
-networks:
-  app-network:
-    driver: bridge

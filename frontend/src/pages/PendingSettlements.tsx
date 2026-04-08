@@ -70,7 +70,7 @@ function PendingSettlementsPage() {
 
   const stats = useMemo(() => {
     const total = settlements.length;
-    const totalAmount = settlements.reduce((s, r) => s + (r.totalDue || r.totalAmount || 0), 0);
+    const totalAmount = settlements.reduce((s, r) => s + Number(r.totalDue || r.totalAmount || 0), 0);
     return { total, totalAmount };
   }, [settlements]);
 
@@ -119,11 +119,14 @@ function PendingSettlementsPage() {
     },
     {
       title: "结算周期", key: "period", width: 200,
-      render: (_: any, r: Settlement) => `${r.periodStart || '-'} ~ ${r.periodEnd || '-'}`,
+      render: (_: any, r: Settlement) => {
+        const fmt = (v: string) => v ? dayjs(v).format("YYYY-MM-DD") : "-";
+        return `${fmt(r.periodStart)} ~ ${fmt(r.periodEnd)}`;
+      },
     },
     {
       title: "应还金额", dataIndex: "totalDue", key: "totalDue", width: 130, align: "right" as const,
-      render: (v: number, r: Settlement) => <Text strong style={{ color: "#1890ff" }}>{formatAmount(v || r.totalAmount || 0)}</Text>,
+      render: (v: any, r: Settlement) => <Text strong style={{ color: "#1890ff" }}>{formatAmount(Number(v || r.totalAmount || 0))}</Text>,
     },
     {
       title: "状态", dataIndex: "status", key: "status", width: 100,
