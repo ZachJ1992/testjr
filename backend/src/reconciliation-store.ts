@@ -50,8 +50,9 @@ export async function getReconBatches(filters?: {
   let sql = `SELECT b.*, GROUP_CONCAT(DISTINCT lp.name SEPARATOR '、') as local_partner_name,
                     GROUP_CONCAT(DISTINCT ar.name SEPARATOR '、') as area_name
     FROM commission_recon_batches b
-    LEFT JOIN contract_routes cr ON b.contract_id = cr.contract_id
-    LEFT JOIN routes rt ON cr.route_id = rt.id
+    LEFT JOIN commission_recon_items cri ON cri.batch_id = b.id
+    LEFT JOIN revenue_records rr ON rr.id = cri.revenue_record_id
+    LEFT JOIN routes rt ON rr.route_id = rt.id
     LEFT JOIN local_partners lp ON rt.local_partner_id = lp.id
     LEFT JOIN areas ar ON lp.area_id = ar.id
     WHERE 1=1`;
