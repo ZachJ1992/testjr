@@ -206,8 +206,9 @@ if [ -d "app" ]; then
     fi
 
     echo "备份旧版本..."
-    BACKUP_DIR="backup_\$(date +%Y%m%d_%H%M%S)"
-    mv app "\$BACKUP_DIR"
+    # 注意：此处 heredoc 为 <<'EOF'，$(date) 在远端执行，不在本机展开
+    BACKUP_DIR="backup_$(date +%Y%m%d_%H%M%S)"
+    mv app "$BACKUP_DIR"
     # 只保留最近 3 个备份
     ls -dt backup_* | tail -n +4 | xargs rm -rf 2>/dev/null || true
 fi
