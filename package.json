@@ -16,6 +16,7 @@
     "lint": "npm --workspace frontend run lint && npm --workspace backend run lint"
   },
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "proxy-agent": "^8.0.1"
   }
 }

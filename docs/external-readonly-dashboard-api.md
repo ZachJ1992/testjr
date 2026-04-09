@@ -68,7 +68,7 @@ X-API-Key: <READONLY_API_KEY>
 
 ### 核心口径说明
 
-本批 dashboard 聚合接口为山海鲸数据大屏提供统一聚合口径，前端只取数和渲染，不直接拼底层明细。以下字段口径在首批 8 个接口中保持统一：
+本批 dashboard 聚合接口为山海鲸数据大屏提供统一聚合口径，前端只取数和渲染，不直接拼底层明细。以下字段口径在驾驶舱聚合接口中保持统一（**区域汇总地图接口** `region-summary` 另含城市/省份展示与输出过滤规则，见 **第 11 节**）：
 
 | 字段 | 口径说明 |
 |---|---|
@@ -95,7 +95,7 @@ X-API-Key: <READONLY_API_KEY>
 1. 平台收入概览
 2. 运单概览
 
-### 驾驶舱聚合接口（8 个）
+### 驾驶舱聚合接口（9 个）
 
 1. 经营总览
 2. 收益趋势分析
@@ -105,6 +105,7 @@ X-API-Key: <READONLY_API_KEY>
 6. 收益构成分析
 7. 结算进度分析
 8. 合作方效率分析
+9. 区域汇总（地图，供山海鲸中间中国地图主视觉）
 
 ---
 
@@ -702,9 +703,176 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 
 ---
 
+## 11. 区域汇总（地图）
+
+### 接口说明
+
+- **接口路径**：`/api/dashboard/region-summary`
+- **接口用途**：供 **山海鲸中间中国地图主视觉** 使用，展示 **近 7 天（默认）** 或自定义时间范围内的 **区域业务分布**（按标准化城市聚合运单数、平台收益、落地合作方覆盖数）。
+- **适合场景**：地图打点、省级定位/着色、tooltip 展示城市级指标；与其它 dashboard 接口共用同一套 `waybill_commission` 平台抽成事实口径。
+- **字段角色**：`regionName` 用于 **展示名称**（tooltip、图例文案）；`provinceName` 用于 **地图定位与省级映射**（省界、按省聚合等）。
+
+### 请求信息
+
+- 请求方法：`GET`
+- Base URL：`https://<your-domain>`
+- 接口路径：`/api/dashboard/region-summary`
+- 完整 URL：`https://<your-domain>/api/dashboard/region-summary`
+
+### 查询参数
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | `string` | 否 | 开始日期，格式 `YYYY-MM-DD` |
+| `endDate` | `string` | 否 | 结束日期，格式 `YYYY-MM-DD` |
+| `partnerName` | `string` | 否 | 合作方筛选，与其它 dashboard 一致，匹配 `revenue_records.financier_name` |
+| `landingPartnerName` | `string` | 否 | 落地合作方筛选 |
+| `routeName` | `string` | 否 | 线路筛选 |
+
+**默认时间行为**：若请求中 **未传** `startDate` 且 **未传** `endDate`，则服务端按 **服务器本地日历** 自动取 **近 7 天（含今天）**：
+
+- 默认 `endDate` = **今天**（本地日期的 `YYYY-MM-DD`）
+- 默认 `startDate` = **今天往前 6 天**的同一本地日历日（与 `endDate` 闭区间合计 7 个自然日）
+- 响应中 `data.dateScope` = `"last7days"`
+
+若请求中 **传了** `startDate` 或 `endDate` 任意一个，则视为自定义区间，`data.dateScope` = `"custom"`；`data.startDate` / `data.endDate` 回显本次实际参与 SQL 过滤的日期（与入参一致；仅传一端时另一端可能为空，与底层 `WHERE` 条件一致）。
+
+### 区域数据来源与映射规则
+
+1. **原始区域字段**（聚合前）  
+   - 来自主数据 **`areas.name`**，链路为：`revenue_records` → `routes` → `local_partners` → **`areas`**（`local_partners.area_id` → `areas.id`）。  
+   - 与其它收益/运单列表中 `area_name` 来源一致。
+
+2. **合作方字段**（用于金罗规则）  
+   - 来自 **`revenue_records.financier_name`**，与驾驶舱 `partnerName` 映射一致。
+
+3. **名称标准化**  
+   - **`XX融满`**：去掉名称中的 **「融满」** 字样后 `trim`，得到 **城市名**（如 `武汉融满` → `武汉`）。  
+   - **合作方 = `金罗`** 且 **无区域**（`areas.name` 为空或未维护）：统一映射为 **`regionName = 成都`**、`provinceName = 四川`（业务约定）。
+
+4. **城市 → 省份（静态表，首版）**  
+   在得到城市名后，按下表映射 `provinceName`；若城市不在表中，则聚合桶在输出层会被过滤（见下节「输出过滤」），不在 `items` 中返回：
+
+| 城市 | 省份 |
+|---|---|
+| 武汉 | 湖北 |
+| 成都 | 四川 |
+| 昆明 | 云南 |
+| 上海 | 上海 |
+| 天津 | 天津 |
+| 临沂 | 山东 |
+| 南京 | 江苏 |
+| 郑州 | 河南 |
+| 济南 | 山东 |
+| 泉州 | 福建 |
+| 长沙 | 湖南 |
+| 广州 | 广东 |
+| 重庆 | 重庆 |
+
+5. **聚合口径**（与其它 dashboard 一致）  
+   - `platformIncome`：业务抽成 **`amount` 求和**（`source_type = waybill_commission` 等平台事实条件，见上文「核心口径说明」）。  
+   - `waybillCount`：命中条件下的 **`waybill_id` 去重计数**。  
+   - `landingPartnerCount`：该区域内 **落地合作方去重数**（优先 `local_partners.id`，否则按名称去重）。  
+   - `routeCount`：该区域内命中事实的 **`routes.id`（即 `revenue_records.route_id`）去重数**；事实行已通过 `routes` → `local_partners` → `areas` 与区域对齐，等价于「经落地合作方关联到的线路数」在**本期有抽成记录**维度上的去重统计。
+
+### 输出过滤说明（地图主视觉）
+
+接口在 **返回 JSON 前** 对 `items` 做展示层过滤（**不改底层事实数据、不影响其它 dashboard 接口**）：
+
+- **`regionName = 未维护区域`** 的桶 **不返回**，避免无地理语义的数据进入地图主视觉。  
+- **`provinceName = 未知`** 的桶 **不返回**（首版无法可靠落省界/着色；若后续扩展映射表，可再评估是否透出）。
+
+因此山海鲸首版 **只需渲染接口返回的 `items`**，无需再自行剔除「未维护区域」或「未知省」。
+
+### 成功响应示例（默认近 7 天）
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "dateScope": "last7days",
+    "startDate": "2026-04-03",
+    "endDate": "2026-04-09",
+    "items": [
+      {
+        "regionName": "成都",
+        "provinceName": "四川",
+        "waybillCount": 1233,
+        "platformIncome": 95781.15,
+        "landingPartnerCount": 1,
+        "routeCount": 12,
+        "activeRouteCount": 12,
+        "displayText": "四川｜平台收益，95781.15 元｜活跃线路，12 条"
+      },
+      {
+        "regionName": "重庆",
+        "provinceName": "重庆",
+        "waybillCount": 127,
+        "platformIncome": 22907.86,
+        "landingPartnerCount": 1,
+        "routeCount": 9,
+        "activeRouteCount": 9,
+        "displayText": "重庆｜平台收益，22907.86 元｜活跃线路，9 条"
+      }
+    ]
+  }
+}
+```
+
+### 成功响应示例（自定义时间范围）
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "dateScope": "custom",
+    "startDate": "2026-04-01",
+    "endDate": "2026-04-07",
+    "items": [
+      {
+        "regionName": "广州",
+        "provinceName": "广东",
+        "waybillCount": 69,
+        "platformIncome": 10432.5,
+        "landingPartnerCount": 1,
+        "routeCount": 5,
+        "activeRouteCount": 5,
+        "displayText": "广东｜平台收益，10432.50 元｜活跃线路，5 条"
+      }
+    ]
+  }
+}
+```
+
+### 返回字段说明
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `data.dateScope` | `string` | `last7days`：未传 `startDate` 且未传 `endDate`；`custom`：传了任一端日期 |
+| `data.startDate` | `string` | 本次统计 `revenue_date` 下界（含）；默认近 7 天时与自动计算的 `startDate` 一致，便于联调确认窗口 |
+| `data.endDate` | `string` | 本次统计上界（含） |
+| `data.items[].regionName` | `string` | **地图展示名**（城市级），用于 tooltip、标签；已排除「未维护区域」 |
+| `data.items[].provinceName` | `string` | **省级定位/映射用**；已排除值为「未知」的桶 |
+| `data.items[].waybillCount` | `number` | 该区域运单数，`waybill_id` 去重 |
+| `data.items[].platformIncome` | `number` | 该区域平台收益，业务抽成金额求和，保留两位小数 |
+| `data.items[].landingPartnerCount` | `number` | 该区域关联落地合作方去重数 |
+| `data.items[].routeCount` | `number` | 该区域下命中事实的去重线路数（`route_id` / `routes.id`）；无 `route_id` 时为 `0` |
+| `data.items[].activeRouteCount` | `number` | 与 `routeCount` 相同，供展示语义「活跃线路」 |
+| `data.items[].displayText` | `string` | 山海鲸可直接绑定的展示辅助文案，不改变聚合口径 |
+
+### 验数建议
+
+1. 对照 `data.startDate` / `data.endDate` 与默认近 7 天或入参是否一致。  
+2. 任选 1～2 个城市，在收益事实中按 `areas.name` + 金罗规则手工汇总，核对 `waybillCount`、`platformIncome`、`landingPartnerCount` 与 `routeCount`。  
+3. 确认响应中 **不出现** `regionName` 为「未维护区域」或 `provinceName` 为「未知」的项。
+
+---
+
 ## 验数建议清单
 
-以下建议用于首批 8 个 dashboard 聚合接口上线前的人工验数：
+以下建议用于驾驶舱 dashboard 聚合接口（含区域地图）上线前的人工验数：
 
 1. 先固定一个小时间窗，例如单日、单周，避免直接对全量历史数据做首次核对。
 2. 优先选 1 到 2 个合作方、1 个落地合作方、1 条线路做穿透校验，确保维度不混用。
@@ -714,6 +882,7 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 6. `income-structure` 与 `overview`、`settlement-progress` 三者之间，至少要核对一次 `settledIncome` 是否完全相等。
 7. `grossFreightAmount` 当前含过渡期兜底逻辑，验数时应优先看 `waybills.receivable_total`，仅在缺失时再检查 `revenue_records.principal_amount`。
 8. `effectiveContractCount` 当前只作为辅助观察指标，建议做趋势比对，不建议拿它与平台全局合同总数直接对账。
+9. `region-summary`：核对默认 `last7days` 窗口、`dateScope` 与 `startDate/endDate`；按区域手工汇总与 `items` 交叉验证。
 
 ---
 
@@ -733,3 +902,4 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 - `X-API-Key` 应由接入方保存在服务端，不建议暴露到前端页面源码中。
 - 如需轮换密钥，建议平台侧提前通知调用方并设置切换窗口。
 - 如后续新增只读看板接口，建议沿用当前统一返回结构。
+- 山海鲸中间地图请使用 **`/api/dashboard/region-summary`**：默认近 7 天；`regionName` 作展示、`provinceName` 作省界定位；返回 `items` 已排除无地理语义的桶。

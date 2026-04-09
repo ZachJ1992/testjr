@@ -4,6 +4,11 @@ import { pool } from "./db.js";
 import { getRevenueStats } from "./revenue-store.js";
 import type { RevenueStats } from "./types.js";
 import {
+  DASHBOARD_REGION_FALLBACK_CITY,
+  DASHBOARD_REGION_UNKNOWN_PROVINCE,
+  normalizeDashboardRegionName,
+} from "./dashboard-region.js";
+import {
   getWaybillsOverview,
   type WaybillOverview,
 } from "./waybills-store.js";
@@ -118,6 +123,31 @@ export interface DashboardPartnerEfficiencyItem {
 
 export interface DashboardPartnerEfficiency {
   items: DashboardPartnerEfficiencyItem[];
+}
+
+export type DashboardRegionSummaryDateScope = "last7days" | "custom";
+
+export interface DashboardRegionSummaryItem {
+  regionName: string;
+  provinceName: string;
+  waybillCount: number;
+  platformIncome: number;
+  landingPartnerCount: number;
+  /** 该区域下命中事实的去重线路数（经落地合作方 → routes，与 rr.route_id 一致） */
+  routeCount: number;
+  /** 与 routeCount 同值；山海鲸展示用「活跃线路」语义 */
+  activeRouteCount: number;
+  /** 展示辅助文案，不参与聚合；格式与 platformIncome 两位小数一致 */
+  displayText: string;
+}
+
+export interface DashboardRegionSummary {
+  dateScope: DashboardRegionSummaryDateScope;
+  /** 本次统计实际使用的 revenue_date 下界（含）；与查询参数或默认近 7 天一致 */
+  startDate?: string;
+  /** 本次统计实际上界（含） */
+  endDate?: string;
+  items: DashboardRegionSummaryItem[];
 }
 
 interface RevenueStatsReader {
@@ -265,6 +295,21 @@ function formatLocalDateOnly(value: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+/** 地图区域汇总默认窗口：含今天在共 7 天（今天往前 6 天 ～ 今天），按服务器本地日历。 */
+export function getDefaultLast7DaysDateRange(now: Date = new Date()): {
+  startDate: string;
+  endDate: string;
+} {
+  const endDate = formatLocalDateOnly(now);
+  const start = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - 6
+  );
+  const startDate = formatLocalDateOnly(start);
+  return { startDate, endDate };
+}
+
 export function normalizeDashboardDateValue(
   value?: string | Date | null
 ): string | undefined {
@@ -389,6 +434,18 @@ function buildDashboardSqlParts(
     `,
     whereSql: `WHERE ${conditions.join(" AND ")}`,
     params,
+  };
+}
+
+/** 区域汇总：在 dashboard 事实链路上追加 areas，仅用于本接口，避免改动其他聚合 SQL 行为。 */
+function buildDashboardSqlPartsWithAreaJoin(
+  filters: DashboardAggregateFilters = {}
+): DashboardSqlParts {
+  const base = buildDashboardSqlParts(filters);
+  return {
+    ...base,
+    fromSql: `${base.fromSql.trimEnd()}
+      LEFT JOIN areas ar ON lp.area_id = ar.id`,
   };
 }
 
@@ -593,6 +650,67 @@ async function queryDashboardSettlementProgressRows(
   };
 }
 
+interface DashboardRegionFactRow {
+  waybill_id: string | number | null;
+  amount: string | number | null;
+  financier_name: string | null;
+  raw_area_name: string | null;
+  landing_partner_id: string | null;
+  landing_partner_name: string | null;
+  route_id: string | null;
+}
+
+function landingPartnerDedupeKey(
+  id: string | null | undefined,
+  name: string | null | undefined
+): string | null {
+  if (id != null && String(id).trim() !== "") {
+    return `id:${String(id).trim()}`;
+  }
+  const n = String(name ?? "").trim();
+  return n ? `name:${n}` : null;
+}
+
+async function queryDashboardRegionFactRows(
+  filters: DashboardAggregateFilters = {}
+): Promise<DashboardRegionFactRow[]> {
+  const sqlParts = buildDashboardSqlPartsWithAreaJoin(filters);
+  const rows = await queryRows<RowDataPacket>(
+    `SELECT
+       rr.waybill_id,
+       rr.amount,
+       rr.financier_name,
+       rr.route_id,
+       ar.name AS raw_area_name,
+       lp.id AS landing_partner_id,
+       lp.name AS landing_partner_name
+     ${sqlParts.fromSql}
+     ${sqlParts.whereSql}`,
+    sqlParts.params
+  );
+
+  return rows.map((row) => ({
+    waybill_id: row.waybill_id ?? null,
+    amount: row.amount ?? null,
+    financier_name:
+      row.financier_name == null ? null : String(row.financier_name),
+    raw_area_name:
+      row.raw_area_name == null ? null : String(row.raw_area_name),
+    landing_partner_id:
+      row.landing_partner_id == null
+        ? null
+        : String(row.landing_partner_id),
+    landing_partner_name:
+      row.landing_partner_name == null
+        ? null
+        : String(row.landing_partner_name),
+    route_id:
+      row.route_id == null || String(row.route_id).trim() === ""
+        ? null
+        : String(row.route_id),
+  }));
+}
+
 async function queryDashboardPartnerEfficiencyRows(
   filters: DashboardEfficiencyFilters = {}
 ): Promise<DashboardDimensionRow[]> {
@@ -622,6 +740,19 @@ async function queryDashboardPartnerEfficiencyRows(
 
 function roundMoney(value: unknown): number {
   return Number((Number(value) || 0).toFixed(2));
+}
+
+/** region-summary 展示串中的金额片段，与 roundMoney 两位小数一致 */
+function formatRegionSummaryIncomeForDisplay(incomeRounded: number): string {
+  return incomeRounded.toFixed(2);
+}
+
+function buildRegionSummaryDisplayText(
+  provinceName: string,
+  platformIncomeRounded: number,
+  activeRouteCount: number
+): string {
+  return `${provinceName}｜平台收益，${formatRegionSummaryIncomeForDisplay(platformIncomeRounded)} 元｜活跃线路，${activeRouteCount} 条`;
 }
 
 export async function getPlatformRevenueOverview(
@@ -885,5 +1016,134 @@ export async function getDashboardPartnerEfficiency(
       yPlatformIncome: roundMoney(row.platformIncome),
       bubbleGrossFreightAmount: roundMoney(row.grossFreightAmount),
     })),
+  };
+}
+
+interface DashboardRegionFactReader {
+  getRegionFactRows(
+    filters: DashboardAggregateFilters
+  ): Promise<DashboardRegionFactRow[]>;
+}
+
+function aggregateDashboardRegionSummary(
+  rows: DashboardRegionFactRow[]
+): DashboardRegionSummaryItem[] {
+  type Bucket = {
+    waybills: Set<string>;
+    platformIncome: number;
+    landingPartners: Set<string>;
+    routes: Set<string>;
+  };
+
+  const map = new Map<string, Bucket>();
+
+  for (const row of rows) {
+    const norm = normalizeDashboardRegionName(
+      row.financier_name,
+      row.raw_area_name
+    );
+    const key = `${norm.regionName}\u0000${norm.provinceName}`;
+    let bucket = map.get(key);
+    if (!bucket) {
+      bucket = {
+        waybills: new Set(),
+        platformIncome: 0,
+        landingPartners: new Set(),
+        routes: new Set(),
+      };
+      map.set(key, bucket);
+    }
+
+    bucket.platformIncome += Number(row.amount) || 0;
+
+    if (row.waybill_id != null && String(row.waybill_id).trim() !== "") {
+      bucket.waybills.add(String(row.waybill_id));
+    }
+
+    const lpKey = landingPartnerDedupeKey(
+      row.landing_partner_id,
+      row.landing_partner_name
+    );
+    if (lpKey) {
+      bucket.landingPartners.add(lpKey);
+    }
+
+    if (row.route_id != null && String(row.route_id).trim() !== "") {
+      bucket.routes.add(String(row.route_id));
+    }
+  }
+
+  const items: DashboardRegionSummaryItem[] = [];
+  for (const [key, bucket] of map) {
+    const [regionName, provinceName] = key.split("\u0000");
+    const platformIncome = roundMoney(bucket.platformIncome);
+    const activeRouteCount = bucket.routes.size;
+    items.push({
+      regionName,
+      provinceName,
+      waybillCount: bucket.waybills.size,
+      platformIncome,
+      landingPartnerCount: bucket.landingPartners.size,
+      routeCount: activeRouteCount,
+      activeRouteCount,
+      displayText: buildRegionSummaryDisplayText(
+        provinceName,
+        platformIncome,
+        activeRouteCount
+      ),
+    });
+  }
+
+  items.sort((a, b) => {
+    if (b.platformIncome !== a.platformIncome) {
+      return b.platformIncome - a.platformIncome;
+    }
+    if (b.waybillCount !== a.waybillCount) {
+      return b.waybillCount - a.waybillCount;
+    }
+    return a.regionName.localeCompare(b.regionName, "zh-Hans-CN");
+  });
+
+  return items;
+}
+
+/**
+ * 区域汇总（地图）：与 overview 等接口同一套 revenue_records 事实与日期/筛选条件。
+ * 默认未传日期时：近 7 天（含今天），见 getDefaultLast7DaysDateRange。
+ */
+export async function getDashboardRegionSummary(
+  filters: DashboardAggregateFilters = {},
+  deps: DashboardRegionFactReader = {
+    getRegionFactRows: queryDashboardRegionFactRows,
+  }
+): Promise<DashboardRegionSummary> {
+  const hasCustomRange = Boolean(filters.startDate || filters.endDate);
+  let effectiveFilters: DashboardAggregateFilters = { ...filters };
+  let dateScope: DashboardRegionSummaryDateScope = "custom";
+
+  if (!hasCustomRange) {
+    const { startDate, endDate } = getDefaultLast7DaysDateRange();
+    effectiveFilters = {
+      ...filters,
+      startDate,
+      endDate,
+    };
+    dateScope = "last7days";
+  }
+
+  const rows = await deps.getRegionFactRows(effectiveFilters);
+  const aggregated = aggregateDashboardRegionSummary(rows);
+  // 地图展示层输出过滤：无城市语义或未配置省份映射的桶不交给山海鲸主视觉渲染
+  const items = aggregated.filter(
+    (item) =>
+      item.regionName !== DASHBOARD_REGION_FALLBACK_CITY &&
+      item.provinceName !== DASHBOARD_REGION_UNKNOWN_PROVINCE
+  );
+
+  return {
+    dateScope,
+    startDate: effectiveFilters.startDate,
+    endDate: effectiveFilters.endDate,
+    items,
   };
 }

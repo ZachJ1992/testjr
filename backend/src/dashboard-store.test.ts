@@ -2,11 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  getDefaultLast7DaysDateRange,
   getPlatformRevenueOverview,
   getDashboardWaybillsOverview,
   getDashboardOverview,
   getDashboardIncomeTrend,
   getDashboardPartnerTop,
+  getDashboardRegionSummary,
   getDashboardSettlementProgress,
   normalizeDashboardDateValue,
 } from "./dashboard-store.js";
@@ -291,4 +293,117 @@ test("getDashboardSettlementProgress returns fixed stages and falls back missing
       },
     ],
   });
+});
+
+test("getDashboardRegionSummary aggregates by normalized region and respects dateScope", async () => {
+  const result = await getDashboardRegionSummary(
+    { startDate: "2026-04-01", endDate: "2026-04-07" },
+    {
+      getRegionFactRows: async () => [
+        {
+          waybill_id: "w1",
+          amount: 10,
+          financier_name: "金罗",
+          raw_area_name: null,
+          landing_partner_id: "lp1",
+          landing_partner_name: "落地A",
+          route_id: "route-cd-1",
+        },
+        {
+          waybill_id: "w1",
+          amount: 5,
+          financier_name: "金罗",
+          raw_area_name: null,
+          landing_partner_id: "lp1",
+          landing_partner_name: "落地A",
+          route_id: "route-cd-1",
+        },
+        {
+          waybill_id: "w2",
+          amount: 3,
+          financier_name: "其他",
+          raw_area_name: "重庆融满",
+          landing_partner_id: "lp2",
+          landing_partner_name: "落地B",
+          route_id: "route-cq-1",
+        },
+        {
+          waybill_id: "w3",
+          amount: 99,
+          financier_name: "融满",
+          raw_area_name: null,
+          landing_partner_id: null,
+          landing_partner_name: null,
+          route_id: "route-orphan",
+        },
+        {
+          waybill_id: "w4",
+          amount: 7,
+          financier_name: "其他",
+          raw_area_name: "火星融满",
+          landing_partner_id: "lp9",
+          landing_partner_name: "落地Z",
+          route_id: "route-mars",
+        },
+      ],
+    }
+  );
+
+  assert.equal(result.dateScope, "custom");
+  assert.equal(result.startDate, "2026-04-01");
+  assert.equal(result.endDate, "2026-04-07");
+  // 「未维护区域」「provinceName=未知」在地图接口输出层被过滤
+  assert.equal(result.items.length, 2);
+  assert.ok(!result.items.some((i) => i.regionName === "未维护区域"));
+  assert.ok(!result.items.some((i) => i.provinceName === "未知"));
+  const chengdu = result.items.find((i) => i.regionName === "成都");
+  const chongqing = result.items.find((i) => i.regionName === "重庆");
+  assert.ok(chengdu);
+  assert.ok(chongqing);
+  assert.deepEqual(chengdu, {
+    regionName: "成都",
+    provinceName: "四川",
+    waybillCount: 1,
+    platformIncome: 15,
+    landingPartnerCount: 1,
+    routeCount: 1,
+    activeRouteCount: 1,
+    displayText: "四川｜平台收益，15.00 元｜活跃线路，1 条",
+  });
+  assert.deepEqual(chongqing, {
+    regionName: "重庆",
+    provinceName: "重庆",
+    waybillCount: 1,
+    platformIncome: 3,
+    landingPartnerCount: 1,
+    routeCount: 1,
+    activeRouteCount: 1,
+    displayText: "重庆｜平台收益，3.00 元｜活跃线路，1 条",
+  });
+});
+
+test("getDefaultLast7DaysDateRange spans 7 inclusive local days", () => {
+  assert.deepEqual(
+    getDefaultLast7DaysDateRange(new Date(2026, 3, 9)),
+    { startDate: "2026-04-03", endDate: "2026-04-09" }
+  );
+});
+
+test("getDashboardRegionSummary without dates uses last7days and forwards range to reader", async () => {
+  let captured: { startDate?: string; endDate?: string } = {};
+  const result = await getDashboardRegionSummary(
+    {},
+    {
+      getRegionFactRows: async (filters) => {
+        captured = { startDate: filters.startDate, endDate: filters.endDate };
+        return [];
+      },
+    }
+  );
+  assert.equal(result.dateScope, "last7days");
+  const expected = getDefaultLast7DaysDateRange();
+  assert.equal(captured.startDate, expected.startDate);
+  assert.equal(captured.endDate, expected.endDate);
+  assert.equal(result.startDate, expected.startDate);
+  assert.equal(result.endDate, expected.endDate);
 });

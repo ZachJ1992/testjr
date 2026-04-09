@@ -10,6 +10,7 @@ import {
   getDashboardOverview,
   getDashboardPartnerEfficiency,
   getDashboardPartnerTop,
+  getDashboardRegionSummary,
   getDashboardSettlementProgress,
   getDashboardWaybillsOverview,
   type DashboardAggregateFilters,
@@ -225,6 +226,19 @@ router.get(
         limit: getDashboardLimit(req),
       };
       const data = await getDashboardPartnerEfficiency(filters);
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/region-summary",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardRegionSummary(getDashboardFilters(req));
       sendSuccess(res, data);
     } catch (err) {
       handleError(res, req, 500, err);
