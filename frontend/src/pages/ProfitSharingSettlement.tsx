@@ -66,6 +66,15 @@ const BATCH_STATUS_MAP: Record<string, { label: string; color: string }> = {
   cancelled: { label: "已取消", color: "default" },
 };
 
+function splitDisplayNames(value?: string): string[] {
+  if (!value) return [];
+  const list = value
+    .split(/[、,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return [...new Set(list)];
+}
+
 function ProfitSharingSettlementPage() {
   const { token, user } = useAuth();
   const { t } = useI18n();
@@ -194,6 +203,33 @@ function ProfitSharingSettlementPage() {
 
   const formatAmount = (n: number) =>
     `¥${n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const renderCompactNames = useCallback((value?: string, color: "cyan" | "blue" = "cyan") => {
+    const names = splitDisplayNames(value);
+    if (names.length === 0) return "-";
+    if (names.length === 1) {
+      return (
+        <Tooltip title={names[0]}>
+          <Tag color={color} style={{ marginInlineEnd: 0, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {names[0]}
+          </Tag>
+        </Tooltip>
+      );
+    }
+    const restCount = names.length - 1;
+    return (
+      <Space size={4} wrap={false}>
+        <Tooltip title={names.join("、")}>
+          <Tag color={color} style={{ marginInlineEnd: 0, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {names[0]}
+          </Tag>
+        </Tooltip>
+        <Tooltip title={names.slice(1).join("、")}>
+          <Text type="secondary">{`等${restCount}项`}</Text>
+        </Tooltip>
+      </Space>
+    );
+  }, []);
 
   // 生成对账单（不自动导出，导出移到对账单tab）
   const handleCreateBatch = async () => {
@@ -385,9 +421,10 @@ function ProfitSharingSettlementPage() {
         </Button>
       )},
     { title: "合作方", dataIndex: "financierName", key: "financierName", width: 100 },
-    { title: "区域", dataIndex: "areaName", key: "areaName", width: 120, render: (v: string) => v || <Tag>无区域</Tag> },
-    { title: "落地合作方", dataIndex: "localPartnerName", key: "localPartnerName", width: 150,
-      render: (v: string) => v ? <Tag color="cyan">{v}</Tag> : "-" },
+    { title: "区域", dataIndex: "areaName", key: "areaName", width: 170,
+      render: (v: string) => v ? renderCompactNames(v, "blue") : <Tag>无区域</Tag> },
+    { title: "落地合作方", dataIndex: "localPartnerName", key: "localPartnerName", width: 240,
+      render: (v: string) => renderCompactNames(v, "cyan") },
     { title: "对账周期", key: "period", width: 200,
       render: (_: any, r: ReconBatchType) => `${r.periodStart} ~ ${r.periodEnd}` },
     { title: "记录数", dataIndex: "itemCount", key: "itemCount", width: 80, align: "center" as const },
@@ -661,8 +698,9 @@ function ProfitSharingSettlementPage() {
             dataSource={batches}
             loading={batchLoading}
             rowKey="id"
-            scroll={{ x: 1200 }}
+            scroll={{ x: 1320 }}
             size="small"
+            tableLayout="fixed"
             pagination={{ showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
           />
         </Card>
