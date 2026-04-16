@@ -1,23 +1,27 @@
-version: '3.3'
-
 services:
   app:
     image: testapp:latest
     container_name: testapp
     restart: unless-stopped
-    network_mode: "host"
+    env_file:
+      - ./backend/.env
     environment:
       - NODE_ENV=production
       - PORT=3001
-      - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT}
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_NAME=${DB_NAME}
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
-      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD}
-      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - DB_HOST=host.docker.internal
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-admin123}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3001:3001"
     volumes:
       - ./backend/uploads:/app/backend/uploads
       - ./backend/.env:/app/backend/.env:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s

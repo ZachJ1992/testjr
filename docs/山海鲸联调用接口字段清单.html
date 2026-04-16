@@ -1,0 +1,655 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.6;color:#222;padding:32px;max-width:980px;margin:0 auto;font-size:14px;}
+h1,h2,h3{color:#111;margin-top:24px;}
+h1{font-size:28px;border-bottom:2px solid #ddd;padding-bottom:10px;}
+h2{font-size:22px;border-left:4px solid #4472C4;padding-left:10px;}
+h3{font-size:17px;margin-bottom:8px;}
+p{margin:8px 0;}
+ul,ol{margin:8px 0 8px 24px;}
+code{font-family:Menlo,Consolas,monospace;background:#f5f5f5;padding:1px 4px;border-radius:3px;}
+pre{background:#f7f7f7;border:1px solid #e0e0e0;padding:12px;border-radius:6px;white-space:pre-wrap;font-family:Menlo,Consolas,monospace;font-size:12px;line-height:1.5;}
+table{border-collapse:collapse;width:100%;margin:12px 0 20px 0;font-size:12px;}
+th,td{border:1px solid #cfcfcf;padding:6px 8px;vertical-align:top;}
+th{background:#eef3fb;font-weight:700;}
+hr{border:none;border-top:1px solid #ddd;margin:28px 0;}
+</style></head><body>
+<h1>山海鲸联调用接口字段清单</h1>
+<h2>文档说明</h2>
+<ul>
+<li>文档目标：提供给山海鲸配置同学直接对接使用</li>
+<li>数据依据：基于当前项目已实现并已验证的 `dashboard` 聚合接口</li>
+<li>结论口径：结合当前真实数据状态、历史回算结果、接口真实返回、已确认排查结论整理</li>
+</ul>
+<p>当前关键事实如下：</p>
+<ol>
+<li>`waybill_commission` 历史回算已执行成功，当前已恢复 `13023` 条平台收益记录。</li>
+<li>新版 dashboard 主链路已恢复，核心总览、趋势、合作方榜单等接口不再为 `0`。</li>
+<li>当前 `settled/accounted` 相关状态尚未沉淀，因此已结算、已入账、结算后几档多数仍为 `0`。</li>
+<li>`route_id / commission_contract_id` 仍未补齐，且相关主数据链路缺失，因此落地合作方与有效合同维度当前不可用。</li>
+<li>无筛选直接拉全量趋势时，会出现 `1970-01-01` 首桶；山海鲸首版建议所有趋势图统一传 `startDate/endDate`。</li>
+</ol>
+<p>统一响应结构如下：</p>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {}
+}</pre>
+<p>以下字段清单均以 `data` 内部字段为主。</p>
+<hr>
+<h2>1. /api/dashboard/overview</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/overview`</p>
+<h3>接口用途</h3>
+<p>用于经营总览 KPI 展示，输出运单规模、撮合业务总额、平台收益、待结算收益、已结算收益、日均收益以及维度覆盖情况。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>开始日期，建议 `YYYY-MM-DD`</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>结束日期，建议 `YYYY-MM-DD`</td></tr>
+<tr><td>`partnerName`</td><td>`string`</td><td>合作方筛选，当前匹配 `revenue_records.financier_name`</td></tr>
+<tr><td>`landingPartnerName`</td><td>`string`</td><td>落地合作方筛选</td></tr>
+<tr><td>`routeName`</td><td>`string`</td><td>线路筛选</td></tr>
+</table>
+<h3>返回 JSON 示例</h3>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;totalWaybillCount&quot;: 13023,
+    &quot;grossFreightAmount&quot;: 32177862.77,
+    &quot;platformIncome&quot;: 2604600,
+    &quot;pendingSettlementIncome&quot;: 2604600,
+    &quot;settledIncome&quot;: 0,
+    &quot;avgDailyIncome&quot;: 127.17,
+    &quot;effectiveContractCount&quot;: 0,
+    &quot;partnerCount&quot;: 1,
+    &quot;landingPartnerCount&quot;: 0
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.totalWaybillCount`</td><td>`number`</td><td>命中 dashboard 事实口径的运单去重数</td><td>可用</td><td>是</td><td>已通过历史回算恢复，当前真实值 `13023`，可直接做 KPI</td></tr>
+<tr><td>`data.grossFreightAmount`</td><td>`number`</td><td>撮合业务总额/撮合运费汇总</td><td>可用</td><td>是</td><td>已恢复，当前真实值 `32177862.77`，优先取 `waybills.receivable_total`</td></tr>
+<tr><td>`data.platformIncome`</td><td>`number`</td><td>平台收益，即业务抽成金额求和</td><td>可用</td><td>是</td><td>已恢复，当前真实值 `2604600`，可直接用于山海鲸展示</td></tr>
+<tr><td>`data.pendingSettlementIncome`</td><td>`number`</td><td>待结算收益，当前按 `status != accounted` 汇总</td><td>可用</td><td>是</td><td>已恢复，当前真实值 `2604600`</td></tr>
+<tr><td>`data.settledIncome`</td><td>`number`</td><td>已结算/已入账收益</td><td>当前不可用</td><td>当前固定为 0</td><td>当前 `waybill_commission` 记录没有 `accounted` 状态</td></tr>
+<tr><td>`data.avgDailyIncome`</td><td>`number`</td><td>平台收益 / 自然天数</td><td>可用</td><td>是</td><td>代码 bug 已修复；当前有值，但无筛选时受 `1970-01-01` 历史脏日期影响，建议首版带日期范围</td></tr>
+<tr><td>`data.effectiveContractCount`</td><td>`number`</td><td>命中聚合条件的有效合同去重数</td><td>当前不可用</td><td>当前固定为 0</td><td>`commission_contract_id` 未补齐，且 `contract_routes` 主数据为空</td></tr>
+<tr><td>`data.partnerCount`</td><td>`number`</td><td>命中聚合条件的合作方去重数</td><td>可用</td><td>是</td><td>当前真实值 `1`，目前只命中 `金罗`</td></tr>
+<tr><td>`data.landingPartnerCount`</td><td>`number`</td><td>命中聚合条件的落地合作方去重数</td><td>当前不可用</td><td>当前固定为 0</td><td>`route_id` 缺失，无法 join 到 `local_partners`</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li>`data.totalWaybillCount`</li>
+<li>`data.grossFreightAmount`</li>
+<li>`data.platformIncome`</li>
+<li>`data.pendingSettlementIncome`</li>
+<li>`data.avgDailyIncome`</li>
+<li>`data.partnerCount`</li>
+</ul>
+<h3>暂不建议用于山海鲸首版展示的字段</h3>
+<ul>
+<li>`data.settledIncome`：当前没有 `accounted`，固定为 `0`</li>
+<li>`data.effectiveContractCount`：`commission_contract_id` 缺失，当前不可用</li>
+<li>`data.landingPartnerCount`：`route_id / local_partners` 主数据链路缺失，当前不可用</li>
+</ul>
+<hr>
+<h2>2. /api/dashboard/income-trend</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/income-trend`</p>
+<h3>接口用途</h3>
+<p>用于按时间粒度输出平台收益趋势。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>开始日期，首版建议必传</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>结束日期，首版建议必传</td></tr>
+<tr><td>`granularity`</td><td>`string`</td><td>`day / week / month`，默认 `day`</td></tr>
+<tr><td>`partnerName`</td><td>`string`</td><td>合作方筛选</td></tr>
+<tr><td>`landingPartnerName`</td><td>`string`</td><td>落地合作方筛选</td></tr>
+<tr><td>`routeName`</td><td>`string`</td><td>线路筛选</td></tr>
+</table>
+<h3>返回 JSON 示例</h3>
+<p>说明：以下为当前真实返回的前 3 个 bucket 截取。</p>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;granularity&quot;: &quot;day&quot;,
+    &quot;items&quot;: [
+      {
+        &quot;date&quot;: &quot;1970-01-01&quot;,
+        &quot;platformIncome&quot;: 200,
+        &quot;pendingSettlementIncome&quot;: 200,
+        &quot;settledIncome&quot;: 0
+      },
+      {
+        &quot;date&quot;: &quot;2025-10-28&quot;,
+        &quot;platformIncome&quot;: 1600,
+        &quot;pendingSettlementIncome&quot;: 1600,
+        &quot;settledIncome&quot;: 0
+      },
+      {
+        &quot;date&quot;: &quot;2025-10-29&quot;,
+        &quot;platformIncome&quot;: 2000,
+        &quot;pendingSettlementIncome&quot;: 2000,
+        &quot;settledIncome&quot;: 0
+      }
+    ]
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.granularity`</td><td>`string`</td><td>聚合粒度</td><td>可用</td><td>否</td><td>默认 `day`，可切换 `week/month`</td></tr>
+<tr><td>`data.items[].date`</td><td>`string`</td><td>时间桶标签</td><td>部分可用</td><td>否</td><td>当前无筛选全量数据会出现 `1970-01-01` 脏日期桶，首版务必传 `startDate/endDate`</td></tr>
+<tr><td>`data.items[].platformIncome`</td><td>`number`</td><td>该时间桶平台收益</td><td>可用</td><td>是</td><td>已恢复，可直接做折线/柱状图</td></tr>
+<tr><td>`data.items[].pendingSettlementIncome`</td><td>`number`</td><td>该时间桶待结算收益</td><td>可用</td><td>是</td><td>已恢复，当前与 `platformIncome` 基本一致</td></tr>
+<tr><td>`data.items[].settledIncome`</td><td>`number`</td><td>该时间桶已结算收益</td><td>当前不可用</td><td>当前固定为 0</td><td>当前没有 `accounted` 数据</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li>`data.items[].date`</li>
+<li>`data.items[].platformIncome`</li>
+<li>`data.items[].pendingSettlementIncome`</li>
+</ul>
+<p>说明：首版请强制带 `startDate/endDate`，不要直接拉全历史。</p>
+<h3>暂不建议用于山海鲸首版展示的字段</h3>
+<ul>
+<li>`data.items[].settledIncome`：当前固定为 `0`</li>
+<li>不带日期范围的全量趋势：会出现 `1970-01-01` 首桶，影响图表观感与均值理解</li>
+</ul>
+<hr>
+<h2>3. /api/dashboard/business-trend</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/business-trend`</p>
+<h3>接口用途</h3>
+<p>用于按时间粒度输出运单规模、撮合业务总额、平台收益的经营趋势。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>开始日期，首版建议必传</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>结束日期，首版建议必传</td></tr>
+<tr><td>`granularity`</td><td>`string`</td><td>`day / week / month`</td></tr>
+<tr><td>`partnerName`</td><td>`string`</td><td>合作方筛选</td></tr>
+<tr><td>`landingPartnerName`</td><td>`string`</td><td>落地合作方筛选</td></tr>
+<tr><td>`routeName`</td><td>`string`</td><td>线路筛选</td></tr>
+</table>
+<h3>返回 JSON 示例</h3>
+<p>说明：以下为当前真实返回的前 3 个 bucket 截取。</p>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;granularity&quot;: &quot;day&quot;,
+    &quot;items&quot;: [
+      {
+        &quot;date&quot;: &quot;1970-01-01&quot;,
+        &quot;waybillCount&quot;: 1,
+        &quot;grossFreightAmount&quot;: 4021.04,
+        &quot;platformIncome&quot;: 200
+      },
+      {
+        &quot;date&quot;: &quot;2025-10-28&quot;,
+        &quot;waybillCount&quot;: 8,
+        &quot;grossFreightAmount&quot;: 13537.14,
+        &quot;platformIncome&quot;: 1600
+      },
+      {
+        &quot;date&quot;: &quot;2025-10-29&quot;,
+        &quot;waybillCount&quot;: 10,
+        &quot;grossFreightAmount&quot;: 18063.45,
+        &quot;platformIncome&quot;: 2000
+      }
+    ]
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.granularity`</td><td>`string`</td><td>聚合粒度</td><td>可用</td><td>否</td><td>默认 `day`</td></tr>
+<tr><td>`data.items[].date`</td><td>`string`</td><td>时间桶标签</td><td>部分可用</td><td>否</td><td>当前无筛选全量会出现 `1970-01-01` 脏日期桶，建议带日期范围</td></tr>
+<tr><td>`data.items[].waybillCount`</td><td>`number`</td><td>该时间桶运单去重数</td><td>可用</td><td>是</td><td>已恢复，可直接用于业务规模趋势图</td></tr>
+<tr><td>`data.items[].grossFreightAmount`</td><td>`number`</td><td>该时间桶撮合业务总额</td><td>可用</td><td>是</td><td>已恢复，可直接用于金额趋势图</td></tr>
+<tr><td>`data.items[].platformIncome`</td><td>`number`</td><td>该时间桶平台收益</td><td>可用</td><td>是</td><td>已恢复，可与收益趋势图对齐</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li>`data.items[].date`</li>
+<li>`data.items[].waybillCount`</li>
+<li>`data.items[].grossFreightAmount`</li>
+<li>`data.items[].platformIncome`</li>
+</ul>
+<h3>暂不建议用于山海鲸首版展示的字段</h3>
+<ul>
+<li>不带日期范围的全量趋势：会出现 `1970-01-01` 首桶，影响图表展示</li>
+</ul>
+<hr>
+<h2>4. /api/dashboard/partner-top</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/partner-top`</p>
+<h3>接口用途</h3>
+<p>用于输出合作方贡献 TOP 榜单。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>开始日期</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>结束日期</td></tr>
+<tr><td>`partnerName`</td><td>`string`</td><td>合作方筛选</td></tr>
+<tr><td>`landingPartnerName`</td><td>`string`</td><td>落地合作方筛选</td></tr>
+<tr><td>`routeName`</td><td>`string`</td><td>线路筛选</td></tr>
+<tr><td>`limit`</td><td>`number`</td><td>返回条数，默认 `10`</td></tr>
+<tr><td>`sortBy`</td><td>`string`</td><td>`platformIncome / waybillCount / grossFreightAmount`，默认 `platformIncome`</td></tr>
+</table>
+<h3>返回 JSON 示例</h3>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;dimension&quot;: &quot;partner&quot;,
+    &quot;sortBy&quot;: &quot;platformIncome&quot;,
+    &quot;items&quot;: [
+      {
+        &quot;partnerName&quot;: &quot;金罗&quot;,
+        &quot;waybillCount&quot;: 13023,
+        &quot;grossFreightAmount&quot;: 32177862.77,
+        &quot;platformIncome&quot;: 2604600,
+        &quot;avgIncomePerWaybill&quot;: 200
+      }
+    ]
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.dimension`</td><td>`string`</td><td>维度标识，固定 `partner`</td><td>可用</td><td>否</td><td>固定值</td></tr>
+<tr><td>`data.sortBy`</td><td>`string`</td><td>当前排序字段</td><td>可用</td><td>否</td><td>默认 `platformIncome`</td></tr>
+<tr><td>`data.items[].partnerName`</td><td>`string`</td><td>合作方名称</td><td>可用</td><td>否</td><td>当前映射 `revenue_records.financier_name`，真实值当前只有 `金罗`</td></tr>
+<tr><td>`data.items[].waybillCount`</td><td>`number`</td><td>该合作方运单去重数</td><td>可用</td><td>是</td><td>已恢复</td></tr>
+<tr><td>`data.items[].grossFreightAmount`</td><td>`number`</td><td>该合作方撮合业务总额</td><td>可用</td><td>是</td><td>已恢复</td></tr>
+<tr><td>`data.items[].platformIncome`</td><td>`number`</td><td>该合作方平台收益</td><td>可用</td><td>是</td><td>已恢复</td></tr>
+<tr><td>`data.items[].avgIncomePerWaybill`</td><td>`number`</td><td>单票平均收益</td><td>可用</td><td>是</td><td>当前真实值 `200`</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li>`data.items[].partnerName`</li>
+<li>`data.items[].waybillCount`</li>
+<li>`data.items[].grossFreightAmount`</li>
+<li>`data.items[].platformIncome`</li>
+<li>`data.items[].avgIncomePerWaybill`</li>
+</ul>
+<h3>暂不建议用于山海鲸首版展示的字段</h3>
+<ul>
+<li>暂无必须下线的字段</li>
+<li>但当前只有 `金罗` 1 个合作方，多分类排行图的信息密度偏低，适合榜单卡片，不太适合复杂对比图</li>
+</ul>
+<hr>
+<h2>5. /api/dashboard/landing-partner-top</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/landing-partner-top`</p>
+<h3>接口用途</h3>
+<p>用于输出落地合作方贡献 TOP 榜单。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>开始日期</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>结束日期</td></tr>
+<tr><td>`partnerName`</td><td>`string`</td><td>合作方筛选</td></tr>
+<tr><td>`landingPartnerName`</td><td>`string`</td><td>落地合作方筛选</td></tr>
+<tr><td>`routeName`</td><td>`string`</td><td>线路筛选</td></tr>
+<tr><td>`limit`</td><td>`number`</td><td>返回条数，默认 `10`</td></tr>
+<tr><td>`sortBy`</td><td>`string`</td><td>`platformIncome / waybillCount / grossFreightAmount`</td></tr>
+</table>
+<h3>返回 JSON 示例</h3>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;dimension&quot;: &quot;landingPartner&quot;,
+    &quot;sortBy&quot;: &quot;platformIncome&quot;,
+    &quot;items&quot;: [
+      {
+        &quot;landingPartnerName&quot;: &quot;未命名落地合作方&quot;,
+        &quot;waybillCount&quot;: 13023,
+        &quot;grossFreightAmount&quot;: 32177862.77,
+        &quot;platformIncome&quot;: 2604600,
+        &quot;avgIncomePerWaybill&quot;: 200
+      }
+    ]
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.dimension`</td><td>`string`</td><td>维度标识，固定 `landingPartner`</td><td>可用</td><td>否</td><td>固定值</td></tr>
+<tr><td>`data.sortBy`</td><td>`string`</td><td>当前排序字段</td><td>可用</td><td>否</td><td>固定可返回</td></tr>
+<tr><td>`data.items[].landingPartnerName`</td><td>`string`</td><td>落地合作方名称</td><td>部分可用</td><td>否</td><td>当前只有 fallback bucket `未命名落地合作方`，不是真实业务维度</td></tr>
+<tr><td>`data.items[].waybillCount`</td><td>`number`</td><td>该落地合作方运单去重数</td><td>部分可用</td><td>是</td><td>数值可返回，但都聚在 fallback bucket 上</td></tr>
+<tr><td>`data.items[].grossFreightAmount`</td><td>`number`</td><td>该落地合作方撮合业务总额</td><td>部分可用</td><td>是</td><td>同上</td></tr>
+<tr><td>`data.items[].platformIncome`</td><td>`number`</td><td>该落地合作方平台收益</td><td>部分可用</td><td>是</td><td>同上</td></tr>
+<tr><td>`data.items[].avgIncomePerWaybill`</td><td>`number`</td><td>单票平均收益</td><td>部分可用</td><td>是</td><td>同上</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li>暂无推荐字段</li>
+</ul>
+<h3>暂不建议用于山海鲸首版展示的字段</h3>
+<ul>
+<li>`data.items[].landingPartnerName`</li>
+<li>`data.items[].waybillCount`</li>
+<li>`data.items[].grossFreightAmount`</li>
+<li>`data.items[].platformIncome`</li>
+<li>`data.items[].avgIncomePerWaybill`</li>
+</ul>
+<p>原因：接口能返回，但当前只有 `未命名落地合作方` fallback bucket，不建议把它当真实落地合作方维度上屏。</p>
+<hr>
+<h2>6. /api/dashboard/income-structure</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/income-structure`</p>
+<h3>接口用途</h3>
+<p>用于输出收益构成，当前仅区分待结算收益与已结算收益。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>开始日期</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>结束日期</td></tr>
+<tr><td>`partnerName`</td><td>`string`</td><td>合作方筛选</td></tr>
+<tr><td>`landingPartnerName`</td><td>`string`</td><td>落地合作方筛选</td></tr>
+<tr><td>`routeName`</td><td>`string`</td><td>线路筛选</td></tr>
+</table>
+<h3>返回 JSON 示例</h3>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;items&quot;: [
+      {
+        &quot;name&quot;: &quot;待结算收益&quot;,
+        &quot;value&quot;: 2604600
+      },
+      {
+        &quot;name&quot;: &quot;已结算收益&quot;,
+        &quot;value&quot;: 0
+      }
+    ]
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.items[0].name`</td><td>`string`</td><td>固定为 `待结算收益`</td><td>可用</td><td>否</td><td>固定名称</td></tr>
+<tr><td>`data.items[0].value`</td><td>`number`</td><td>待结算收益</td><td>可用</td><td>是</td><td>当前真实值 `2604600`</td></tr>
+<tr><td>`data.items[1].name`</td><td>`string`</td><td>固定为 `已结算收益`</td><td>可用</td><td>否</td><td>固定名称</td></tr>
+<tr><td>`data.items[1].value`</td><td>`number`</td><td>已结算收益</td><td>当前不可用</td><td>当前固定为 0</td><td>当前无 `accounted` 状态</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li>如果只是取单值卡，可单独取 `data.items[0].value`</li>
+</ul>
+<h3>暂不建议用于山海鲸首版展示的字段</h3>
+<ul>
+<li>整个“收益构成图”模块：当前只有“待结算收益”有值，“已结算收益”固定 `0`，结构图信息量不足</li>
+<li>`data.items[1].value`：当前固定 `0`</li>
+</ul>
+<hr>
+<h2>7. /api/dashboard/settlement-progress</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/settlement-progress`</p>
+<h3>接口用途</h3>
+<p>用于输出收益记录在结算流程各阶段的进度分布。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>开始日期</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>结束日期</td></tr>
+<tr><td>`partnerName`</td><td>`string`</td><td>合作方筛选</td></tr>
+<tr><td>`landingPartnerName`</td><td>`string`</td><td>落地合作方筛选</td></tr>
+<tr><td>`routeName`</td><td>`string`</td><td>线路筛选</td></tr>
+</table>
+<h3>返回 JSON 示例</h3>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;recordProgress&quot;: [
+      {
+        &quot;stage&quot;: &quot;收益记录&quot;,
+        &quot;count&quot;: 13023,
+        &quot;amount&quot;: 2604600
+      },
+      {
+        &quot;stage&quot;: &quot;已生成对账单&quot;,
+        &quot;count&quot;: 0,
+        &quot;amount&quot;: 0
+      },
+      {
+        &quot;stage&quot;: &quot;对账完成&quot;,
+        &quot;count&quot;: 0,
+        &quot;amount&quot;: 0
+      },
+      {
+        &quot;stage&quot;: &quot;已生成结算单&quot;,
+        &quot;count&quot;: 0,
+        &quot;amount&quot;: 0
+      },
+      {
+        &quot;stage&quot;: &quot;已入账&quot;,
+        &quot;count&quot;: 0,
+        &quot;amount&quot;: 0
+      }
+    ]
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.recordProgress[0].stage`</td><td>`string`</td><td>固定为 `收益记录`</td><td>可用</td><td>否</td><td>固定名称</td></tr>
+<tr><td>`data.recordProgress[0].count`</td><td>`number`</td><td>收益记录阶段记录数</td><td>可用</td><td>是</td><td>当前真实值 `13023`</td></tr>
+<tr><td>`data.recordProgress[0].amount`</td><td>`number`</td><td>收益记录阶段金额</td><td>可用</td><td>是</td><td>当前真实值 `2604600`</td></tr>
+<tr><td>`data.recordProgress[1].stage`</td><td>`string`</td><td>固定为 `已生成对账单`</td><td>可用</td><td>否</td><td>固定名称</td></tr>
+<tr><td>`data.recordProgress[1].count`</td><td>`number`</td><td>已生成对账单阶段记录数</td><td>当前不可用</td><td>当前固定为 0</td><td>当前没有 `reconciling/reconciled/settled/accounted` 数据沉淀</td></tr>
+<tr><td>`data.recordProgress[1].amount`</td><td>`number`</td><td>已生成对账单阶段金额</td><td>当前不可用</td><td>当前固定为 0</td><td>同上</td></tr>
+<tr><td>`data.recordProgress[2].stage`</td><td>`string`</td><td>固定为 `对账完成`</td><td>可用</td><td>否</td><td>固定名称</td></tr>
+<tr><td>`data.recordProgress[2].count`</td><td>`number`</td><td>对账完成阶段记录数</td><td>当前不可用</td><td>当前固定为 0</td><td>当前没有 `reconciled/settled/accounted` 数据</td></tr>
+<tr><td>`data.recordProgress[2].amount`</td><td>`number`</td><td>对账完成阶段金额</td><td>当前不可用</td><td>当前固定为 0</td><td>同上</td></tr>
+<tr><td>`data.recordProgress[3].stage`</td><td>`string`</td><td>固定为 `已生成结算单`</td><td>可用</td><td>否</td><td>固定名称</td></tr>
+<tr><td>`data.recordProgress[3].count`</td><td>`number`</td><td>已生成结算单阶段记录数</td><td>当前不可用</td><td>当前固定为 0</td><td>当前没有 `settled/accounted` 数据</td></tr>
+<tr><td>`data.recordProgress[3].amount`</td><td>`number`</td><td>已生成结算单阶段金额</td><td>当前不可用</td><td>当前固定为 0</td><td>同上</td></tr>
+<tr><td>`data.recordProgress[4].stage`</td><td>`string`</td><td>固定为 `已入账`</td><td>可用</td><td>否</td><td>固定名称</td></tr>
+<tr><td>`data.recordProgress[4].count`</td><td>`number`</td><td>已入账阶段记录数</td><td>当前不可用</td><td>当前固定为 0</td><td>当前没有 `accounted`</td></tr>
+<tr><td>`data.recordProgress[4].amount`</td><td>`number`</td><td>已入账阶段金额</td><td>当前不可用</td><td>当前固定为 0</td><td>同上</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li>如果只是做单值卡，可用 `data.recordProgress[0].count`</li>
+<li>如果只是做单值卡，可用 `data.recordProgress[0].amount`</li>
+</ul>
+<h3>暂不建议用于山海鲸首版展示的字段</h3>
+<ul>
+<li>整个完整“结算进度流程图”模块：当前只有第一档有值，后四档全部为 `0`</li>
+<li>`data.recordProgress[1..4].count / amount`：当前都不适合作为首版图表主数据</li>
+</ul>
+<hr>
+<h2>8. /api/dashboard/partner-efficiency</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/partner-efficiency`</p>
+<h3>接口用途</h3>
+<p>用于输出合作方效率散点/气泡图数据。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>开始日期</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>结束日期</td></tr>
+<tr><td>`partnerName`</td><td>`string`</td><td>合作方筛选</td></tr>
+<tr><td>`landingPartnerName`</td><td>`string`</td><td>落地合作方筛选</td></tr>
+<tr><td>`routeName`</td><td>`string`</td><td>线路筛选</td></tr>
+<tr><td>`limit`</td><td>`number`</td><td>返回条数，默认 `50`</td></tr>
+</table>
+<h3>返回 JSON 示例</h3>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;items&quot;: [
+      {
+        &quot;partnerName&quot;: &quot;金罗&quot;,
+        &quot;xWaybillCount&quot;: 13023,
+        &quot;yPlatformIncome&quot;: 2604600,
+        &quot;bubbleGrossFreightAmount&quot;: 32177862.77
+      }
+    ]
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.items[].partnerName`</td><td>`string`</td><td>合作方名称</td><td>可用</td><td>否</td><td>当前真实值只有 `金罗`</td></tr>
+<tr><td>`data.items[].xWaybillCount`</td><td>`number`</td><td>散点图 X 轴，运单量</td><td>可用</td><td>是</td><td>已恢复</td></tr>
+<tr><td>`data.items[].yPlatformIncome`</td><td>`number`</td><td>散点图 Y 轴，平台收益</td><td>可用</td><td>是</td><td>已恢复</td></tr>
+<tr><td>`data.items[].bubbleGrossFreightAmount`</td><td>`number`</td><td>气泡大小，撮合业务总额</td><td>可用</td><td>是</td><td>已恢复</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li>`data.items[].partnerName`</li>
+<li>`data.items[].xWaybillCount`</li>
+<li>`data.items[].yPlatformIncome`</li>
+<li>`data.items[].bubbleGrossFreightAmount`</li>
+</ul>
+<h3>暂不建议用于山海鲸首版展示的字段</h3>
+<ul>
+<li>暂无必须下线字段</li>
+<li>但当前只有 1 个合作方散点，做效率散点图的信息密度偏低，更适合作为备选模块</li>
+</ul>
+<hr>
+<h2>9. /api/dashboard/platform-revenue/overview（补充接口）</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/platform-revenue/overview`</p>
+<h3>接口用途</h3>
+<p>旧口径平台收入概览，返回所有 `record_type=&#x27;revenue&#x27;` 的总收益。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>接口接受，但当前实现实际忽略</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>接口接受，但当前实现实际忽略</td></tr>
+</table>
+<h3>返回 JSON 示例</h3>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;totalRevenue&quot;: 2995992.69
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.totalRevenue`</td><td>`number`</td><td>平台收入总额，旧口径</td><td>可用</td><td>是</td><td>当前真实值 `2995992.69`，但不是 dashboard 统一 `waybill_commission` 口径，且忽略日期参数</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li>暂无推荐字段</li>
+</ul>
+<h3>暂不建议用于山海鲸首版展示的字段</h3>
+<ul>
+<li>`data.totalRevenue`：旧口径、忽略日期，不建议与新 dashboard 字段混绑</li>
+</ul>
+<hr>
+<h2>10. /api/dashboard/waybills/overview（补充接口）</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/waybills/overview`</p>
+<h3>接口用途</h3>
+<p>旧口径运单总览，返回运单总数与应收总额。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`customerName`</td><td>`string`</td><td>客户名称</td></tr>
+<tr><td>`contractNumber`</td><td>`string`</td><td>合同编号</td></tr>
+<tr><td>`businessMode`</td><td>`string`</td><td>业务模式</td></tr>
+<tr><td>`status`</td><td>`string`</td><td>运单状态</td></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>开始日期</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>结束日期</td></tr>
+<tr><td>`waybillNumber`</td><td>`string`</td><td>运单号</td></tr>
+<tr><td>`vehiclePlate`</td><td>`string`</td><td>车牌号</td></tr>
+<tr><td>`batchStatus`</td><td>`string`</td><td>批次状态</td></tr>
+<tr><td>`batchSource`</td><td>`string`</td><td>批次来源</td></tr>
+</table>
+<h3>返回 JSON 示例</h3>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;waybillCount&quot;: 13528,
+    &quot;totalReceivable&quot;: 32177862.77
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.waybillCount`</td><td>`number`</td><td>旧口径运单总数</td><td>可用</td><td>是</td><td>当前真实值 `13528`，来自 `waybills` 表，不等同于 dashboard 的 `totalWaybillCount`</td></tr>
+<tr><td>`data.totalReceivable`</td><td>`number`</td><td>旧口径运单应收总额</td><td>可用</td><td>是</td><td>当前真实值 `32177862.77`，不建议与 `grossFreightAmount` 当同一字段混用</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li>暂无推荐字段</li>
+</ul>
+<h3>暂不建议用于山海鲸首版展示的字段</h3>
+<ul>
+<li>`data.waybillCount`</li>
+<li>`data.totalReceivable`</li>
+</ul>
+<p>原因：这是旧运单口径，和新 dashboard 聚合口径不同，容易与 `overview.totalWaybillCount / grossFreightAmount` 混淆。</p>
+<hr>
+<h2>总表</h2>
+<table>
+<tr><th>接口</th><th>是否可用于山海鲸首版</th><th>推荐程度</th><th>原因</th></tr>
+<tr><td>`/api/dashboard/overview`</td><td>是</td><td>高</td><td>核心 KPI 已恢复，除 `settledIncome / effectiveContractCount / landingPartnerCount` 外，其他主字段可直接上屏</td></tr>
+<tr><td>`/api/dashboard/income-trend`</td><td>是</td><td>高</td><td>趋势值已恢复，适合首版趋势图；但务必带 `startDate/endDate`，避免全历史出现 `1970-01-01` 首桶</td></tr>
+<tr><td>`/api/dashboard/business-trend`</td><td>是</td><td>高</td><td>经营规模与收益趋势都可用；同样建议强制传日期范围</td></tr>
+<tr><td>`/api/dashboard/partner-top`</td><td>是</td><td>高</td><td>字段已恢复，可直接做榜单；当前只有 `金罗` 1 项，信息密度略低但可展示</td></tr>
+<tr><td>`/api/dashboard/landing-partner-top`</td><td>否</td><td>低</td><td>只有 fallback bucket `未命名落地合作方`，不是真实业务维度</td></tr>
+<tr><td>`/api/dashboard/income-structure`</td><td>否</td><td>低</td><td>当前只有“待结算收益”有值，“已结算收益”固定 `0`，结构图信息量不足</td></tr>
+<tr><td>`/api/dashboard/settlement-progress`</td><td>否</td><td>低</td><td>当前仅第一档有值，后四档固定 `0`，完整流程图不建议首版上屏</td></tr>
+<tr><td>`/api/dashboard/partner-efficiency`</td><td>是</td><td>中</td><td>字段可用，但当前只有 1 个合作方散点，更适合作为备选模块</td></tr>
+<tr><td>`/api/dashboard/platform-revenue/overview`</td><td>否</td><td>低</td><td>旧口径且忽略日期，不建议与统一 dashboard 混用</td></tr>
+<tr><td>`/api/dashboard/waybills/overview`</td><td>否</td><td>低</td><td>旧口径运单概览，不建议与 dashboard 统一口径同屏混用</td></tr>
+</table>
+<hr>
+<h2>山海鲸首版配置建议</h2>
+<h3>建议优先上屏的模块</h3>
+<ol>
+<li>经营总览</li>
+<li>收益趋势</li>
+<li>经营趋势</li>
+<li>合作方贡献 TOP</li>
+<li>合作方效率分析</li>
+</ol>
+<h3>建议先隐藏或延后的模块</h3>
+<ol>
+<li>落地合作方贡献 TOP</li>
+</ol>
+<ul>
+<li>原因：当前只有 fallback bucket `未命名落地合作方`</li>
+</ul>
+<ol>
+<li>收益构成图</li>
+</ol>
+<ul>
+<li>原因：当前只有待结算收益有值，结构图信息量不足</li>
+</ul>
+<ol>
+<li>结算进度完整流程图</li>
+</ol>
+<ul>
+<li>原因：当前仅第一档有值，后续阶段尚无真实状态沉淀</li>
+</ul>
+<h3>接入注意事项</h3>
+<ol>
+<li>趋势类接口首版统一传 `startDate`、`endDate`</li>
+<li>不要将旧接口字段与新 dashboard 字段混用</li>
+<li>`partnerName` 当前实际映射 `revenue_records.financier_name`，属于现阶段聚合展示字段</li>
+<li>`landingPartner`、`effectiveContractCount` 当前不要作为首版核心指标绑定</li>
+</ol>
+</body></html>
