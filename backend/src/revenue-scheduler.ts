@@ -22,6 +22,52 @@ function formatDateOnly(value: Date | string): string {
   return text;
 }
 
+function buildWaybillRevenueDateSql(waybillAlias: string, financierAlias: string): string {
+  return `CASE
+    WHEN ${financierAlias}.enterprise_name = '融满'
+      THEN COALESCE(DATE(${waybillAlias}.created_time), DATE(${waybillAlias}.departure_time), DATE(${waybillAlias}.waybill_date), DATE(${waybillAlias}.created_at))
+    ELSE COALESCE(DATE(${waybillAlias}.waybill_date), DATE(${waybillAlias}.created_time), DATE(${waybillAlias}.departure_time), DATE(${waybillAlias}.created_at))
+  END`;
+}
+
+async function repairWaybillCommissionIntegrity(): Promise<{ relinked: number; deduped: number }> {
+  const [relinkResult] = await pool.query<ResultSetHeader>(`
+    UPDATE revenue_records rr
+    LEFT JOIN waybills w_current
+      ON rr.waybill_id = w_current.id
+     AND w_current.deleted_at IS NULL
+    JOIN waybills w_target
+      ON rr.contract_number = w_target.waybill_number
+     AND w_target.deleted_at IS NULL
+    LEFT JOIN financiers f_target ON w_target.customer_id = f_target.id
+    SET rr.waybill_id = w_target.id,
+        rr.contract_id = COALESCE(w_target.customer_id, rr.contract_id),
+        rr.financier_id = COALESCE(w_target.customer_id, rr.financier_id),
+        rr.financier_name = COALESCE(f_target.enterprise_name, rr.financier_name)
+    WHERE rr.source_type = 'waybill_commission'
+      AND rr.contract_number IS NOT NULL
+      AND rr.status NOT IN ('reconciling', 'reconciled', 'settled', 'accounted')
+      AND (rr.waybill_id IS NULL OR w_current.id IS NULL OR rr.waybill_id <> w_target.id)
+  `);
+
+  const [dedupeResult] = await pool.query<ResultSetHeader>(`
+    DELETE rr_drop
+    FROM revenue_records rr_drop
+    JOIN revenue_records rr_keep
+      ON rr_drop.source_type = 'waybill_commission'
+     AND rr_keep.source_type = 'waybill_commission'
+     AND rr_drop.contract_number = rr_keep.contract_number
+     AND rr_drop.id <> rr_keep.id
+    WHERE rr_drop.status = 'confirmed'
+      AND rr_keep.status IN ('reconciling', 'reconciled', 'settled', 'accounted')
+  `);
+
+  return {
+    relinked: Number(relinkResult.affectedRows || 0),
+    deduped: Number(dedupeResult.affectedRows || 0),
+  };
+}
+
 /**
  * 每日收益计算任务
  */
@@ -356,28 +402,23 @@ export async function createCommissionFeeRecord(params: {
  */
 export async function calculateWaybillPlatformRevenue(): Promise<number> {
   try {
+    const repairResult = await repairWaybillCommissionIntegrity();
+    if (repairResult.relinked > 0 || repairResult.deduped > 0) {
+      console.log(
+        `[WaybillRevenue] 数据修复: 回链 ${repairResult.relinked} 条, 去重 ${repairResult.deduped} 条`
+      );
+    }
+
+    const revenueDateExpr = buildWaybillRevenueDateSql("w", "f");
     const [backfillRevenueDateResult] = await pool.query<ResultSetHeader>(`
       UPDATE revenue_records rr
       JOIN waybills w ON rr.waybill_id = w.id
       LEFT JOIN financiers f ON w.customer_id = f.id
-      SET rr.revenue_date = COALESCE(
-        CASE
-          WHEN f.enterprise_name = '融满'
-            THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), rr.revenue_date)
-          ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date)
-        END,
-        rr.revenue_date
-      )
+      SET rr.revenue_date = COALESCE(${revenueDateExpr}, rr.revenue_date)
       WHERE rr.source_type = 'waybill_commission'
         AND w.deleted_at IS NULL
-        AND rr.revenue_date <> COALESCE(
-          CASE
-            WHEN f.enterprise_name = '融满'
-              THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), rr.revenue_date)
-            ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date)
-          END,
-          rr.revenue_date
-        )
+        AND rr.status NOT IN ('reconciling', 'reconciled', 'settled', 'accounted')
+        AND rr.revenue_date <> COALESCE(${revenueDateExpr}, rr.revenue_date)
     `);
     if (Number(backfillRevenueDateResult.affectedRows || 0) > 0) {
       console.log(`[WaybillRevenue] 已按最新口径回填历史收益日期 ${backfillRevenueDateResult.affectedRows} 条`);
@@ -460,9 +501,11 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
        FROM waybills w
        LEFT JOIN financiers f ON w.customer_id = f.id
        LEFT JOIN revenue_records rr ON rr.waybill_id = w.id AND rr.source_type = 'waybill_commission'
+       LEFT JOIN revenue_records rr_cn ON rr_cn.contract_number = w.waybill_number AND rr_cn.source_type = 'waybill_commission'
        WHERE w.deleted_at IS NULL
          AND w.customer_id IN (${placeholders})
-         AND rr.id IS NULL`,
+         AND rr.id IS NULL
+         AND rr_cn.id IS NULL`,
       financierIds
     );
 
@@ -513,11 +556,11 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
 
       // 收益日期口径：
       // - 融满：created_time（TMS发车时间）优先
-      // - 其他：保持入库时间(created_at)优先
+      // - 其他：使用运单业务日期（waybill_date）优先
       const isRongman = String(w.financier_name || routeConfig.financierName || "").trim() === "融满";
       const revenueDateSource = isRongman
         ? (w.created_time || w.departure_time || w.waybill_date || w.created_at)
-        : (w.created_at || w.created_time || w.departure_time || w.waybill_date);
+        : (w.waybill_date || w.created_time || w.departure_time || w.created_at);
       const revenueDate = revenueDateSource
         ? formatDateOnly(revenueDateSource)
         : new Date().toISOString().split('T')[0];
@@ -565,6 +608,14 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
   totalAffected: number;
 }> {
   try {
+    const repairResult = await repairWaybillCommissionIntegrity();
+    if (repairResult.relinked > 0 || repairResult.deduped > 0) {
+      console.log(
+        `[WaybillRevenue] 历史回算前数据修复: 回链 ${repairResult.relinked} 条, 去重 ${repairResult.deduped} 条`
+      );
+    }
+
+    const revenueDateExpr = buildWaybillRevenueDateSql("w", "f");
     const [updateResult] = await pool.query<ResultSetHeader>(`
       UPDATE revenue_records rr
       JOIN waybills w ON rr.waybill_id = w.id
@@ -590,16 +641,13 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
         END,
         rr.record_type = 'revenue',
         rr.beneficiary_type = 'platform',
-        rr.revenue_date = CASE
-          WHEN f.enterprise_name = '融满'
-            THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), rr.revenue_date)
-          ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), rr.revenue_date)
-        END,
+        rr.revenue_date = COALESCE(${revenueDateExpr}, rr.revenue_date),
         rr.status = 'confirmed'
       WHERE rr.source_type = 'waybill_commission'
         AND w.deleted_at IS NULL
         AND f.deleted_at IS NULL
         AND f.enterprise_name IN ('融满', '金罗')
+        AND rr.status NOT IN ('reconciling', 'reconciled', 'settled', 'accounted')
     `);
 
     const [insertResult] = await pool.query<ResultSetHeader>(`
@@ -627,11 +675,7 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
           WHEN f.enterprise_name = '融满' THEN 0.025
           ELSE 0
         END AS rate,
-        CASE
-          WHEN f.enterprise_name = '融满'
-            THEN COALESCE(DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), DATE(w.created_at), CURRENT_DATE)
-          ELSE COALESCE(DATE(w.created_at), DATE(w.created_time), DATE(w.departure_time), DATE(w.waybill_date), CURRENT_DATE)
-        END AS revenue_date,
+        COALESCE(${revenueDateExpr}, CURRENT_DATE) AS revenue_date,
         'confirmed' AS status,
         w.id AS waybill_id
       FROM waybills w
@@ -639,10 +683,14 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
       LEFT JOIN revenue_records rr
         ON rr.waybill_id = w.id
        AND rr.source_type = 'waybill_commission'
+      LEFT JOIN revenue_records rr_cn
+        ON rr_cn.contract_number = w.waybill_number
+       AND rr_cn.source_type = 'waybill_commission'
       WHERE w.deleted_at IS NULL
         AND f.deleted_at IS NULL
         AND f.enterprise_name IN ('融满', '金罗')
         AND rr.id IS NULL
+        AND rr_cn.id IS NULL
         AND (f.enterprise_name <> '融满' OR COALESCE(w.payable_total, 0) > 0)
     `);
 

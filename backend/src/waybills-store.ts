@@ -174,6 +174,13 @@ interface WaybillRow extends RowDataPacket {
   area_name: string | null;
 }
 
+function normalizeWeightToTon(value: unknown): number {
+  const raw = Number(value);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  // 兼容历史口径：部分存量数据以 kg 入库，当前统一按吨输出
+  return raw >= 1000 ? raw / 1000 : raw;
+}
+
 function mapWaybillRow(row: WaybillRow): Waybill {
   return {
     id: row.id,
@@ -234,7 +241,10 @@ function mapWaybillRow(row: WaybillRow): Waybill {
     businessMode: row.business_mode || undefined,
     driverPhone: row.driver_phone || undefined,
     goodsName: row.goods_name || undefined,
-    goodsWeight: row.goods_weight ? Number(row.goods_weight) : undefined,
+    goodsWeight:
+      row.goods_weight === null || row.goods_weight === undefined
+        ? undefined
+        : normalizeWeightToTon(row.goods_weight),
     freightAmount: row.freight_amount ? Number(row.freight_amount) : undefined,
     oilCardAmount: row.oil_card_amount ? Number(row.oil_card_amount) : undefined,
     etcAmount: row.etc_amount ? Number(row.etc_amount) : undefined,

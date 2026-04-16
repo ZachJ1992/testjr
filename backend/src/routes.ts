@@ -179,6 +179,7 @@ import { syncPaymentCodeToTms, verifyTmsCallback, type TmsCallbackPayload } from
 import path from "path";
 import fs from "fs/promises";
 import { resolveWaybillAccessScope } from "./waybills-query.js";
+import { getWaybillsOverview } from "./waybills-store.js";
 
 const router = Router();
 
@@ -1911,6 +1912,56 @@ router.get(
         customerIds: scope.customerIds,
       });
       res.json({ waybills });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/waybills/overview",
+  authenticate,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const {
+        customerName,
+        contractNumber,
+        businessMode,
+        status,
+        startDate,
+        endDate,
+        waybillNumber,
+        vehiclePlate,
+        batchStatus,
+        batchSource,
+        routeName,
+        areaId,
+      } = req.query ?? {};
+
+      const scope = await resolveWaybillAccessScope(req.orgContext);
+      const overview = await getWaybillsOverview(
+        {
+          customerName: customerName as string,
+          contractNumber: contractNumber as string,
+          businessMode: businessMode as any,
+          status: status as any,
+          startDate: startDate as string,
+          endDate: endDate as string,
+          waybillNumber: waybillNumber as string,
+          vehiclePlate: vehiclePlate as string,
+          batchStatus: batchStatus as string,
+          batchSource: batchSource as string,
+          routeName: routeName as string,
+          areaId: areaId as string,
+        },
+        {
+          customerId: scope.customerId,
+          customerIds: scope.customerIds,
+          emptyResult: scope.emptyResult,
+        }
+      );
+
+      res.json(overview);
     } catch (err) {
       handleError(res, req, 500, err);
     }

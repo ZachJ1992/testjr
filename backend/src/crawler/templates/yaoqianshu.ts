@@ -2125,6 +2125,13 @@ function parseNumber(value: any): number {
   return isNaN(num) ? 0 : num;
 }
 
+function parseWeightKgToTon(value: any): number {
+  const weightKg = parseNumber(value);
+  if (weightKg <= 0) return 0;
+  // zo-cloud batchList 的 b_tr_load_w_s 单位为 kg，系统统一按吨存储与展示
+  return weightKg / 1000;
+}
+
 function pickFirstPositiveNumber(candidates: any[]): number {
   for (const candidate of candidates) {
     const value = parseNumber(candidate);
@@ -2217,7 +2224,7 @@ function mapFields(rawData: any): WaybillData {
     departurePlace,
     arrivalPlace,
 
-    weight: parseNumber(item.b_tr_load_w_s),
+    weight: parseWeightKgToTon(item.b_tr_load_w_s),
     volume: parseNumber(item.b_tr_load_v_s),
 
     freight: receivableTotal,

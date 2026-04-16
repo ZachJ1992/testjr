@@ -204,13 +204,29 @@ function ProfitSharingSettlementPage() {
   const formatAmount = (n: number) =>
     `¥${n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  const renderCompactNames = useCallback((value?: string, color: "cyan" | "blue" = "cyan") => {
+  const renderCompactNames = useCallback((
+    value?: string,
+    color: "cyan" | "blue" = "cyan",
+    maxWidth: number = 180
+  ) => {
     const names = splitDisplayNames(value);
     if (names.length === 0) return "-";
     if (names.length === 1) {
       return (
         <Tooltip title={names[0]}>
-          <Tag color={color} style={{ marginInlineEnd: 0, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>
+          <Tag
+            color={color}
+            style={{
+              marginInlineEnd: 0,
+              maxWidth,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              display: "inline-block",
+              lineHeight: "18px",
+              fontSize: 12,
+              paddingInline: 6,
+            }}
+          >
             {names[0]}
           </Tag>
         </Tooltip>
@@ -218,14 +234,26 @@ function ProfitSharingSettlementPage() {
     }
     const restCount = names.length - 1;
     return (
-      <Space size={4} wrap={false}>
+      <Space size={2} wrap={false}>
         <Tooltip title={names.join("、")}>
-          <Tag color={color} style={{ marginInlineEnd: 0, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>
+          <Tag
+            color={color}
+            style={{
+              marginInlineEnd: 0,
+              maxWidth,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              display: "inline-block",
+              lineHeight: "18px",
+              fontSize: 12,
+              paddingInline: 6,
+            }}
+          >
             {names[0]}
           </Tag>
         </Tooltip>
         <Tooltip title={names.slice(1).join("、")}>
-          <Text type="secondary">{`等${restCount}项`}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>{`+${restCount}`}</Text>
         </Tooltip>
       </Space>
     );
@@ -414,28 +442,52 @@ function ProfitSharingSettlementPage() {
 
   // 对账单表格列
   const batchColumns = [
-    { title: "对账单号", dataIndex: "batchNumber", key: "batchNumber", width: 160,
+    { title: "对账单号", dataIndex: "batchNumber", key: "batchNumber", width: 220, ellipsis: true,
       render: (v: string, r: ReconBatchType) => (
-        <Button type="link" size="small" style={{ padding: 0 }} onClick={() => handleViewBatchDetail(r)}>
-          <FileTextOutlined style={{ marginRight: 4 }} />{v}
-        </Button>
+        <Tooltip title={v}>
+          <Button
+            type="link"
+            size="small"
+            style={{
+              padding: 0,
+              maxWidth: "100%",
+              display: "inline-flex",
+              alignItems: "center",
+              overflow: "hidden",
+            }}
+            onClick={() => handleViewBatchDetail(r)}
+          >
+            <FileTextOutlined style={{ marginRight: 4, flex: "0 0 auto" }} />
+            <span
+              style={{
+                display: "inline-block",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                maxWidth: "100%",
+              }}
+            >
+              {v}
+            </span>
+          </Button>
+        </Tooltip>
       )},
-    { title: "合作方", dataIndex: "financierName", key: "financierName", width: 100 },
-    { title: "区域", dataIndex: "areaName", key: "areaName", width: 170,
-      render: (v: string) => v ? renderCompactNames(v, "blue") : <Tag>无区域</Tag> },
-    { title: "落地合作方", dataIndex: "localPartnerName", key: "localPartnerName", width: 240,
-      render: (v: string) => renderCompactNames(v, "cyan") },
-    { title: "对账周期", key: "period", width: 200,
+    { title: "合作方", dataIndex: "financierName", key: "financierName", width: 88, ellipsis: true },
+    { title: "区域", dataIndex: "areaName", key: "areaName", width: 120,
+      render: (v: string) => v ? renderCompactNames(v, "blue", 96) : <Tag style={{ marginInlineEnd: 0, paddingInline: 6, fontSize: 12 }}>无区域</Tag> },
+    { title: "落地合作方", dataIndex: "localPartnerName", key: "localPartnerName", width: 170,
+      render: (v: string) => renderCompactNames(v, "cyan", 138) },
+    { title: "对账周期", key: "period", width: 190,
       render: (_: any, r: ReconBatchType) => `${r.periodStart} ~ ${r.periodEnd}` },
-    { title: "记录数", dataIndex: "itemCount", key: "itemCount", width: 80, align: "center" as const },
-    { title: "合计金额", dataIndex: "totalAmount", key: "totalAmount", width: 120, align: "right" as const,
+    { title: "记录数", dataIndex: "itemCount", key: "itemCount", width: 70, align: "center" as const },
+    { title: "合计金额", dataIndex: "totalAmount", key: "totalAmount", width: 110, align: "right" as const,
       render: (v: number) => <Text strong style={{ color: "#1890ff" }}>{formatAmount(v)}</Text> },
-    { title: "状态", dataIndex: "status", key: "status", width: 120,
+    { title: "状态", dataIndex: "status", key: "status", width: 100,
       render: (s: string) => {
         const cfg = BATCH_STATUS_MAP[s] || { label: s, color: "default" };
         return <Tag color={cfg.color}>{cfg.label}</Tag>;
       }},
-    { title: "操作", key: "actions", width: 300,
+    { title: "操作", key: "actions", width: 250,
       render: (_: any, r: ReconBatchType) => {
         const actions: React.ReactNode[] = [];
 
@@ -483,7 +535,7 @@ function ProfitSharingSettlementPage() {
           );
         }
 
-        return <Space size={4}>{actions}</Space>;
+        return <Space size={4} wrap>{actions}</Space>;
       }},
   ];
 

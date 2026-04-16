@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Card, Row, Col, Statistic, Table, Select, DatePicker, Button, Space, Tag, message, Empty, Spin, Progress, Typography, Modal } from 'antd';
-import { DownloadOutlined, FileTextOutlined, TeamOutlined, UserOutlined, RiseOutlined, ArrowUpOutlined, ArrowDownOutlined, FileExcelOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Table, Select, DatePicker, Button, Space, Tag, Tooltip, message, Empty, Spin, Typography, Modal } from 'antd';
+import { FileTextOutlined, ArrowUpOutlined, ArrowDownOutlined, FileExcelOutlined, DollarOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import { Resizable } from 'react-resizable';
 import 'react-resizable/css/styles.css';
@@ -38,13 +38,16 @@ import {
   fetchPlatformRevenueStats,
   fetchPlatformRevenueList,
   fetchPlatformRevenueTrend,
+  fetchPlatformOperationTrend,
   fetchPlatformRevenueComposition,
   fetchPlatformRevenueFunderRanking,
   fetchPlatformRevenueFinancierRanking,
-  getPlatformRevenueExportUrl,
+  fetchWaybillOverview,
+  fetchCommissionContractStats,
   RevenueStats,
   RevenueRecord,
   RevenueTrendPoint,
+  OperationTrendPoint,
   RevenueComposition,
   RevenueRankItem,
   RevenueSourceType,
@@ -57,6 +60,8 @@ const { RangePicker } = DatePicker;
 
 // 时间范围快捷选项
 type TimeRange = 'today' | 'week' | 'month' | 'year' | 'custom';
+type DashboardView = 'revenue' | 'operation';
+type OperationMetricKey = 'waybillCount' | 'totalWeight' | 'activeRoutes';
 
 // 收益类型映射
 const SOURCE_TYPE_MAP: Record<string, string> = {
@@ -71,12 +76,15 @@ const PlatformRevenue: React.FC = () => {
   const { token } = useAuth();
   
   // 状态
-  const [timeRange, setTimeRange] = useState<TimeRange>('year');
+  const [timeRange, setTimeRange] = useState<TimeRange>('month');
   const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null);
-  const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month' | 'year'>('month');
+  const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month' | 'year'>('day');
+  const [dashboardView, setDashboardView] = useState<DashboardView>('revenue');
   
-  const [stats, setStats] = useState<RevenueStats | null>(null);
+  const [globalStats, setGlobalStats] = useState<RevenueStats | null>(null);
+  const [periodStats, setPeriodStats] = useState<RevenueStats | null>(null);
   const [trend, setTrend] = useState<RevenueTrendPoint[]>([]);
+  const [operationTrend, setOperationTrend] = useState<OperationTrendPoint[]>([]);
   const [composition, setComposition] = useState<RevenueComposition[]>([]);
   const [funderRanking, setFunderRanking] = useState<RevenueRankItem[]>([]);
   const [financierRanking, setFinancierRanking] = useState<RevenueRankItem[]>([]);
@@ -84,6 +92,10 @@ const PlatformRevenue: React.FC = () => {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [tableLoading, setTableLoading] = useState(false);
+  const [globalBrokerageTotal, setGlobalBrokerageTotal] = useState(0);
+  const [contractLocalPartnerCount, setContractLocalPartnerCount] = useState(0);
+  const [contractRouteCount, setContractRouteCount] = useState(0);
+  const [globalWaybillCount, setGlobalWaybillCount] = useState(0);
   
   // 筛选条件
   const [filters, setFilters] = useState({
@@ -103,6 +115,16 @@ const PlatformRevenue: React.FC = () => {
   const compositionChartRef = useRef<HTMLDivElement>(null);
   const trendChartInstance = useRef<echarts.ECharts | null>(null);
   const compositionChartInstance = useRef<echarts.ECharts | null>(null);
+  const operationChartRefs = useRef<Record<OperationMetricKey, HTMLDivElement | null>>({
+    waybillCount: null,
+    totalWeight: null,
+    activeRoutes: null,
+  });
+  const operationChartInstances = useRef<Record<OperationMetricKey, echarts.ECharts | null>>({
+    waybillCount: null,
+    totalWeight: null,
+    activeRoutes: null,
+  });
 
   // 计算日期范围
   const dateRange = useMemo(() => {
@@ -126,21 +148,78 @@ const PlatformRevenue: React.FC = () => {
     }
   }, [timeRange, customRange]);
 
+  const roundedGlobalBrokerageTotal = Math.round(globalBrokerageTotal || 0);
+  const operationMetricCards = useMemo(
+    () => [
+      {
+        key: 'waybillCount' as const,
+        title: '运单数量',
+        chartTitle: '运单数量趋势',
+        value: periodStats?.periodWaybills || 0,
+        accent: '#1890ff',
+        suffix: '单',
+        precision: 0,
+      },
+      {
+        key: 'totalWeight' as const,
+        title: '总吨位',
+        chartTitle: '总吨位趋势',
+        value: periodStats?.periodTotalWeight || 0,
+        accent: '#52c41a',
+        suffix: '吨',
+        precision: 2,
+      },
+      {
+        key: 'activeRoutes' as const,
+        title: '活跃线路数量',
+        chartTitle: '活跃线路数量趋势',
+        value: periodStats?.periodActiveRoutes || 0,
+        accent: '#722ed1',
+        suffix: '条',
+        precision: 0,
+      },
+    ],
+    [periodStats]
+  );
+
+  const getOperationMetricValue = useCallback((point: OperationTrendPoint, key: OperationMetricKey): number => {
+    if (key === 'waybillCount') return Number(point.waybillCount || 0);
+    if (key === 'totalWeight') return Number(point.totalWeight || 0);
+    return Number(point.activeRoutes || 0);
+  }, []);
+
   // 加载统计数据
   const loadData = async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const [statsRes, trendRes, compositionRes, funderRes, financierRes] = await Promise.all([
+      const [globalStatsRes, periodStatsRes, waybillOverviewRes, commissionStatsRes, trendRes, operationTrendRes, compositionRes, funderRes, financierRes] = await Promise.all([
+        fetchPlatformRevenueStats(token),
         fetchPlatformRevenueStats(token, dateRange),
+        fetchWaybillOverview(token),
+        fetchCommissionContractStats(token).catch(() => ({
+          totalCount: 0,
+          activeCount: 0,
+          totalConfigCount: 0,
+          avgRatio: 0,
+          localPartnerCount: 0,
+          routeCount: 0,
+        })),
         fetchPlatformRevenueTrend(token, { ...dateRange, groupBy }),
+        fetchPlatformOperationTrend(token, { ...dateRange, groupBy }),
         fetchPlatformRevenueComposition(token, dateRange),
         fetchPlatformRevenueFunderRanking(token, { ...dateRange, limit: 5 }),
         fetchPlatformRevenueFinancierRanking(token, { ...dateRange, limit: 5 }),
       ]);
       
-      setStats(statsRes);
+      setGlobalStats(globalStatsRes);
+      setPeriodStats(periodStatsRes);
+      setGlobalBrokerageTotal(waybillOverviewRes.totalReceivable || 0);
+      setGlobalWaybillCount(waybillOverviewRes.waybillCount || 0);
+      setContractLocalPartnerCount(commissionStatsRes.localPartnerCount || 0);
+      setContractRouteCount(commissionStatsRes.routeCount || 0);
       setTrend(trendRes.trend || []);
+      setOperationTrend(operationTrendRes.trend || []);
       setComposition(compositionRes.composition || []);
       setFunderRanking(funderRes.ranking || []);
       setFinancierRanking(financierRes.ranking || []);
@@ -183,8 +262,9 @@ const PlatformRevenue: React.FC = () => {
   }, [dateRange, groupBy, token]);
 
   useEffect(() => {
+    if (dashboardView !== 'revenue') return;
     loadRecords();
-  }, [dateRange, filters, token]);
+  }, [dateRange, filters, token, dashboardView]);
 
   // 初始化趋势图 - 只显示总收益
   useEffect(() => {
@@ -249,6 +329,92 @@ const PlatformRevenue: React.FC = () => {
     };
   }, [trend]);
 
+  // 初始化运营维度趋势图（纵向三张）
+  useEffect(() => {
+    if (dashboardView !== 'operation') return;
+
+    const timers: number[] = [];
+
+    operationMetricCards.forEach((metric) => {
+      const chartDom = operationChartRefs.current[metric.key];
+      if (!chartDom) return;
+
+      let chart = echarts.getInstanceByDom(chartDom);
+      if (!chart) {
+        chart = echarts.init(chartDom);
+      }
+      operationChartInstances.current[metric.key] = chart;
+
+      if (operationTrend.length === 0) {
+        chart.clear();
+        return;
+      }
+
+      const timer = window.setTimeout(() => {
+        const instance = operationChartInstances.current[metric.key];
+        if (!instance) return;
+
+        instance.resize();
+        instance.setOption({
+          tooltip: {
+            trigger: 'axis',
+            formatter: (params: any) => {
+              const date = params[0]?.axisValue || '';
+              const rawValue = Number(params[0]?.value || 0);
+              const formattedValue = metric.precision === 0
+                ? Math.round(rawValue).toLocaleString('zh-CN')
+                : rawValue.toLocaleString('zh-CN', {
+                  minimumFractionDigits: metric.precision,
+                  maximumFractionDigits: metric.precision,
+                });
+              return `${date}<br/>${params[0]?.marker || ''} ${metric.title}: ${formattedValue}${metric.suffix}`;
+            },
+          },
+          legend: { data: [metric.title], bottom: 0 },
+          grid: { left: '3%', right: '4%', bottom: '15%', top: '10%', containLabel: true },
+          xAxis: { type: 'category', data: operationTrend.map((item) => item.date), boundaryGap: false },
+          yAxis: {
+            type: 'value',
+            axisLabel: {
+              formatter: (value: number) => {
+                if (metric.precision === 0) return Math.round(value).toLocaleString('zh-CN');
+                return value.toLocaleString('zh-CN', {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: metric.precision,
+                });
+              },
+            },
+          },
+          series: [
+            {
+              name: metric.title,
+              type: 'line',
+              data: operationTrend.map((item) => getOperationMetricValue(item, metric.key)),
+              smooth: true,
+              areaStyle: { opacity: 0.3 },
+              lineStyle: { color: metric.accent, width: 2 },
+              itemStyle: { color: metric.accent },
+            },
+          ],
+        }, { notMerge: true });
+      }, 50);
+
+      timers.push(timer);
+    });
+
+    const handleResize = () => {
+      (Object.values(operationChartInstances.current) as Array<echarts.ECharts | null>).forEach((instance) => {
+        instance?.resize();
+      });
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [dashboardView, operationMetricCards, operationTrend, getOperationMetricValue]);
+
   // 初始化饼图
   useEffect(() => {
     if (!compositionChartRef.current) return;
@@ -311,6 +477,9 @@ const PlatformRevenue: React.FC = () => {
     return () => {
       trendChartInstance.current?.dispose();
       compositionChartInstance.current?.dispose();
+      (Object.values(operationChartInstances.current) as Array<echarts.ECharts | null>).forEach((instance) => {
+        instance?.dispose();
+      });
     };
   }, []);
 
@@ -557,302 +726,458 @@ const PlatformRevenue: React.FC = () => {
   return (
     <Spin spinning={loading}>
       <div style={{ padding: 24 }}>
-        {/* 标题和时间选择器 */}
-        <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
+        {/* 标题 */}
+        <Row align="middle" style={{ marginBottom: 24 }}>
           <Col>
             <h2 style={{ margin: 0 }}>平台收益看板</h2>
           </Col>
-          <Col>
-            <Space>
-              <Button type={timeRange === 'today' ? 'primary' : 'default'} onClick={() => setTimeRange('today')}>今日</Button>
-              <Button type={timeRange === 'week' ? 'primary' : 'default'} onClick={() => setTimeRange('week')}>本周</Button>
-              <Button type={timeRange === 'month' ? 'primary' : 'default'} onClick={() => setTimeRange('month')}>本月</Button>
-              <Button type={timeRange === 'year' ? 'primary' : 'default'} onClick={() => setTimeRange('year')}>近一年</Button>
-              <RangePicker
-                value={customRange}
-                onChange={(dates) => {
-                  setCustomRange(dates as [Dayjs, Dayjs]);
-                  if (dates) setTimeRange('custom');
-                }}
-              />
-            </Space>
-          </Col>
         </Row>
 
-        {/* 第一排：收益核心指标 - 5个卡片 */}
-        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
           {[
-            { title: '累计总收益', value: stats?.totalRevenue || 0, accent: '#1890ff' },
-            { title: '本期收益', value: stats?.periodRevenue || 0, accent: '#52c41a', showGrowth: true },
-            { title: '日均收益', value: stats?.dailyAverage || (stats?.periodRevenue ? stats.periodRevenue / 30 : 0), accent: '#faad14' },
-            { title: '预估收益(30天)', value: stats?.estimatedRevenue || 0, accent: '#722ed1' },
-            { title: '已结算收益', value: stats?.settledRevenue || 0, accent: '#13c2c2' },
-            { title: '待结算收益', value: stats?.unsettledRevenue || 0, accent: '#eb2f96' },
+            { title: '累计总收益', value: globalStats?.totalRevenue || 0, accent: '#1890ff', icon: <DollarOutlined style={{ color: '#1890ff' }} /> },
+            { title: '已结算收益', value: globalStats?.settledRevenue || 0, accent: '#13c2c2', icon: <CheckCircleOutlined style={{ color: '#13c2c2' }} /> },
+            { title: '待结算收益', value: globalStats?.unsettledRevenue || 0, accent: '#eb2f96', icon: <ClockCircleOutlined style={{ color: '#eb2f96' }} /> },
           ].map((item, index) => (
-            <Col key={index} flex="1 1 0" style={{ minWidth: 180 }}>
-              <Card 
-                size="small" 
-                style={{ 
+            <Col key={index} flex="1 1 0" style={{ minWidth: 185 }}>
+              <Card
+                size="small"
+                style={{
                   height: '100%',
                   borderTop: `3px solid ${item.accent}`,
                   borderRadius: '2px 2px 6px 6px',
                 }}
-                styles={{ body: { padding: '20px' } }}
+                styles={{ body: { padding: '16px 16px 14px' } }}
               >
-                <div style={{ fontSize: 13, color: '#8c8c8c', marginBottom: 12 }}>{item.title}</div>
-                <div style={{ fontSize: 28, fontWeight: 600, color: '#1f1f1f', lineHeight: 1.2, letterSpacing: '-0.5px' }}>
-                  <span style={{ fontSize: 18, fontWeight: 400, marginRight: 2 }}>¥</span>
-                  {(item.value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <Space size={8} style={{ marginBottom: 8 }}>
+                  {item.icon}
+                  <Text type="secondary">{item.title}</Text>
+                </Space>
+                <div style={{ fontSize: 26, fontWeight: 600, color: '#1f1f1f', lineHeight: 1.15 }}>
+                  {item.suffix ? (
+                    <>
+                      {(item.value || 0).toLocaleString('zh-CN')}
+                      <span style={{ fontSize: 12, fontWeight: 400, color: '#8c8c8c', marginLeft: 4 }}>{item.suffix}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: 17, fontWeight: 400, marginRight: 2 }}>¥</span>
+                      {(item.value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </>
+                  )}
                 </div>
-                {item.showGrowth && stats?.growthRate !== undefined && (
-                  <div style={{ 
-                    marginTop: 10, 
-                    fontSize: 12, 
-                    color: stats.growthRate >= 0 ? '#52c41a' : '#ff4d4f',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4
-                  }}>
-                    {stats.growthRate >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
-                    环比 {Math.abs(stats.growthRate || 0).toFixed(1)}%
-                  </div>
-                )}
               </Card>
             </Col>
           ))}
+          <Col flex="1 1 0" style={{ minWidth: 185 }}>
+            <Card
+              size="small"
+              style={{
+                height: '100%',
+                borderTop: '3px solid #faad14',
+                borderRadius: '2px 2px 6px 6px',
+              }}
+              styles={{ body: { padding: '16px 16px 14px' } }}
+            >
+              <Space size={8} style={{ marginBottom: 8 }}>
+                <FileTextOutlined style={{ color: '#faad14' }} />
+                <Text type="secondary">平台撮合业务合计</Text>
+              </Space>
+              <Tooltip title={`¥${roundedGlobalBrokerageTotal.toLocaleString('zh-CN')}`}>
+                <div
+                  style={{
+                    fontSize: 26,
+                    fontWeight: 600,
+                    color: '#1f1f1f',
+                    lineHeight: 1.15,
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    gap: 2,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <span style={{ fontSize: 17, fontWeight: 400, flex: '0 0 auto' }}>¥</span>
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {roundedGlobalBrokerageTotal.toLocaleString('zh-CN')}
+                  </span>
+                </div>
+              </Tooltip>
+            </Card>
+          </Col>
+          <Col flex="1 1 0" style={{ minWidth: 185 }}>
+            <Card
+              size="small"
+              style={{
+                height: '100%',
+                borderTop: '3px solid #52c41a',
+                borderRadius: '2px 2px 6px 6px',
+              }}
+              styles={{ body: { padding: '16px 16px 14px' } }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontSize: 13, color: '#8c8c8c' }}>
+                  有效合同 <span style={{ color: '#1f1f1f', fontWeight: 500 }}>{(globalStats?.activeContracts || 0).toLocaleString('zh-CN')}</span> 份
+                </div>
+                <div style={{ fontSize: 13, color: '#8c8c8c' }}>
+                  资金方 <span style={{ color: '#1f1f1f', fontWeight: 500 }}>{(globalStats?.activeFunders || 0).toLocaleString('zh-CN')}</span> 家
+                </div>
+                <div style={{ fontSize: 13, color: '#8c8c8c' }}>
+                  合作方 <span style={{ color: '#1f1f1f', fontWeight: 500 }}>{(globalStats?.activeFinanciers || 0).toLocaleString('zh-CN')}</span> 家
+                </div>
+              </div>
+            </Card>
+          </Col>
+          <Col flex="1 1 0" style={{ minWidth: 185 }}>
+            <Card
+              size="small"
+              style={{
+                height: '100%',
+                borderTop: '3px solid #d9d9d9',
+                borderRadius: '2px 2px 6px 6px',
+              }}
+              styles={{ body: { padding: '16px 16px 14px', minHeight: 96 } }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontSize: 13, color: '#8c8c8c' }}>
+                  落地合作方数量 <span style={{ color: '#1f1f1f', fontWeight: 500 }}>{contractLocalPartnerCount.toLocaleString('zh-CN')}</span> 家
+                </div>
+                <div style={{ fontSize: 13, color: '#8c8c8c' }}>
+                  线路数量 <span style={{ color: '#1f1f1f', fontWeight: 500 }}>{contractRouteCount.toLocaleString('zh-CN')}</span> 条
+                </div>
+                <div style={{ fontSize: 13, color: '#8c8c8c' }}>
+                  运单数量 <span style={{ color: '#1f1f1f', fontWeight: 500 }}>{globalWaybillCount.toLocaleString('zh-CN')}</span> 单
+                </div>
+              </div>
+            </Card>
+          </Col>
         </Row>
 
-        {/* 第二排：业务增长指标 - 3个卡片，低调简洁风格 */}
-        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-          <Col span={8}>
-            <Card size="small" style={{ background: '#fafafa', border: '1px solid #f0f0f0' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <FileTextOutlined style={{ fontSize: 20, color: '#1890ff' }} />
-                  <div>
-                    <div style={{ fontSize: 12, color: '#999' }}>有效合同</div>
-                    <div style={{ fontSize: 20, fontWeight: 500 }}>{stats?.activeContracts || 0} <span style={{ fontSize: 12, fontWeight: 400, color: '#999' }}>份</span></div>
-                  </div>
-                </div>
-                {(stats?.newContractsPeriod || 0) > 0 && (
-                  <Tag color="green" style={{ margin: 0 }}>+{stats?.newContractsPeriod} 本期</Tag>
-                )}
-              </div>
-            </Card>
-          </Col>
-          <Col span={8}>
-            <Card size="small" style={{ background: '#fafafa', border: '1px solid #f0f0f0' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <TeamOutlined style={{ fontSize: 20, color: '#52c41a' }} />
-                  <div>
-                    <div style={{ fontSize: 12, color: '#999' }}>合作伙伴</div>
-                    <div style={{ fontSize: 20, fontWeight: 500 }}>
-                      <span style={{ color: '#1890ff' }}>{stats?.activeFunders || 0}</span>
-                      <span style={{ fontSize: 12, color: '#999', margin: '0 4px' }}>资金方</span>
-                      <span style={{ color: '#722ed1' }}>{stats?.activeFinanciers || 0}</span>
-                      <span style={{ fontSize: 12, color: '#999', marginLeft: 4 }}>合作方</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          </Col>
-          <Col span={8}>
-            <Card size="small" style={{ background: '#fafafa', border: '1px solid #f0f0f0' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <RiseOutlined style={{ fontSize: 20, color: '#faad14' }} />
-                  <div>
-                    <div style={{ fontSize: 12, color: '#999' }}>运营数据</div>
-                    <div style={{ fontSize: 20, fontWeight: 500 }}>
-                      {stats?.periodWaybills || 0} <span style={{ fontSize: 12, fontWeight: 400, color: '#999' }}>运单</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          </Col>
-        </Row>
+        <Card size="small" style={{ marginBottom: 16, border: '1px solid #f0f0f0' }}>
+          <Row justify="space-between" align="middle">
+            <Col>
+              <Space size={12} wrap>
+                <Button.Group>
+                  <Button type={dashboardView === 'revenue' ? 'primary' : 'default'} onClick={() => setDashboardView('revenue')}>
+                    收益视图
+                  </Button>
+                  <Button type={dashboardView === 'operation' ? 'primary' : 'default'} onClick={() => setDashboardView('operation')}>
+                    运营维度
+                  </Button>
+                </Button.Group>
+                <Text strong>区间分析（{dateRange.startDate} ~ {dateRange.endDate}）</Text>
+              </Space>
+            </Col>
+            <Col>
+              <Space wrap>
+                <Button type={timeRange === 'today' ? 'primary' : 'default'} onClick={() => setTimeRange('today')}>今日</Button>
+                <Button type={timeRange === 'week' ? 'primary' : 'default'} onClick={() => setTimeRange('week')}>本周</Button>
+                <Button type={timeRange === 'month' ? 'primary' : 'default'} onClick={() => setTimeRange('month')}>本月</Button>
+                <Button type={timeRange === 'year' ? 'primary' : 'default'} onClick={() => setTimeRange('year')}>近一年</Button>
+                <RangePicker
+                  value={customRange}
+                  onChange={(dates) => {
+                    setCustomRange(dates as [Dayjs, Dayjs]);
+                    if (dates) setTimeRange('custom');
+                  }}
+                />
+              </Space>
+            </Col>
+          </Row>
+        </Card>
 
-        {/* 图表区域 */}
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={14}>
+        {dashboardView === 'revenue' ? (
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            {[
+              { title: '本期收益', value: periodStats?.periodRevenue || 0, accent: '#52c41a', showGrowth: true },
+              { title: '日均收益', value: periodStats?.dailyAverage || 0, accent: '#faad14' },
+              { title: '预估收益(30天)', value: periodStats?.estimatedRevenue || 0, accent: '#722ed1' },
+              { title: '区间运单数', value: periodStats?.periodWaybills || 0, accent: '#1890ff', suffix: '单' },
+            ].map((item, index) => (
+              <Col key={index} span={6}>
+                <Card
+                  size="small"
+                  style={{
+                    height: '100%',
+                    borderTop: `3px solid ${item.accent}`,
+                    borderRadius: '2px 2px 6px 6px',
+                  }}
+                  styles={{ body: { padding: '16px 16px 14px' } }}
+                >
+                  <div style={{ fontSize: 13, color: '#8c8c8c', marginBottom: 10 }}>{item.title}</div>
+                  <div style={{ fontSize: 24, fontWeight: 600, color: '#1f1f1f' }}>
+                    {item.suffix ? (
+                      <>
+                        {(item.value || 0).toLocaleString('zh-CN')}
+                        <span style={{ fontSize: 12, fontWeight: 400, color: '#8c8c8c', marginLeft: 4 }}>{item.suffix}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ fontSize: 16, fontWeight: 400, marginRight: 2 }}>¥</span>
+                        {(item.value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </>
+                    )}
+                  </div>
+                  {item.showGrowth && periodStats?.growthRate !== undefined && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        fontSize: 12,
+                        color: (periodStats.growthRate || 0) >= 0 ? '#52c41a' : '#ff4d4f',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      {(periodStats.growthRate || 0) >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
+                      环比 {Math.abs(periodStats.growthRate || 0).toFixed(1)}%
+                    </div>
+                  )}
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        ) : (
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            {operationMetricCards.map((item) => (
+              <Col key={item.key} span={8}>
+                <Card
+                  size="small"
+                  style={{
+                    height: '100%',
+                    borderTop: `3px solid ${item.accent}`,
+                    borderRadius: '2px 2px 6px 6px',
+                  }}
+                  styles={{ body: { padding: '16px 16px 14px' } }}
+                >
+                  <div style={{ fontSize: 13, color: '#8c8c8c', marginBottom: 10 }}>{item.title}</div>
+                  <div style={{ fontSize: 24, fontWeight: 600, color: '#1f1f1f' }}>
+                    {(item.value || 0).toLocaleString('zh-CN', { minimumFractionDigits: item.precision, maximumFractionDigits: item.precision })}
+                    <span style={{ fontSize: 12, fontWeight: 400, color: '#8c8c8c', marginLeft: 4 }}>{item.suffix}</span>
+                  </div>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        )}
+
+        {dashboardView === 'revenue' ? (
+          <>
+            {/* 图表区域 */}
+            <Row gutter={16} style={{ marginBottom: 24 }}>
+              <Col span={14}>
+                <Card 
+                  title="收益趋势" 
+                  extra={
+                    <Select value={groupBy} onChange={setGroupBy} style={{ width: 100 }}>
+                      <Select.Option value="day">按日</Select.Option>
+                      <Select.Option value="week">按周</Select.Option>
+                      <Select.Option value="month">按月</Select.Option>
+                      <Select.Option value="year">按年</Select.Option>
+                    </Select>
+                  }
+                >
+                  <div style={{ height: 300, position: 'relative' }}>
+                    <div ref={trendChartRef} style={{ height: '100%', display: trend.length > 0 ? 'block' : 'none' }} />
+                    {trend.length === 0 && <Empty description="暂无趋势数据" style={{ paddingTop: 100 }} />}
+                  </div>
+                </Card>
+              </Col>
+              <Col span={10}>
+                <Card title="收益构成">
+                  <div style={{ height: 300, position: 'relative' }}>
+                    <div ref={compositionChartRef} style={{ height: '100%', display: composition.length > 0 ? 'block' : 'none' }} />
+                    {composition.length === 0 && <Empty description="暂无构成数据" style={{ paddingTop: 100 }} />}
+                  </div>
+                </Card>
+              </Col>
+            </Row>
+
+            {/* 排行榜 */}
+            <Row gutter={16} style={{ marginBottom: 24 }}>
+              <Col span={12}>
+                <Card title="TOP5 资金方收益">
+                  {funderRanking.length === 0 ? (
+                    <Empty description="暂无数据" />
+                  ) : (
+                    funderRanking.map((item, index) => (
+                      <div key={item.id} style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        padding: '8px 0', 
+                        borderBottom: index < funderRanking.length - 1 ? '1px solid #f0f0f0' : 'none'
+                      }}>
+                        <span>
+                          <span style={{ 
+                            display: 'inline-block', 
+                            width: 20, 
+                            height: 20, 
+                            lineHeight: '20px',
+                            textAlign: 'center',
+                            borderRadius: '50%',
+                            backgroundColor: index < 3 ? ['#f5222d', '#fa8c16', '#fadb14'][index] : '#d9d9d9',
+                            color: index < 2 ? '#fff' : '#666',
+                            marginRight: 8,
+                            fontSize: 12,
+                          }}>
+                            {index + 1}
+                          </span>
+                          {item.name}
+                        </span>
+                        <span style={{ color: '#1890ff' }}>¥{item.amount?.toLocaleString() || 0}</span>
+                      </div>
+                    ))
+                  )}
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card title="TOP5 合作方贡献">
+                  {financierRanking.length === 0 ? (
+                    <Empty description="暂无数据" />
+                  ) : (
+                    financierRanking.map((item, index) => (
+                      <div key={item.id} style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        padding: '8px 0', 
+                        borderBottom: index < financierRanking.length - 1 ? '1px solid #f0f0f0' : 'none'
+                      }}>
+                        <span>
+                          <span style={{ 
+                            display: 'inline-block', 
+                            width: 20, 
+                            height: 20, 
+                            lineHeight: '20px',
+                            textAlign: 'center',
+                            borderRadius: '50%',
+                            backgroundColor: index < 3 ? ['#f5222d', '#fa8c16', '#fadb14'][index] : '#d9d9d9',
+                            color: index < 2 ? '#fff' : '#666',
+                            marginRight: 8,
+                            fontSize: 12,
+                          }}>
+                            {index + 1}
+                          </span>
+                          {item.name}
+                        </span>
+                        <span style={{ color: '#52c41a' }}>¥{item.amount?.toLocaleString() || 0}</span>
+                      </div>
+                    ))
+                  )}
+                </Card>
+              </Col>
+            </Row>
+
+            {/* 明细表格 */}
             <Card 
-              title="收益趋势" 
+              title="收益明细" 
               extra={
-                <Select value={groupBy} onChange={setGroupBy} style={{ width: 100 }}>
-                  <Select.Option value="day">按日</Select.Option>
-                  <Select.Option value="week">按周</Select.Option>
-                  <Select.Option value="month">按月</Select.Option>
-                  <Select.Option value="year">按年</Select.Option>
-                </Select>
+                <Button icon={<FileExcelOutlined />} onClick={handleExport} loading={exporting}>
+                  导出Excel
+                </Button>
               }
             >
-              <div style={{ height: 300, position: 'relative' }}>
-                <div ref={trendChartRef} style={{ height: '100%', display: trend.length > 0 ? 'block' : 'none' }} />
-                {trend.length === 0 && <Empty description="暂无趋势数据" style={{ paddingTop: 100 }} />}
-              </div>
-            </Card>
-          </Col>
-          <Col span={10}>
-            <Card title="收益构成">
-              <div style={{ height: 300, position: 'relative' }}>
-                <div ref={compositionChartRef} style={{ height: '100%', display: composition.length > 0 ? 'block' : 'none' }} />
-                {composition.length === 0 && <Empty description="暂无构成数据" style={{ paddingTop: 100 }} />}
-              </div>
-            </Card>
-          </Col>
-        </Row>
+              {/* 筛选器 */}
+              <Space style={{ marginBottom: 16 }} wrap>
+                <Select
+                  placeholder="收益类型"
+                  allowClear
+                  style={{ width: 150 }}
+                  value={filters.sourceType}
+                  onChange={(v) => setFilters({ ...filters, sourceType: v, page: 1 })}
+                >
+                  {Object.entries(SOURCE_TYPE_MAP).map(([key, label]) => (
+                    <Select.Option key={key} value={key}>{label}</Select.Option>
+                  ))}
+                </Select>
+                <Select
+                  placeholder="区域"
+                  allowClear
+                  style={{ width: 180 }}
+                  value={(filters as any).areaId}
+                  onChange={(v) => setFilters({ ...filters, areaId: v, page: 1 } as any)}
+                  options={areaOptions}
+                />
+                <Select
+                  placeholder="落地合作方"
+                  allowClear
+                  showSearch
+                  style={{ width: 200 }}
+                  value={(filters as any).subFinancier}
+                  onChange={(v) => setFilters({ ...filters, subFinancier: v, page: 1 } as any)}
+                  options={subFinancierOptions}
+                />
+                <RangePicker
+                  placeholder={['开始日期', '结束日期']}
+                  value={(filters as any).detailStartDate && (filters as any).detailEndDate
+                    ? [dayjs((filters as any).detailStartDate), dayjs((filters as any).detailEndDate)]
+                    : null}
+                  onChange={(dates) => {
+                    if (dates && dates[0] && dates[1]) {
+                      setFilters({ ...filters, detailStartDate: dates[0].format('YYYY-MM-DD'), detailEndDate: dates[1].format('YYYY-MM-DD'), page: 1 } as any);
+                    } else {
+                      const { detailStartDate, detailEndDate, ...rest } = filters as any;
+                      setFilters({ ...rest, page: 1 });
+                    }
+                  }}
+                />
+              </Space>
 
-        {/* 排行榜 */}
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={12}>
-            <Card title="TOP5 资金方收益">
-              {funderRanking.length === 0 ? (
-                <Empty description="暂无数据" />
-              ) : (
-                funderRanking.map((item, index) => (
-                  <div key={item.id} style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    padding: '8px 0', 
-                    borderBottom: index < funderRanking.length - 1 ? '1px solid #f0f0f0' : 'none'
-                  }}>
-                    <span>
-                      <span style={{ 
-                        display: 'inline-block', 
-                        width: 20, 
-                        height: 20, 
-                        lineHeight: '20px',
-                        textAlign: 'center',
-                        borderRadius: '50%',
-                        backgroundColor: index < 3 ? ['#f5222d', '#fa8c16', '#fadb14'][index] : '#d9d9d9',
-                        color: index < 2 ? '#fff' : '#666',
-                        marginRight: 8,
-                        fontSize: 12,
-                      }}>
-                        {index + 1}
-                      </span>
-                      {item.name}
-                    </span>
-                    <span style={{ color: '#1890ff' }}>¥{item.amount?.toLocaleString() || 0}</span>
-                  </div>
-                ))
-              )}
+              <Table
+                columns={columns}
+                dataSource={records}
+                rowKey="id"
+                loading={tableLoading}
+                scroll={{ x: 1200 }}
+                components={{ header: { cell: ResizableTitle } }}
+                bordered
+                size="middle"
+                pagination={{
+                  current: filters.page,
+                  pageSize: filters.pageSize,
+                  total,
+                  showSizeChanger: true,
+                  showTotal: (t) => `共 ${t} 条`,
+                  onChange: (page, pageSize) => setFilters({ ...filters, page, pageSize }),
+                }}
+              />
             </Card>
-          </Col>
-          <Col span={12}>
-            <Card title="TOP5 合作方贡献">
-              {financierRanking.length === 0 ? (
-                <Empty description="暂无数据" />
-              ) : (
-                financierRanking.map((item, index) => (
-                  <div key={item.id} style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    padding: '8px 0', 
-                    borderBottom: index < financierRanking.length - 1 ? '1px solid #f0f0f0' : 'none'
-                  }}>
-                    <span>
-                      <span style={{ 
-                        display: 'inline-block', 
-                        width: 20, 
-                        height: 20, 
-                        lineHeight: '20px',
-                        textAlign: 'center',
-                        borderRadius: '50%',
-                        backgroundColor: index < 3 ? ['#f5222d', '#fa8c16', '#fadb14'][index] : '#d9d9d9',
-                        color: index < 2 ? '#fff' : '#666',
-                        marginRight: 8,
-                        fontSize: 12,
-                      }}>
-                        {index + 1}
-                      </span>
-                      {item.name}
-                    </span>
-                    <span style={{ color: '#52c41a' }}>¥{item.amount?.toLocaleString() || 0}</span>
-                  </div>
-                ))
-              )}
-            </Card>
-          </Col>
-        </Row>
-
-        {/* 明细表格 */}
-        <Card 
-          title="收益明细" 
-          extra={
-            <Button icon={<FileExcelOutlined />} onClick={handleExport} loading={exporting}>
-              导出Excel
-            </Button>
-          }
-        >
-          {/* 筛选器 */}
-          <Space style={{ marginBottom: 16 }} wrap>
-            <Select
-              placeholder="收益类型"
-              allowClear
-              style={{ width: 150 }}
-              value={filters.sourceType}
-              onChange={(v) => setFilters({ ...filters, sourceType: v, page: 1 })}
-            >
-              {Object.entries(SOURCE_TYPE_MAP).map(([key, label]) => (
-                <Select.Option key={key} value={key}>{label}</Select.Option>
-              ))}
-            </Select>
-            <Select
-              placeholder="区域"
-              allowClear
-              style={{ width: 180 }}
-              value={(filters as any).areaId}
-              onChange={(v) => setFilters({ ...filters, areaId: v, page: 1 } as any)}
-              options={areaOptions}
-            />
-            <Select
-              placeholder="落地合作方"
-              allowClear
-              showSearch
-              style={{ width: 200 }}
-              value={(filters as any).subFinancier}
-              onChange={(v) => setFilters({ ...filters, subFinancier: v, page: 1 } as any)}
-              options={subFinancierOptions}
-            />
-            <RangePicker
-              placeholder={['开始日期', '结束日期']}
-              value={(filters as any).detailStartDate && (filters as any).detailEndDate
-                ? [dayjs((filters as any).detailStartDate), dayjs((filters as any).detailEndDate)]
-                : null}
-              onChange={(dates) => {
-                if (dates && dates[0] && dates[1]) {
-                  setFilters({ ...filters, detailStartDate: dates[0].format('YYYY-MM-DD'), detailEndDate: dates[1].format('YYYY-MM-DD'), page: 1 } as any);
-                } else {
-                  const { detailStartDate, detailEndDate, ...rest } = filters as any;
-                  setFilters({ ...rest, page: 1 });
+          </>
+        ) : (
+          <Space direction="vertical" size={16} style={{ width: '100%', marginBottom: 24 }}>
+            {operationMetricCards.map((item, index) => (
+              <Card
+                key={item.key}
+                title={item.chartTitle}
+                extra={
+                  index === 0 ? (
+                    <Select value={groupBy} onChange={setGroupBy} style={{ width: 100 }}>
+                      <Select.Option value="day">按日</Select.Option>
+                      <Select.Option value="week">按周</Select.Option>
+                      <Select.Option value="month">按月</Select.Option>
+                      <Select.Option value="year">按年</Select.Option>
+                    </Select>
+                  ) : undefined
                 }
-              }}
-            />
+              >
+                <div style={{ fontSize: 24, fontWeight: 600, color: '#1f1f1f', marginBottom: 12 }}>
+                  {(item.value || 0).toLocaleString('zh-CN', {
+                    minimumFractionDigits: item.precision,
+                    maximumFractionDigits: item.precision,
+                  })}
+                  <span style={{ fontSize: 12, fontWeight: 400, color: '#8c8c8c', marginLeft: 4 }}>{item.suffix}</span>
+                </div>
+                <div style={{ height: 280, position: 'relative' }}>
+                  <div
+                    ref={(node) => {
+                      operationChartRefs.current[item.key] = node;
+                    }}
+                    style={{ height: '100%', display: operationTrend.length > 0 ? 'block' : 'none' }}
+                  />
+                  {operationTrend.length === 0 && <Empty description="暂无趋势数据" style={{ paddingTop: 90 }} />}
+                </div>
+              </Card>
+            ))}
           </Space>
-
-          <Table
-            columns={columns}
-            dataSource={records}
-            rowKey="id"
-            loading={tableLoading}
-            scroll={{ x: 1200 }}
-            components={{ header: { cell: ResizableTitle } }}
-            bordered
-            size="middle"
-            pagination={{
-              current: filters.page,
-              pageSize: filters.pageSize,
-              total,
-              showSizeChanger: true,
-              showTotal: (t) => `共 ${t} 条`,
-              onChange: (page, pageSize) => setFilters({ ...filters, page, pageSize }),
-            }}
-          />
-        </Card>
+        )}
       </div>
     </Spin>
   );

@@ -140,6 +140,24 @@ function formatDateLocalYmd(value: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function parseMetricNumber(value: any): number {
+  if (value === null || value === undefined || value === '') return 0;
+  const text = String(value).replace(/,/g, '').trim();
+  if (!text) return 0;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function resolveWaybillWeight(waybill: WaybillData): number {
+  const candidate = (waybill as any).weight ?? (waybill as any).goodsWeight ?? (waybill as any).goods_weight;
+  return parseMetricNumber(candidate);
+}
+
+function resolveWaybillVolume(waybill: WaybillData): number {
+  const candidate = (waybill as any).volume ?? (waybill as any).totalVolume ?? (waybill as any).total_volume;
+  return parseMetricNumber(candidate);
+}
+
 // ==================== 构建运行时配置 ====================
 function buildRuntimeConfig(config: ExternalSystemConfig): CrawlerRuntimeConfig {
   const crawlerConfig = config.crawlerConfig || {};
@@ -171,8 +189,9 @@ async function saveWaybillData(
 
     // 检查是否已存在
     const [existing] = await pool.query<any[]>(
-      `SELECT id, receivable_total, payable_total, receivable_cash, receivable_collect, 
-              receivable_return, monthly_cost, remark, status, branch, batch_status, waybill_date FROM waybills 
+      `SELECT id, receivable_total, payable_total, receivable_cash, receivable_collect,
+              receivable_return, monthly_cost, total_volume, goods_weight,
+              remark, status, branch, batch_status, waybill_date FROM waybills
        WHERE waybill_number = ? AND deleted_at IS NULL`,
       [waybill.waybillNumber]
     );
@@ -203,6 +222,8 @@ async function saveWaybillData(
       const existingWaybillDateYmd = /^\d{4}-\d{2}-\d{2}/.test(existingWaybillDateRaw)
         ? existingWaybillDateRaw.slice(0, 10)
         : (existingRow.waybill_date ? formatDateLocalYmd(new Date(existingRow.waybill_date)) : '');
+      const nextWeight = resolveWaybillWeight(waybill);
+      const nextVolume = resolveWaybillVolume(waybill);
       const needUpdate = 
         Math.abs((existingRow.receivable_total || 0) - (waybill.receivableTotal || 0)) > 0.01 ||
         Math.abs((existingRow.payable_total || 0) - (waybill.payableTotal || 0)) > 0.01 ||
@@ -210,6 +231,8 @@ async function saveWaybillData(
         Math.abs((existingRow.receivable_collect || 0) - (waybill.receivableCollect || 0)) > 0.01 ||
         Math.abs((existingRow.receivable_return || 0) - (waybill.receivableReturn || 0)) > 0.01 ||
         Math.abs((existingRow.monthly_cost || 0) - (waybill.receivableMonthly || 0)) > 0.01 ||
+        Math.abs((existingRow.goods_weight || 0) - nextWeight) > 0.01 ||
+        Math.abs((existingRow.total_volume || 0) - nextVolume) > 0.01 ||
         (existingRow.remark || '') !== (waybill.remark || '') ||
         (!!waybill.status && (existingRow.status || '') !== (waybill.status || '')) ||
         (!!waybill.branch && (existingRow.branch || '') !== (waybill.branch || '')) ||
@@ -226,6 +249,8 @@ async function saveWaybillData(
             receivable_return = ?,
             monthly_cost = ?,
             receivable_transport = ?,
+            goods_weight = ?,
+            total_volume = ?,
             remark = ?,
             waybill_date = COALESCE(?, waybill_date),
             status = COALESCE(NULLIF(?, ''), status),
@@ -241,6 +266,8 @@ async function saveWaybillData(
             waybill.receivableReturn || 0,
             waybill.receivableMonthly || 0,
             waybill.receivableTransport || 0,
+            nextWeight,
+            nextVolume,
             waybill.remark || '',
             normalizedBusinessDateYmd || null,
             waybill.status || '',
@@ -262,8 +289,9 @@ async function saveWaybillData(
         driver_name, vehicle_plate, departure_place, arrival_place,
         freight_amount, receivable_total, payable_total,
         receivable_cash, receivable_collect, receivable_return, monthly_cost, receivable_transport,
+        total_volume, goods_weight,
         status, batch_status, remark, waybill_date, business_mode, sub_financier, branch, created_time, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         id,
         waybill.waybillNumber,
@@ -281,6 +309,8 @@ async function saveWaybillData(
         waybill.receivableReturn || 0,
         waybill.receivableMonthly || 0,
         waybill.receivableTransport || 0,
+        resolveWaybillVolume(waybill),
+        resolveWaybillWeight(waybill),
         waybill.status || 'pending',
         waybill.batchStatusText || '',
         waybill.remark || '',

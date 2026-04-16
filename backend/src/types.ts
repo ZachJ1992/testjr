@@ -697,6 +697,8 @@ export interface RevenueStats {
   activeFunders?: number;       // 资金方数量
   activeFinanciers?: number;    // 融资方数量
   periodWaybills?: number;      // 本期运单数
+  periodTotalWeight?: number;   // 本期总吨位
+  periodActiveRoutes?: number;  // 本期活跃线路数
 }
 
 // 收益趋势数据点
@@ -705,6 +707,14 @@ export interface RevenueTrendPoint {
   amount: number;
   confirmedAmount: number;
   pendingAmount: number;
+}
+
+// 平台运营趋势数据点
+export interface OperationTrendPoint {
+  date: string;
+  waybillCount: number;
+  totalWeight: number;
+  activeRoutes: number;
 }
 
 // 收益构成
@@ -759,6 +769,8 @@ export interface CommissionContractStats {
   activeCount: number;
   totalConfigCount: number;
   avgRatio: number;
+  localPartnerCount: number;
+  routeCount: number;
 }
 
 // =============================================

@@ -1198,6 +1198,47 @@ export async function fetchWaybillStats(token: string): Promise<WaybillStats> {
   });
 }
 
+export interface WaybillOverview {
+  waybillCount: number;
+  totalReceivable: number;
+}
+
+export async function fetchWaybillOverview(
+  token: string,
+  filters?: {
+    customerName?: string;
+    contractNumber?: string;
+    businessMode?: BusinessMode;
+    status?: WaybillStatus;
+    batchStatus?: string;
+    batchSource?: string;
+    routeName?: string;
+    startDate?: string;
+    endDate?: string;
+    areaId?: string;
+    waybillNumber?: string;
+    vehiclePlate?: string;
+  }
+): Promise<WaybillOverview> {
+  const params = new URLSearchParams();
+  if (filters?.customerName) params.append("customerName", filters.customerName);
+  if (filters?.contractNumber) params.append("contractNumber", filters.contractNumber);
+  if (filters?.businessMode) params.append("businessMode", filters.businessMode);
+  if (filters?.status) params.append("status", filters.status);
+  if (filters?.batchStatus) params.append("batchStatus", filters.batchStatus);
+  if (filters?.batchSource) params.append("batchSource", filters.batchSource);
+  if (filters?.routeName) params.append("routeName", filters.routeName);
+  if (filters?.startDate) params.append("startDate", filters.startDate);
+  if (filters?.endDate) params.append("endDate", filters.endDate);
+  if (filters?.areaId) params.append("areaId", filters.areaId);
+  if (filters?.waybillNumber) params.append("waybillNumber", filters.waybillNumber);
+  if (filters?.vehiclePlate) params.append("vehiclePlate", filters.vehiclePlate);
+  const queryString = params.toString();
+  return request(`/waybills/overview${queryString ? `?${queryString}` : ""}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
 export async function fetchWaybills(
   token: string,
   filters?: {
@@ -1596,6 +1637,8 @@ export interface CommissionContractStats {
   activeCount: number;
   totalConfigCount: number;
   avgRatio: number;
+  localPartnerCount: number;
+  routeCount: number;
 }
 
 export async function fetchCommissionContracts(
@@ -2487,6 +2530,8 @@ export interface RevenueStats {
   activeFinanciers?: number;    // 活跃融资方数
   newFinanciersPeriod?: number; // 本期新增融资方
   periodWaybills?: number;      // 本期运单量
+  periodTotalWeight?: number;   // 本期总吨位
+  periodActiveRoutes?: number;  // 本期活跃线路数
   conversionRate?: number;      // 收益转化率(收益/在投金额)
 }
 
@@ -2496,6 +2541,13 @@ export interface RevenueTrendPoint {
   amount: number;
   confirmedAmount: number;
   pendingAmount: number;
+}
+
+export interface OperationTrendPoint {
+  date: string;
+  waybillCount: number;
+  totalWeight: number;
+  activeRoutes: number;
 }
 
 // 收益构成
@@ -2607,6 +2659,19 @@ export async function fetchPlatformRevenueTrend(
   params.append("endDate", filters.endDate);
   if (filters.groupBy) params.append("groupBy", filters.groupBy);
   return request(`/revenue/platform/trend?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+export async function fetchPlatformOperationTrend(
+  token: string,
+  filters: { startDate: string; endDate: string; groupBy?: 'day' | 'week' | 'month' | 'year' }
+): Promise<{ trend: OperationTrendPoint[] }> {
+  const params = new URLSearchParams();
+  params.append("startDate", filters.startDate);
+  params.append("endDate", filters.endDate);
+  if (filters.groupBy) params.append("groupBy", filters.groupBy);
+  return request(`/revenue/platform/operation-trend?${params.toString()}`, {
     headers: { Authorization: `Bearer ${token}` }
   });
 }

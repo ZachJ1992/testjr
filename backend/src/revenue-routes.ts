@@ -97,6 +97,33 @@ router.get(
   }
 );
 
+// 平台运营趋势
+router.get(
+  "/revenue/platform/operation-trend",
+  authenticate,
+  requirePermissions("view_platform_revenue"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { startDate, endDate, groupBy } = req.query;
+
+      if (!startDate || !endDate) {
+        sendError(res, req, 400, "error.revenue.date_required");
+        return;
+      }
+
+      const trend = await revenueStore.getPlatformOperationTrend({
+        startDate: startDate as string,
+        endDate: endDate as string,
+        groupBy: (groupBy as "day" | "week" | "month" | "year") || "day",
+      });
+
+      res.json({ trend });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
 // 平台收益构成
 router.get(
   "/revenue/platform/composition",

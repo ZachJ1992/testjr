@@ -9,6 +9,7 @@ import {
   RevenueRecord,
   RevenueStats,
   RevenueTrendPoint,
+  OperationTrendPoint,
   RevenueComposition,
   RevenueRankItem,
   RevenueRecordType,
@@ -446,6 +447,8 @@ export async function getRevenueStats(filters: {
   let activeFunders: number | undefined;
   let activeFinanciers: number | undefined;
   let periodWaybills: number | undefined;
+  let periodTotalWeight: number | undefined;
+  let periodActiveRoutes: number | undefined;
 
   // 如果不是按受益方过滤，则计算业务指标（平台看板）
   if (!filters.beneficiaryType && !filters.beneficiaryId) {
@@ -521,14 +524,34 @@ export async function getRevenueStats(filters: {
     );
     activeFinanciers = Number(financierRows[0].count);
 
-    // 本期运单数 (与运单管理页面保持一致的查询条件)
+    // 本期运单维度（与运单管理页面日期口径一致）
     if (filters.startDate && filters.endDate) {
+      const [waybillColumns] = await pool.query<RowDataPacket[]>(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'waybills'`
+      );
+      const waybillColumnSet = new Set(waybillColumns.map((row) => String(row.COLUMN_NAME)));
+      const hasGoodsWeight = waybillColumnSet.has("goods_weight");
+      const normalizedWeightExpr = hasGoodsWeight
+        ? "CASE WHEN goods_weight >= 1000 THEN goods_weight / 1000 ELSE goods_weight END"
+        : "0";
+      const routeExprParts: string[] = [];
+      if (waybillColumnSet.has("sub_financier")) routeExprParts.push("NULLIF(TRIM(sub_financier), '')");
+      if (waybillColumnSet.has("branch")) routeExprParts.push("NULLIF(TRIM(branch), '')");
+      if (waybillColumnSet.has("vehicle_route")) routeExprParts.push("NULLIF(TRIM(vehicle_route), '')");
+      const activeRouteExpr = routeExprParts.length > 0 ? `COALESCE(${routeExprParts.join(", ")})` : "NULL";
+
       const [waybillRows] = await pool.query<RowDataPacket[]>(
-        `SELECT COUNT(*) as count FROM waybills 
+        `SELECT
+           COUNT(*) as count,
+           COALESCE(SUM(${normalizedWeightExpr}), 0) as total_weight,
+           COUNT(DISTINCT ${activeRouteExpr}) as active_routes
+         FROM waybills
          WHERE waybill_date >= ? AND waybill_date <= ? AND deleted_at IS NULL`,
         [filters.startDate, filters.endDate]
       );
-      periodWaybills = Number(waybillRows[0].count);
+      periodWaybills = Number(waybillRows[0].count || 0);
+      periodTotalWeight = Number(waybillRows[0].total_weight || 0);
+      periodActiveRoutes = Number(waybillRows[0].active_routes || 0);
     }
   }
 
@@ -547,6 +570,8 @@ export async function getRevenueStats(filters: {
     activeFunders,
     activeFinanciers,
     periodWaybills,
+    periodTotalWeight,
+    periodActiveRoutes,
   };
 }
 
@@ -620,6 +645,71 @@ export async function getRevenueTrend(filters: {
     amount: Number(row.amount),
     confirmedAmount: Number(row.confirmed_amount),
     pendingAmount: Number(row.pending_amount),
+  }));
+}
+
+/**
+ * 获取平台运营趋势（运单数/吨位/活跃线路）
+ */
+export async function getPlatformOperationTrend(filters: {
+  startDate: string;
+  endDate: string;
+  groupBy: "day" | "week" | "month" | "year";
+}): Promise<OperationTrendPoint[]> {
+  let dateFormat: string;
+  switch (filters.groupBy) {
+    case "day":
+      dateFormat = "%Y-%m-%d";
+      break;
+    case "week":
+      dateFormat = "%x-W%v";
+      break;
+    case "month":
+      dateFormat = "%Y-%m";
+      break;
+    case "year":
+      dateFormat = "%Y";
+      break;
+    default:
+      dateFormat = "%Y-%m-%d";
+  }
+
+  const [waybillColumns] = await pool.query<RowDataPacket[]>(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'waybills'`
+  );
+  const waybillColumnSet = new Set(waybillColumns.map((row) => String(row.COLUMN_NAME)));
+
+  const hasGoodsWeight = waybillColumnSet.has("goods_weight");
+  const normalizedWeightExpr = hasGoodsWeight
+    ? "CASE WHEN goods_weight >= 1000 THEN goods_weight / 1000 ELSE goods_weight END"
+    : "0";
+
+  const routeExprParts: string[] = [];
+  if (waybillColumnSet.has("sub_financier")) routeExprParts.push("NULLIF(TRIM(sub_financier), '')");
+  if (waybillColumnSet.has("branch")) routeExprParts.push("NULLIF(TRIM(branch), '')");
+  if (waybillColumnSet.has("vehicle_route")) routeExprParts.push("NULLIF(TRIM(vehicle_route), '')");
+  const activeRouteExpr = routeExprParts.length > 0 ? `COALESCE(${routeExprParts.join(", ")})` : "NULL";
+
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT
+      DATE_FORMAT(waybill_date, ?) as date,
+      COUNT(*) as waybill_count,
+      COALESCE(SUM(${normalizedWeightExpr}), 0) as total_weight,
+      COUNT(DISTINCT ${activeRouteExpr}) as active_routes
+    FROM waybills
+    WHERE waybill_date >= ?
+      AND waybill_date <= ?
+      AND deleted_at IS NULL
+    GROUP BY DATE_FORMAT(waybill_date, ?)
+    ORDER BY date ASC`,
+    [dateFormat, filters.startDate, filters.endDate, dateFormat]
+  );
+
+  return rows.map((row) => ({
+    date: String(row.date || ""),
+    waybillCount: Number(row.waybill_count || 0),
+    totalWeight: Number(row.total_weight || 0),
+    activeRoutes: Number(row.active_routes || 0),
   }));
 }
 

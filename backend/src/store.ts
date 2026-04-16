@@ -3975,11 +3975,24 @@ export async function getCommissionContractStats(): Promise<CommissionContractSt
     ? percentageConfigs.reduce((sum: number, cfg: CommissionConfigItem) => sum + cfg.value, 0) / percentageConfigs.length
     : 0;
 
+  const [relationRows] = await pool.query<RowDataPacket[]>(
+    `SELECT
+       COUNT(DISTINCT rt.local_partner_id) AS local_partner_count,
+       COUNT(DISTINCT cr.route_id) AS route_count
+     FROM commission_contracts cc
+     LEFT JOIN contract_routes cr ON cr.contract_id = cc.id
+     LEFT JOIN routes rt ON rt.id = cr.route_id
+     WHERE cc.status = 'active'`
+  );
+  const relationRow = relationRows[0] || {};
+
   return {
     totalCount: contracts.length,
     activeCount,
     totalConfigCount,
-    avgRatio
+    avgRatio,
+    localPartnerCount: Number(relationRow.local_partner_count) || 0,
+    routeCount: Number(relationRow.route_count) || 0,
   };
 }
 
