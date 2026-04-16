@@ -45,6 +45,14 @@ function toDateOnlyString(value: unknown): string {
   return text;
 }
 
+function buildEffectiveRevenueDateSql(recordAlias: string = "rr", waybillAlias: string = "w"): string {
+  return `CASE
+    WHEN ${recordAlias}.source_type = 'waybill_commission'
+      THEN DATE(COALESCE(${waybillAlias}.waybill_date, ${recordAlias}.revenue_date))
+    ELSE DATE(${recordAlias}.revenue_date)
+  END`;
+}
+
 // 数据库行转换为 RevenueRecord
 function rowToRevenueRecord(row: RowDataPacket): RevenueRecord {
   return {
@@ -261,10 +269,9 @@ export async function getRevenueRecords(
     params.push(filters.status);
   }
 
-  const dateFilterColumn =
-    filters.useWaybillDate && filters.sourceType === "waybill_commission"
-      ? "DATE(COALESCE(w.waybill_date, rr.revenue_date))"
-      : "rr.revenue_date";
+  const dateFilterColumn = filters.useWaybillDate
+    ? buildEffectiveRevenueDateSql("rr", "w")
+    : "DATE(rr.revenue_date)";
 
   if (filters.startDate) {
     conditions.push(`${dateFilterColumn} >= ?`);
@@ -318,6 +325,9 @@ export async function getRevenueRecords(
   const page = filters.page || 1;
   const pageSize = filters.pageSize || 20;
   const offset = (page - 1) * pageSize;
+  const orderByDateColumn = filters.useWaybillDate
+    ? buildEffectiveRevenueDateSql("rr", "w")
+    : "rr.revenue_date";
 
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT rr.*, w.vehicle_plate, w.driver_name, w.sub_financier,
@@ -325,7 +335,7 @@ export async function getRevenueRecords(
      FROM revenue_records rr
      ${joinClause}
      ${whereClause}
-     ORDER BY rr.revenue_date DESC, rr.created_at DESC
+     ORDER BY ${orderByDateColumn} DESC, rr.created_at DESC
      LIMIT ? OFFSET ?`,
     [...params, pageSize, offset]
   );
@@ -345,22 +355,30 @@ export async function getRevenueStats(filters: {
   beneficiaryId?: string;
   startDate?: string;
   endDate?: string;
+  useBusinessDateForWaybill?: boolean;
 }): Promise<RevenueStats> {
   const conditions: string[] = [];
   const params: any[] = [];
+  const useBusinessDateForWaybill = Boolean(filters.useBusinessDateForWaybill);
+  const effectiveDateExpr = useBusinessDateForWaybill
+    ? buildEffectiveRevenueDateSql("rr", "w")
+    : "DATE(rr.revenue_date)";
+  const baseFromSql = useBusinessDateForWaybill
+    ? "FROM revenue_records rr LEFT JOIN waybills w ON w.id = rr.waybill_id AND w.deleted_at IS NULL"
+    : "FROM revenue_records rr";
 
   if (filters.recordType) {
-    conditions.push("record_type = ?");
+    conditions.push("rr.record_type = ?");
     params.push(filters.recordType);
   }
 
   if (filters.beneficiaryType) {
-    conditions.push("beneficiary_type = ?");
+    conditions.push("rr.beneficiary_type = ?");
     params.push(filters.beneficiaryType);
   }
 
   if (filters.beneficiaryId) {
-    conditions.push("beneficiary_id = ?");
+    conditions.push("rr.beneficiary_id = ?");
     params.push(filters.beneficiaryId);
   }
 
@@ -368,30 +386,30 @@ export async function getRevenueStats(filters: {
 
   // 总收益
   const [totalRows] = await pool.query<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(amount), 0) as total FROM revenue_records ${whereClause}`,
+    `SELECT COALESCE(SUM(rr.amount), 0) as total ${baseFromSql} ${whereClause}`,
     params
   );
 
   // 已确认收益
-  const confirmedConditions = [...conditions, "status IN ('confirmed', 'settled')"];
+  const confirmedConditions = [...conditions, "rr.status IN ('confirmed', 'settled')"];
   const [confirmedRows] = await pool.query<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(amount), 0) as total FROM revenue_records WHERE ${confirmedConditions.join(" AND ")}`,
+    `SELECT COALESCE(SUM(rr.amount), 0) as total ${baseFromSql} WHERE ${confirmedConditions.join(" AND ")}`,
     params
   );
 
   // 待确认收益
-  const pendingConditions = [...conditions, "status = 'pending'"];
+  const pendingConditions = [...conditions, "rr.status = 'pending'"];
   const [pendingRows] = await pool.query<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(amount), 0) as total FROM revenue_records WHERE ${pendingConditions.join(" AND ")}`,
+    `SELECT COALESCE(SUM(rr.amount), 0) as total ${baseFromSql} WHERE ${pendingConditions.join(" AND ")}`,
     params
   );
 
   // 本期收益 (根据 startDate 和 endDate)
   let periodRevenue = 0;
   if (filters.startDate && filters.endDate) {
-    const periodConditions = [...conditions, "revenue_date >= ?", "revenue_date <= ?"];
+    const periodConditions = [...conditions, `${effectiveDateExpr} >= ?`, `${effectiveDateExpr} <= ?`];
     const [periodRows] = await pool.query<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM revenue_records WHERE ${periodConditions.join(" AND ")}`,
+      `SELECT COALESCE(SUM(rr.amount), 0) as total ${baseFromSql} WHERE ${periodConditions.join(" AND ")}`,
       [...params, filters.startDate, filters.endDate]
     );
     periodRevenue = Number(periodRows[0].total);
@@ -401,6 +419,7 @@ export async function getRevenueStats(filters: {
   const estimatedRevenue = await calculateEstimatedRevenue({
     beneficiaryType: filters.beneficiaryType,
     beneficiaryId: filters.beneficiaryId,
+    useBusinessDateForWaybill,
   });
 
   // 计算环比增长率
@@ -418,9 +437,9 @@ export async function getRevenueStats(filters: {
     const prevStartStr = prevStart.toISOString().split('T')[0];
     const prevEndStr = prevEnd.toISOString().split('T')[0];
     
-    const prevConditions = [...conditions, "revenue_date >= ?", "revenue_date <= ?"];
+    const prevConditions = [...conditions, `${effectiveDateExpr} >= ?`, `${effectiveDateExpr} <= ?`];
     const [prevRows] = await pool.query<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM revenue_records WHERE ${prevConditions.join(" AND ")}`,
+      `SELECT COALESCE(SUM(rr.amount), 0) as total ${baseFromSql} WHERE ${prevConditions.join(" AND ")}`,
       [...params, prevStartStr, prevEndStr]
     );
     const prevPeriodRevenue = Number(prevRows[0].total);
@@ -585,25 +604,33 @@ export async function getRevenueTrend(filters: {
   startDate: string;
   endDate: string;
   groupBy: "day" | "week" | "month" | "year";
+  useBusinessDateForWaybill?: boolean;
 }): Promise<RevenueTrendPoint[]> {
+  const useBusinessDateForWaybill = Boolean(filters.useBusinessDateForWaybill);
+  const effectiveDateExpr = useBusinessDateForWaybill
+    ? buildEffectiveRevenueDateSql("rr", "w")
+    : "DATE(rr.revenue_date)";
+  const baseFromSql = useBusinessDateForWaybill
+    ? "FROM revenue_records rr LEFT JOIN waybills w ON w.id = rr.waybill_id AND w.deleted_at IS NULL"
+    : "FROM revenue_records rr";
   const conditions: string[] = [
-    "revenue_date >= ?",
-    "revenue_date <= ?",
+    `${effectiveDateExpr} >= ?`,
+    `${effectiveDateExpr} <= ?`,
   ];
   const params: any[] = [filters.startDate, filters.endDate];
 
   if (filters.recordType) {
-    conditions.push("record_type = ?");
+    conditions.push("rr.record_type = ?");
     params.push(filters.recordType);
   }
 
   if (filters.beneficiaryType) {
-    conditions.push("beneficiary_type = ?");
+    conditions.push("rr.beneficiary_type = ?");
     params.push(filters.beneficiaryType);
   }
 
   if (filters.beneficiaryId) {
-    conditions.push("beneficiary_id = ?");
+    conditions.push("rr.beneficiary_id = ?");
     params.push(filters.beneficiaryId);
   }
 
@@ -629,13 +656,13 @@ export async function getRevenueTrend(filters: {
 
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT 
-      DATE_FORMAT(revenue_date, ?) as date,
-      COALESCE(SUM(amount), 0) as amount,
-      COALESCE(SUM(CASE WHEN status IN ('confirmed', 'settled') THEN amount ELSE 0 END), 0) as confirmed_amount,
-      COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0) as pending_amount
-    FROM revenue_records
+      DATE_FORMAT(${effectiveDateExpr}, ?) as date,
+      COALESCE(SUM(rr.amount), 0) as amount,
+      COALESCE(SUM(CASE WHEN rr.status IN ('confirmed', 'settled') THEN rr.amount ELSE 0 END), 0) as confirmed_amount,
+      COALESCE(SUM(CASE WHEN rr.status = 'pending' THEN rr.amount ELSE 0 END), 0) as pending_amount
+    ${baseFromSql}
     ${whereClause}
-    GROUP BY DATE_FORMAT(revenue_date, ?)
+    GROUP BY DATE_FORMAT(${effectiveDateExpr}, ?)
     ORDER BY date ASC`,
     [dateFormat, ...params, dateFormat]
   );
@@ -722,32 +749,40 @@ export async function getRevenueComposition(filters: {
   beneficiaryId?: string;
   startDate?: string;
   endDate?: string;
+  useBusinessDateForWaybill?: boolean;
 }): Promise<RevenueComposition[]> {
+  const useBusinessDateForWaybill = Boolean(filters.useBusinessDateForWaybill);
+  const effectiveDateExpr = useBusinessDateForWaybill
+    ? buildEffectiveRevenueDateSql("rr", "w")
+    : "DATE(rr.revenue_date)";
+  const baseFromSql = useBusinessDateForWaybill
+    ? "FROM revenue_records rr LEFT JOIN waybills w ON w.id = rr.waybill_id AND w.deleted_at IS NULL"
+    : "FROM revenue_records rr";
   const conditions: string[] = [];
   const params: any[] = [];
 
   if (filters.recordType) {
-    conditions.push("record_type = ?");
+    conditions.push("rr.record_type = ?");
     params.push(filters.recordType);
   }
 
   if (filters.beneficiaryType) {
-    conditions.push("beneficiary_type = ?");
+    conditions.push("rr.beneficiary_type = ?");
     params.push(filters.beneficiaryType);
   }
 
   if (filters.beneficiaryId) {
-    conditions.push("beneficiary_id = ?");
+    conditions.push("rr.beneficiary_id = ?");
     params.push(filters.beneficiaryId);
   }
 
   if (filters.startDate) {
-    conditions.push("revenue_date >= ?");
+    conditions.push(`${effectiveDateExpr} >= ?`);
     params.push(filters.startDate);
   }
 
   if (filters.endDate) {
-    conditions.push("revenue_date <= ?");
+    conditions.push(`${effectiveDateExpr} <= ?`);
     params.push(filters.endDate);
   }
 
@@ -755,11 +790,11 @@ export async function getRevenueComposition(filters: {
 
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT 
-      source_type,
-      COALESCE(SUM(amount), 0) as amount
-    FROM revenue_records
+      rr.source_type,
+      COALESCE(SUM(rr.amount), 0) as amount
+    ${baseFromSql}
     ${whereClause}
-    GROUP BY source_type
+    GROUP BY rr.source_type
     ORDER BY amount DESC`,
     params
   );
@@ -786,48 +821,56 @@ export async function getRevenueRanking(filters: {
   startDate?: string;
   endDate?: string;
   limit?: number;
+  useBusinessDateForWaybill?: boolean;
 }): Promise<RevenueRankItem[]> {
+  const useBusinessDateForWaybill = Boolean(filters.useBusinessDateForWaybill);
+  const effectiveDateExpr = useBusinessDateForWaybill
+    ? buildEffectiveRevenueDateSql("rr", "w")
+    : "DATE(rr.revenue_date)";
+  const baseFromSql = useBusinessDateForWaybill
+    ? "FROM revenue_records rr LEFT JOIN waybills w ON w.id = rr.waybill_id AND w.deleted_at IS NULL"
+    : "FROM revenue_records rr";
   const conditions: string[] = [];
   const params: any[] = [];
 
   if (filters.recordType) {
-    conditions.push("record_type = ?");
+    conditions.push("rr.record_type = ?");
     params.push(filters.recordType);
   }
 
   if (filters.beneficiaryType) {
-    conditions.push("beneficiary_type = ?");
+    conditions.push("rr.beneficiary_type = ?");
     params.push(filters.beneficiaryType);
   }
 
   if (filters.beneficiaryId) {
-    conditions.push("beneficiary_id = ?");
+    conditions.push("rr.beneficiary_id = ?");
     params.push(filters.beneficiaryId);
   }
 
   if (filters.startDate) {
-    conditions.push("revenue_date >= ?");
+    conditions.push(`${effectiveDateExpr} >= ?`);
     params.push(filters.startDate);
   }
 
   if (filters.endDate) {
-    conditions.push("revenue_date <= ?");
+    conditions.push(`${effectiveDateExpr} <= ?`);
     params.push(filters.endDate);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const limit = filters.limit || 10;
 
-  const idField = filters.rankBy === "funder" ? "funder_id" : "financier_id";
-  const nameField = filters.rankBy === "funder" ? "funder_name" : "financier_name";
+  const idField = filters.rankBy === "funder" ? "rr.funder_id" : "rr.financier_id";
+  const nameField = filters.rankBy === "funder" ? "rr.funder_name" : "rr.financier_name";
 
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT 
       ${idField} as id,
       ${nameField} as name,
-      COALESCE(SUM(amount), 0) as amount,
+      COALESCE(SUM(rr.amount), 0) as amount,
       COUNT(*) as count
-    FROM revenue_records
+    ${baseFromSql}
     ${whereClause}
     AND ${idField} IS NOT NULL
     GROUP BY ${idField}, ${nameField}
@@ -851,33 +894,44 @@ export async function getRevenueRanking(filters: {
 export async function calculateEstimatedRevenue(filters: {
   beneficiaryType?: BeneficiaryType;
   beneficiaryId?: string;
+  useBusinessDateForWaybill?: boolean;
 }): Promise<number> {
   try {
+    const useBusinessDateForWaybill = Boolean(filters.useBusinessDateForWaybill);
+    const effectiveDateExpr = useBusinessDateForWaybill
+      ? buildEffectiveRevenueDateSql("rr", "w")
+      : "DATE(rr.revenue_date)";
+    const baseFromSql = useBusinessDateForWaybill
+      ? "FROM revenue_records rr LEFT JOIN waybills w ON w.id = rr.waybill_id AND w.deleted_at IS NULL"
+      : "FROM revenue_records rr";
     const conditions: string[] = [];
     const params: any[] = [];
 
     // 只计算收益类型的记录
-    conditions.push("record_type = 'revenue'");
+    conditions.push("rr.record_type = 'revenue'");
 
     if (filters.beneficiaryType) {
-      conditions.push("beneficiary_type = ?");
+      conditions.push("rr.beneficiary_type = ?");
       params.push(filters.beneficiaryType);
     }
 
     if (filters.beneficiaryId) {
-      conditions.push("beneficiary_id = ?");
+      conditions.push("rr.beneficiary_id = ?");
       params.push(filters.beneficiaryId);
     }
 
     // 计算过去30天的总收益
-    conditions.push("revenue_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
-    conditions.push("revenue_date <= CURDATE()");
+    conditions.push(`${effectiveDateExpr} >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`);
+    conditions.push(`${effectiveDateExpr} <= CURDATE()`);
 
     const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(amount), 0) as total, COUNT(DISTINCT revenue_date) as days
-       FROM revenue_records ${whereClause}`,
+      `SELECT
+         COALESCE(SUM(rr.amount), 0) as total,
+         COUNT(DISTINCT ${effectiveDateExpr}) as days
+       ${baseFromSql}
+       ${whereClause}`,
       params
     );
 

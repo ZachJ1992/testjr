@@ -2597,11 +2597,12 @@ export interface RevenueRecord {
 // 获取平台收益统计
 export async function fetchPlatformRevenueStats(
   token: string,
-  filters?: { startDate?: string; endDate?: string }
+  filters?: { startDate?: string; endDate?: string; dateMode?: 'revenue' | 'business' }
 ): Promise<RevenueStats> {
   const params = new URLSearchParams();
   if (filters?.startDate) params.append("startDate", filters.startDate);
   if (filters?.endDate) params.append("endDate", filters.endDate);
+  if (filters?.dateMode) params.append("dateMode", filters.dateMode);
   const queryString = params.toString();
   return request(`/revenue/platform/stats${queryString ? `?${queryString}` : ""}`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -2652,12 +2653,13 @@ export async function fetchPlatformRevenueList(
 // 获取平台收益趋势
 export async function fetchPlatformRevenueTrend(
   token: string,
-  filters: { startDate: string; endDate: string; groupBy?: 'day' | 'week' | 'month' | 'year' }
+  filters: { startDate: string; endDate: string; groupBy?: 'day' | 'week' | 'month' | 'year'; dateMode?: 'revenue' | 'business' }
 ): Promise<{ trend: RevenueTrendPoint[] }> {
   const params = new URLSearchParams();
   params.append("startDate", filters.startDate);
   params.append("endDate", filters.endDate);
   if (filters.groupBy) params.append("groupBy", filters.groupBy);
+  if (filters.dateMode) params.append("dateMode", filters.dateMode);
   return request(`/revenue/platform/trend?${params.toString()}`, {
     headers: { Authorization: `Bearer ${token}` }
   });
@@ -2679,11 +2681,12 @@ export async function fetchPlatformOperationTrend(
 // 获取平台收益构成
 export async function fetchPlatformRevenueComposition(
   token: string,
-  filters?: { startDate?: string; endDate?: string }
+  filters?: { startDate?: string; endDate?: string; dateMode?: 'revenue' | 'business' }
 ): Promise<{ composition: RevenueComposition[] }> {
   const params = new URLSearchParams();
   if (filters?.startDate) params.append("startDate", filters.startDate);
   if (filters?.endDate) params.append("endDate", filters.endDate);
+  if (filters?.dateMode) params.append("dateMode", filters.dateMode);
   const queryString = params.toString();
   return request(`/revenue/platform/composition${queryString ? `?${queryString}` : ""}`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -2693,12 +2696,13 @@ export async function fetchPlatformRevenueComposition(
 // 获取资金方收益排行
 export async function fetchPlatformRevenueFunderRanking(
   token: string,
-  filters?: { startDate?: string; endDate?: string; limit?: number }
+  filters?: { startDate?: string; endDate?: string; limit?: number; dateMode?: 'revenue' | 'business' }
 ): Promise<{ ranking: RevenueRankItem[] }> {
   const params = new URLSearchParams();
   if (filters?.startDate) params.append("startDate", filters.startDate);
   if (filters?.endDate) params.append("endDate", filters.endDate);
   if (filters?.limit) params.append("limit", filters.limit.toString());
+  if (filters?.dateMode) params.append("dateMode", filters.dateMode);
   const queryString = params.toString();
   return request(`/revenue/platform/ranking/funders${queryString ? `?${queryString}` : ""}`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -2708,12 +2712,13 @@ export async function fetchPlatformRevenueFunderRanking(
 // 获取融资方收益排行
 export async function fetchPlatformRevenueFinancierRanking(
   token: string,
-  filters?: { startDate?: string; endDate?: string; limit?: number }
+  filters?: { startDate?: string; endDate?: string; limit?: number; dateMode?: 'revenue' | 'business' }
 ): Promise<{ ranking: RevenueRankItem[] }> {
   const params = new URLSearchParams();
   if (filters?.startDate) params.append("startDate", filters.startDate);
   if (filters?.endDate) params.append("endDate", filters.endDate);
   if (filters?.limit) params.append("limit", filters.limit.toString());
+  if (filters?.dateMode) params.append("dateMode", filters.dateMode);
   const queryString = params.toString();
   return request(`/revenue/platform/ranking/financiers${queryString ? `?${queryString}` : ""}`, {
     headers: { Authorization: `Bearer ${token}` }

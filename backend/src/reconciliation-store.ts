@@ -89,8 +89,25 @@ export async function createReconBatch(input: {
   const id = randomUUID();
   const batchNumber = generateBatchNumber();
 
-  // 计算选中收益的合计
   const placeholders = input.revenueRecordIds.map(() => "?").join(",");
+  // 对于未进入对账锁定的运单抽成记录，入批前强制对齐到运单业务日期
+  const [dateFixResult] = await pool.query<ResultSetHeader>(
+    `UPDATE revenue_records rr
+     JOIN waybills w ON w.id = rr.waybill_id AND w.deleted_at IS NULL
+     SET rr.revenue_date = DATE(w.waybill_date),
+         rr.updated_at = NOW()
+     WHERE rr.id IN (${placeholders})
+       AND rr.source_type = 'waybill_commission'
+       AND rr.status IN ('pending', 'confirmed')
+       AND w.waybill_date IS NOT NULL
+       AND DATE(rr.revenue_date) <> DATE(w.waybill_date)`,
+    input.revenueRecordIds
+  );
+  if (Number(dateFixResult.affectedRows || 0) > 0) {
+    console.log(`[ReconBatch] 入批前已对齐 ${dateFixResult.affectedRows} 条运单抽成收益日期到运单业务日期`);
+  }
+
+  // 计算选中收益的合计
   const [amountRows] = await pool.query<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS total
      FROM revenue_records

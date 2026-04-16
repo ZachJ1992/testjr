@@ -194,8 +194,8 @@ const PlatformRevenue: React.FC = () => {
     setLoading(true);
     try {
       const [globalStatsRes, periodStatsRes, waybillOverviewRes, commissionStatsRes, trendRes, operationTrendRes, compositionRes, funderRes, financierRes] = await Promise.all([
-        fetchPlatformRevenueStats(token),
-        fetchPlatformRevenueStats(token, dateRange),
+        fetchPlatformRevenueStats(token, { dateMode: 'business' }),
+        fetchPlatformRevenueStats(token, { ...dateRange, dateMode: 'business' }),
         fetchWaybillOverview(token),
         fetchCommissionContractStats(token).catch(() => ({
           totalCount: 0,
@@ -205,11 +205,11 @@ const PlatformRevenue: React.FC = () => {
           localPartnerCount: 0,
           routeCount: 0,
         })),
-        fetchPlatformRevenueTrend(token, { ...dateRange, groupBy }),
+        fetchPlatformRevenueTrend(token, { ...dateRange, groupBy, dateMode: 'business' }),
         fetchPlatformOperationTrend(token, { ...dateRange, groupBy }),
-        fetchPlatformRevenueComposition(token, dateRange),
-        fetchPlatformRevenueFunderRanking(token, { ...dateRange, limit: 5 }),
-        fetchPlatformRevenueFinancierRanking(token, { ...dateRange, limit: 5 }),
+        fetchPlatformRevenueComposition(token, { ...dateRange, dateMode: 'business' }),
+        fetchPlatformRevenueFunderRanking(token, { ...dateRange, limit: 5, dateMode: 'business' }),
+        fetchPlatformRevenueFinancierRanking(token, { ...dateRange, limit: 5, dateMode: 'business' }),
       ]);
       
       setGlobalStats(globalStatsRes);
@@ -238,6 +238,7 @@ const PlatformRevenue: React.FC = () => {
       const listFilters: any = {
         startDate: filters.detailStartDate || dateRange.startDate,
         endDate: filters.detailEndDate || dateRange.endDate,
+        useWaybillDate: true,
         sourceType: filters.sourceType,
         funderId: filters.funderId,
         financierId: filters.financierId,
@@ -550,6 +551,7 @@ const PlatformRevenue: React.FC = () => {
           const listFilters: any = {
             startDate: filters.detailStartDate || dateRange.startDate,
             endDate: filters.detailEndDate || dateRange.endDate,
+            useWaybillDate: true,
             sourceType: filters.sourceType,
             subFinancier: filters.subFinancier,
             areaId: (filters as any).areaId,
@@ -571,6 +573,7 @@ const PlatformRevenue: React.FC = () => {
           const res = await fetchPlatformRevenueList(token, {
             startDate: dateRange.startDate,
             endDate: dateRange.endDate,
+            useWaybillDate: true,
             page: 1,
             pageSize: 9999,
           });

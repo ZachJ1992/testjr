@@ -11,6 +11,11 @@ import { RevenueSourceType, RevenueStatus } from "./types.js";
 
 const router = Router();
 
+function resolveBusinessDateMode(raw: unknown): boolean {
+  const text = String(raw ?? "").trim().toLowerCase();
+  return text === "business" || text === "waybill" || text === "true" || text === "1";
+}
+
 // ==================== 平台收益接口 ====================
 
 // 平台收益统计
@@ -20,12 +25,13 @@ router.get(
   requirePermissions("view_platform_revenue"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { startDate, endDate } = req.query;
+      const { startDate, endDate, dateMode } = req.query;
       
       const stats = await revenueStore.getRevenueStats({
         recordType: "revenue",
         startDate: startDate as string,
         endDate: endDate as string,
+        useBusinessDateForWaybill: resolveBusinessDateMode(dateMode),
       });
       
       res.json(stats);
@@ -76,7 +82,7 @@ router.get(
   requirePermissions("view_platform_revenue"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { startDate, endDate, groupBy } = req.query;
+      const { startDate, endDate, groupBy, dateMode } = req.query;
       
       if (!startDate || !endDate) {
         sendError(res, req, 400, "error.revenue.date_required");
@@ -88,6 +94,7 @@ router.get(
         startDate: startDate as string,
         endDate: endDate as string,
         groupBy: (groupBy as "day" | "week" | "month" | "year") || "day",
+        useBusinessDateForWaybill: resolveBusinessDateMode(dateMode),
       });
       
       res.json({ trend });
@@ -131,12 +138,13 @@ router.get(
   requirePermissions("view_platform_revenue"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { startDate, endDate } = req.query;
+      const { startDate, endDate, dateMode } = req.query;
       
       const composition = await revenueStore.getRevenueComposition({
         recordType: "revenue",
         startDate: startDate as string,
         endDate: endDate as string,
+        useBusinessDateForWaybill: resolveBusinessDateMode(dateMode),
       });
       
       res.json({ composition });
@@ -153,7 +161,7 @@ router.get(
   requirePermissions("view_platform_revenue"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { startDate, endDate, limit } = req.query;
+      const { startDate, endDate, limit, dateMode } = req.query;
       
       const ranking = await revenueStore.getRevenueRanking({
         recordType: "revenue",
@@ -161,6 +169,7 @@ router.get(
         startDate: startDate as string,
         endDate: endDate as string,
         limit: limit ? Number(limit) : 10,
+        useBusinessDateForWaybill: resolveBusinessDateMode(dateMode),
       });
       
       res.json({ ranking });
@@ -177,7 +186,7 @@ router.get(
   requirePermissions("view_platform_revenue"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { startDate, endDate, limit } = req.query;
+      const { startDate, endDate, limit, dateMode } = req.query;
       
       const ranking = await revenueStore.getRevenueRanking({
         recordType: "revenue",
@@ -185,6 +194,7 @@ router.get(
         startDate: startDate as string,
         endDate: endDate as string,
         limit: limit ? Number(limit) : 10,
+        useBusinessDateForWaybill: resolveBusinessDateMode(dateMode),
       });
       
       res.json({ ranking });
