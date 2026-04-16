@@ -602,6 +602,52 @@ hr{border:none;border-top:1px solid #ddd;margin:28px 0;}
 </ul>
 <p>原因：这是旧运单口径，和新 dashboard 聚合口径不同，容易与 `overview.totalWaybillCount / grossFreightAmount` 混淆。</p>
 <hr>
+<h2>12. /api/dashboard/business-scale-by-route</h2>
+<h3>接口路径</h3>
+<p>`/api/dashboard/business-scale-by-route`</p>
+<h3>接口用途</h3>
+<p>按线路汇总撮合运费（<code>grossFreightAmount</code>），每行一条线路或一类无 <code>route_id</code> 的兜底分桶；口径与 <code>overview</code> / <code>business-trend</code> 的 <code>grossFreightAmount</code> 一致（<code>waybills.receivable_total</code> 优先，缺失回退 <code>revenue_records.principal_amount</code>）。</p>
+<h3>查询参数列表</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td>`startDate`</td><td>`string`</td><td>开始日期，<code>YYYY-MM-DD</code>；过滤 <code>revenue_date</code> 下界（含）</td></tr>
+<tr><td>`endDate`</td><td>`string`</td><td>结束日期；过滤上界（含）</td></tr>
+<tr><td>`partnerName`</td><td>`string`</td><td>合作方筛选</td></tr>
+<tr><td>`landingPartnerName`</td><td>`string`</td><td>落地合作方筛选</td></tr>
+<tr><td>`routeName`</td><td>`string`</td><td>线路筛选，精确匹配 <code>routes.name</code></td></tr>
+</table>
+<p><strong>默认时间</strong>：不传 <code>startDate</code> 且不传 <code>endDate</code> 时，使用 <code>2026-03-01</code>（含）至服务器「今天」（含）；<code>data.dateScope</code>=<code>fixedStartToToday</code>，<code>data.usedDefaultDateRange</code>=<code>true</code>。至少传一端则为 <code>custom</code>，未传的一端不加 <code>revenue_date</code> 边界（与 <code>business-scale-by-city</code> 一致）。</p>
+<h3>返回 JSON 示例</h3>
+<pre>{
+  &quot;code&quot;: 0,
+  &quot;message&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;dateScope&quot;: &quot;fixedStartToToday&quot;,
+    &quot;startDate&quot;: &quot;2026-03-01&quot;,
+    &quot;endDate&quot;: &quot;2026-04-16&quot;,
+    &quot;usedDefaultDateRange&quot;: true,
+    &quot;items&quot;: [
+      { &quot;routeId&quot;: &quot;xxx&quot;, &quot;routeName&quot;: &quot;示例线路&quot;, &quot;grossFreightAmount&quot;: 32056000 }
+    ]
+  }
+}</pre>
+<h3>字段清单表</h3>
+<table>
+<tr><th>字段路径</th><th>类型</th><th>含义</th><th>当前是否可用</th><th>当前是否可能为 0</th><th>备注</th></tr>
+<tr><td>`data.dateScope`</td><td>`string`</td><td><code>fixedStartToToday</code> / <code>custom</code></td><td>可用</td><td>否</td><td>与是否传参一致</td></tr>
+<tr><td>`data.startDate`</td><td>`string`</td><td>窗口下界（含）</td><td>可用</td><td>否</td><td>默认窗为 <code>2026-03-01</code></td></tr>
+<tr><td>`data.endDate`</td><td>`string`</td><td>窗口上界（含）</td><td>可用</td><td>否</td><td>默认窗为今天</td></tr>
+<tr><td>`data.usedDefaultDateRange`</td><td>`boolean`</td><td>是否默认窗</td><td>可用</td><td>否</td><td></td></tr>
+<tr><td>`data.items[].routeId`</td><td>`string` / <code>null</code></td><td>线路主键</td><td>可用</td><td>是</td><td>无 <code>route_id</code> 时为 <code>null</code></td></tr>
+<tr><td>`data.items[].routeName`</td><td>`string`</td><td>展示名</td><td>可用</td><td>否</td><td>有 id 为 <code>routes.name</code>；无 id 优先 <code>vehicle_route</code></td></tr>
+<tr><td>`data.items[].grossFreightAmount`</td><td>`number`</td><td>该线路撮合运费合计</td><td>可用</td><td>是</td><td>两位小数</td></tr>
+</table>
+<h3>推荐用于山海鲸首版展示的字段</h3>
+<ul>
+<li><code>data.items[].routeName</code>、<code>data.items[].grossFreightAmount</code></li>
+<li><code>data.startDate</code>、<code>data.endDate</code>、<code>data.dateScope</code>、<code>data.usedDefaultDateRange</code></li>
+</ul>
+<hr>
 <h2>总表</h2>
 <table>
 <tr><th>接口</th><th>是否可用于山海鲸首版</th><th>推荐程度</th><th>原因</th></tr>
@@ -615,6 +661,7 @@ hr{border:none;border-top:1px solid #ddd;margin:28px 0;}
 <tr><td>`/api/dashboard/partner-efficiency`</td><td>是</td><td>中</td><td>字段可用，但当前只有 1 个合作方散点，更适合作为备选模块</td></tr>
 <tr><td>`/api/dashboard/platform-revenue/overview`</td><td>否</td><td>低</td><td>旧口径且忽略日期，不建议与统一 dashboard 混用</td></tr>
 <tr><td>`/api/dashboard/waybills/overview`</td><td>否</td><td>低</td><td>旧口径运单概览，不建议与 dashboard 统一口径同屏混用</td></tr>
+<tr><td>`/api/dashboard/business-scale-by-route`</td><td>是</td><td>中</td><td>线路维度撮合运费；默认 2026-03-01～今天；与 KPI <code>grossFreightAmount</code> 口径一致</td></tr>
 </table>
 <hr>
 <h2>山海鲸首版配置建议</h2>
@@ -625,6 +672,7 @@ hr{border:none;border-top:1px solid #ddd;margin:28px 0;}
 <li>经营趋势</li>
 <li>合作方贡献 TOP</li>
 <li>合作方效率分析</li>
+<li>线路撮合运费排行：数据源 <code>/api/dashboard/business-scale-by-route</code>（可不传日期，默认自 2026-03-01 累计至今天）</li>
 </ol>
 <h3>建议先隐藏或延后的模块</h3>
 <ol>
@@ -651,5 +699,6 @@ hr{border:none;border-top:1px solid #ddd;margin:28px 0;}
 <li>不要将旧接口字段与新 dashboard 字段混用</li>
 <li>`partnerName` 当前实际映射 `revenue_records.financier_name`，属于现阶段聚合展示字段</li>
 <li>`landingPartner`、`effectiveContractCount` 当前不要作为首版核心指标绑定</li>
+<li>线路榜使用 <code>/api/dashboard/business-scale-by-route</code>：<code>grossFreightAmount</code> 勿与旧接口 <code>totalReceivable</code> 混读</li>
 </ol>
 </body></html>

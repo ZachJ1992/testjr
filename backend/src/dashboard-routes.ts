@@ -3,7 +3,11 @@ import { Router, type Request, type Response } from "express";
 import { requireApiKey } from "./api-key-auth.js";
 import { handleError } from "./errorHandler.js";
 import {
+  getDashboardBusinessScaleByCity,
+  getDashboardBusinessScaleByRoute,
+  getDashboardBusinessScaleTrend,
   getDashboardBusinessTrend,
+  getDashboardDepartureBatchTrend,
   getDashboardIncomeStructure,
   getDashboardIncomeTrend,
   getDashboardLandingPartnerTop,
@@ -39,6 +43,25 @@ function getDashboardFilters(req: Request): DashboardAggregateFilters {
     landingPartnerName: req.query.landingPartnerName as string | undefined,
     routeName: req.query.routeName as string | undefined,
   };
+}
+
+/** 解析 `includeZeroRegions` 等布尔查询串；无法识别时返回 `undefined`（等同未传）。 */
+function parseOptionalBooleanQuery(raw: unknown): boolean | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof v !== "string") {
+    return undefined;
+  }
+  const s = v.trim().toLowerCase();
+  if (s === "true" || s === "1" || s === "yes") {
+    return true;
+  }
+  if (s === "false" || s === "0" || s === "no") {
+    return false;
+  }
+  return undefined;
 }
 
 function getDashboardGranularity(req: Request): DashboardGranularity | undefined {
@@ -155,6 +178,65 @@ router.get(
 );
 
 router.get(
+  "/dashboard/business-scale-trend",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardBusinessScaleTrend({
+        ...getDashboardFilters(req),
+        granularity: getDashboardGranularity(req),
+      });
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/departure-batch-trend",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardDepartureBatchTrend({
+        startDate: req.query.startDate as string | undefined,
+        endDate: req.query.endDate as string | undefined,
+        granularity: getDashboardGranularity(req),
+      });
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/business-scale-by-city",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardBusinessScaleByCity(getDashboardFilters(req));
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/business-scale-by-route",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardBusinessScaleByRoute(getDashboardFilters(req));
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
   "/dashboard/partner-top",
   requireApiKey,
   async (req: Request, res: Response) => {
@@ -238,7 +320,12 @@ router.get(
   requireApiKey,
   async (req: Request, res: Response) => {
     try {
-      const data = await getDashboardRegionSummary(getDashboardFilters(req));
+      const data = await getDashboardRegionSummary({
+        ...getDashboardFilters(req),
+        includeZeroRegions: parseOptionalBooleanQuery(
+          req.query.includeZeroRegions
+        ),
+      });
       sendSuccess(res, data);
     } catch (err) {
       handleError(res, req, 500, err);
