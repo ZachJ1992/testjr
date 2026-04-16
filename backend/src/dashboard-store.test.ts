@@ -2,7 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  getDefaultBusinessScaleByRouteDateRange,
+  getDefaultLast30DaysDateRange,
   getDefaultLast7DaysDateRange,
+  getDefaultLast8WeeksDateRange,
+  getDashboardBusinessScaleByCity,
+  getDashboardBusinessScaleByRoute,
+  getDashboardBusinessScaleTrend,
+  getDashboardDepartureBatchTrend,
+  DASHBOARD_BUSINESS_SCALE_TREND_PARTIAL_WEEK_NOTE,
   getPlatformRevenueOverview,
   getDashboardWaybillsOverview,
   getDashboardOverview,
@@ -303,6 +311,7 @@ test("getDashboardRegionSummary aggregates by normalized region and respects dat
         {
           waybill_id: "w1",
           amount: 10,
+          gross_freight_amount: 0,
           financier_name: "金罗",
           raw_area_name: null,
           landing_partner_id: "lp1",
@@ -312,6 +321,7 @@ test("getDashboardRegionSummary aggregates by normalized region and respects dat
         {
           waybill_id: "w1",
           amount: 5,
+          gross_freight_amount: 0,
           financier_name: "金罗",
           raw_area_name: null,
           landing_partner_id: "lp1",
@@ -321,6 +331,7 @@ test("getDashboardRegionSummary aggregates by normalized region and respects dat
         {
           waybill_id: "w2",
           amount: 3,
+          gross_freight_amount: 0,
           financier_name: "其他",
           raw_area_name: "重庆融满",
           landing_partner_id: "lp2",
@@ -330,6 +341,7 @@ test("getDashboardRegionSummary aggregates by normalized region and respects dat
         {
           waybill_id: "w3",
           amount: 99,
+          gross_freight_amount: 0,
           financier_name: "融满",
           raw_area_name: null,
           landing_partner_id: null,
@@ -339,6 +351,7 @@ test("getDashboardRegionSummary aggregates by normalized region and respects dat
         {
           waybill_id: "w4",
           amount: 7,
+          gross_freight_amount: 0,
           financier_name: "其他",
           raw_area_name: "火星融满",
           landing_partner_id: "lp9",
@@ -387,6 +400,338 @@ test("getDefaultLast7DaysDateRange spans 7 inclusive local days", () => {
     getDefaultLast7DaysDateRange(new Date(2026, 3, 9)),
     { startDate: "2026-04-03", endDate: "2026-04-09" }
   );
+});
+
+test("getDefaultLast30DaysDateRange spans 30 inclusive local days", () => {
+  assert.deepEqual(
+    getDefaultLast30DaysDateRange(new Date(2026, 3, 9)),
+    { startDate: "2026-03-11", endDate: "2026-04-09" }
+  );
+});
+
+test("getDefaultLast8WeeksDateRange starts Monday eight weeks back from current week", () => {
+  assert.deepEqual(
+    getDefaultLast8WeeksDateRange(new Date(2026, 3, 16)),
+    { startDate: "2026-02-23", endDate: "2026-04-16" }
+  );
+});
+
+test("getDashboardBusinessScaleTrend week rolls up daily grossFreightAmount by ISO week", async () => {
+  const result = await getDashboardBusinessScaleTrend(
+    {
+      startDate: "2026-03-01",
+      endDate: "2026-03-15",
+      granularity: "week",
+    },
+    {
+      getBusinessTrendRows: async (f) => {
+        assert.equal(f.granularity, "day");
+        assert.equal(f.startDate, "2026-03-01");
+        assert.equal(f.endDate, "2026-03-15");
+        return [
+          {
+            date: "2026-03-01",
+            waybillCount: 1,
+            grossFreightAmount: 100,
+            platformIncome: 1,
+          },
+          {
+            date: "2026-03-02",
+            waybillCount: 1,
+            grossFreightAmount: 200,
+            platformIncome: 2,
+          },
+          {
+            date: "2026-03-08",
+            waybillCount: 1,
+            grossFreightAmount: 50,
+            platformIncome: 1,
+          },
+        ];
+      },
+    }
+  );
+
+  assert.equal(result.dateScope, "custom");
+  assert.equal(result.startDate, "2026-03-01");
+  assert.equal(result.endDate, "2026-03-15");
+  assert.equal(result.usedDefaultDateRange, false);
+  assert.equal(result.granularity, "week");
+  assert.equal(result.usedDefaultGranularity, false);
+  assert.ok(result.weekPeriodSemantics);
+  assert.equal(result.weekPeriodSemantics?.periodLabelStandard, "iso8601");
+  assert.equal(
+    result.weekPeriodSemantics?.partialWeekInterpretation,
+    DASHBOARD_BUSINESS_SCALE_TREND_PARTIAL_WEEK_NOTE
+  );
+  assert.equal(result.items.length, 2);
+  assert.deepEqual(result.items[0], {
+    periodLabel: "2026-W09",
+    startDate: "2026-03-01",
+    endDate: "2026-03-01",
+    grossFreightAmount: 100,
+  });
+  assert.deepEqual(result.items[1], {
+    periodLabel: "2026-W10",
+    startDate: "2026-03-02",
+    endDate: "2026-03-08",
+    grossFreightAmount: 250,
+  });
+});
+
+test("getDashboardBusinessScaleTrend omits granularity defaults to week", async () => {
+  let captured: { startDate?: string; endDate?: string } = {};
+  const result = await getDashboardBusinessScaleTrend(
+    {},
+    {
+      getBusinessTrendRows: async (f) => {
+        captured = { startDate: f.startDate, endDate: f.endDate };
+        return [];
+      },
+    }
+  );
+  assert.equal(result.granularity, "week");
+  assert.equal(result.usedDefaultGranularity, true);
+  assert.equal(result.dateScope, "last8weeks");
+  assert.equal(result.usedDefaultDateRange, true);
+  const expected = getDefaultLast8WeeksDateRange();
+  assert.equal(captured.startDate, expected.startDate);
+  assert.equal(captured.endDate, expected.endDate);
+  assert.equal(result.startDate, expected.startDate);
+  assert.equal(result.endDate, expected.endDate);
+  assert.ok(result.weekPeriodSemantics);
+});
+
+test("getDashboardDepartureBatchTrend week maps bucket bounds and counts", async () => {
+  const result = await getDashboardDepartureBatchTrend(
+    {
+      startDate: "2026-03-01",
+      endDate: "2026-03-20",
+      granularity: "week",
+    },
+    {
+      getDepartureBatchTrendRows: async (f) => {
+        assert.equal(f.granularity, "week");
+        assert.equal(f.startDate, "2026-03-01");
+        assert.equal(f.endDate, "2026-03-20");
+        return [
+          {
+            periodLabel: "2026-W09",
+            minBucket: "2026-03-01",
+            maxBucket: "2026-03-01",
+            departureBatchCount: 3,
+          },
+          {
+            periodLabel: "2026-W10",
+            minBucket: "2026-03-02",
+            maxBucket: "2026-03-08",
+            departureBatchCount: 186,
+          },
+        ];
+      },
+    }
+  );
+
+  assert.equal(result.dateScope, "custom");
+  assert.equal(result.usedDefaultDateRange, false);
+  assert.equal(result.granularity, "week");
+  assert.equal(result.usedDefaultGranularity, false);
+  assert.deepEqual(result.items[0], {
+    periodLabel: "2026-W09",
+    startDate: "2026-03-01",
+    endDate: "2026-03-01",
+    departureBatchCount: 3,
+  });
+  assert.deepEqual(result.items[1], {
+    periodLabel: "2026-W10",
+    startDate: "2026-03-02",
+    endDate: "2026-03-08",
+    departureBatchCount: 186,
+  });
+});
+
+test("getDashboardDepartureBatchTrend without dates uses last8weeks default window", async () => {
+  let captured: { startDate?: string; endDate?: string } = {};
+  const result = await getDashboardDepartureBatchTrend(
+    {},
+    {
+      getDepartureBatchTrendRows: async (f) => {
+        captured = { startDate: f.startDate, endDate: f.endDate };
+        return [];
+      },
+    }
+  );
+  assert.equal(result.dateScope, "last8weeks");
+  assert.equal(result.usedDefaultDateRange, true);
+  assert.equal(result.granularity, "week");
+  assert.equal(result.usedDefaultGranularity, true);
+  const expected = getDefaultLast8WeeksDateRange();
+  assert.equal(captured.startDate, expected.startDate);
+  assert.equal(captured.endDate, expected.endDate);
+});
+
+test("getDashboardDepartureBatchTrend day uses period as single day bounds", async () => {
+  const result = await getDashboardDepartureBatchTrend(
+    {
+      startDate: "2026-04-01",
+      endDate: "2026-04-02",
+      granularity: "day",
+    },
+    {
+      getDepartureBatchTrendRows: async () => [
+        {
+          periodLabel: "2026-04-01",
+          minBucket: "2026-04-01",
+          maxBucket: "2026-04-01",
+          departureBatchCount: 5,
+        },
+      ],
+    }
+  );
+  assert.deepEqual(result.items[0], {
+    periodLabel: "2026-04-01",
+    startDate: "2026-04-01",
+    endDate: "2026-04-01",
+    departureBatchCount: 5,
+  });
+});
+
+test("getDashboardBusinessScaleByCity without dates uses last30days and sorts by gross", async () => {
+  let captured: { startDate?: string; endDate?: string } = {};
+  const result = await getDashboardBusinessScaleByCity(
+    {},
+    {
+      getRegionFactRows: async (filters) => {
+        captured = { startDate: filters.startDate, endDate: filters.endDate };
+        return [
+          {
+            waybill_id: "w1",
+            amount: 1,
+            gross_freight_amount: 100,
+            financier_name: "金罗",
+            raw_area_name: null,
+            landing_partner_id: "lp1",
+            landing_partner_name: "落地A",
+            route_id: "r1",
+          },
+          {
+            waybill_id: "w2",
+            amount: 2,
+            gross_freight_amount: 500,
+            financier_name: "其他",
+            raw_area_name: "重庆融满",
+            landing_partner_id: "lp2",
+            landing_partner_name: "落地B",
+            route_id: "r2",
+          },
+          {
+            waybill_id: "w3",
+            amount: 3,
+            gross_freight_amount: 200,
+            financier_name: "其他",
+            raw_area_name: "成都融满",
+            landing_partner_id: "lp3",
+            landing_partner_name: "落地C",
+            route_id: "r3",
+          },
+        ];
+      },
+    }
+  );
+
+  assert.equal(result.dateScope, "last30days");
+  assert.equal(result.usedDefaultDateRange, true);
+  const expected = getDefaultLast30DaysDateRange();
+  assert.equal(captured.startDate, expected.startDate);
+  assert.equal(captured.endDate, expected.endDate);
+  assert.equal(result.startDate, expected.startDate);
+  assert.equal(result.endDate, expected.endDate);
+  assert.equal(result.items[0]?.regionName, "重庆");
+  assert.equal(result.items[0]?.waybillCount, 1);
+  assert.equal(result.items[0]?.grossFreightAmount, 500);
+  assert.equal(result.items[1]?.regionName, "成都");
+  assert.equal(result.items[1]?.waybillCount, 2);
+  assert.equal(result.items[1]?.grossFreightAmount, 300);
+  assert.equal(result.items.length, 2);
+});
+
+test("getDashboardBusinessScaleByCity with explicit dates sets usedDefaultDateRange false", async () => {
+  const result = await getDashboardBusinessScaleByCity(
+    { startDate: "2026-04-01", endDate: "2026-04-07" },
+    {
+      getRegionFactRows: async () => [],
+    }
+  );
+  assert.equal(result.dateScope, "custom");
+  assert.equal(result.usedDefaultDateRange, false);
+  assert.equal(result.startDate, "2026-04-01");
+  assert.equal(result.endDate, "2026-04-07");
+});
+
+test("getDashboardBusinessScaleByRoute without dates uses fixedStartToToday", async () => {
+  let captured: { startDate?: string; endDate?: string } = {};
+  const result = await getDashboardBusinessScaleByRoute(
+    {},
+    {
+      getBusinessScaleByRouteRows: async (filters) => {
+        captured = { startDate: filters.startDate, endDate: filters.endDate };
+        return [
+          {
+            route_id: "rid-1",
+            route_name: "线路甲",
+            gross_freight_amount: 10.126,
+          },
+          {
+            route_id: null,
+            route_name: "仅运单线路文案",
+            gross_freight_amount: 2,
+          },
+        ];
+      },
+    }
+  );
+
+  assert.equal(result.dateScope, "fixedStartToToday");
+  assert.equal(result.usedDefaultDateRange, true);
+  const expected = getDefaultBusinessScaleByRouteDateRange();
+  assert.equal(captured.startDate, expected.startDate);
+  assert.equal(captured.endDate, expected.endDate);
+  assert.equal(result.startDate, expected.startDate);
+  assert.equal(result.endDate, expected.endDate);
+  assert.equal(result.items[0]?.routeId, "rid-1");
+  assert.equal(result.items[0]?.routeName, "线路甲");
+  assert.equal(result.items[0]?.grossFreightAmount, 10.13);
+  assert.equal(result.items[1]?.routeId, null);
+  assert.equal(result.items[1]?.routeName, "仅运单线路文案");
+  assert.equal(result.items[1]?.grossFreightAmount, 2);
+});
+
+test("getDashboardBusinessScaleByRoute with explicit dates is custom", async () => {
+  const result = await getDashboardBusinessScaleByRoute(
+    { startDate: "2026-04-01", endDate: "2026-04-07" },
+    {
+      getBusinessScaleByRouteRows: async () => [],
+    }
+  );
+  assert.equal(result.dateScope, "custom");
+  assert.equal(result.usedDefaultDateRange, false);
+  assert.equal(result.startDate, "2026-04-01");
+  assert.equal(result.endDate, "2026-04-07");
+});
+
+test("getDashboardBusinessScaleByRoute with only startDate is custom and does not inject end", async () => {
+  let captured: { startDate?: string; endDate?: string } = {};
+  await getDashboardBusinessScaleByRoute(
+    { startDate: "2026-04-01" },
+    {
+      getBusinessScaleByRouteRows: async (filters) => {
+        captured = filters;
+        return [];
+      },
+    }
+  );
+  assert.equal(captured.startDate, "2026-04-01");
+  assert.equal(captured.endDate, undefined);
 });
 
 test("getDashboardRegionSummary without dates uses last7days and forwards range to reader", async () => {

@@ -3,7 +3,11 @@ import { Router, type Request, type Response } from "express";
 import { requireApiKey } from "./api-key-auth.js";
 import { handleError } from "./errorHandler.js";
 import {
+  getDashboardBusinessScaleByCity,
+  getDashboardBusinessScaleByRoute,
+  getDashboardBusinessScaleTrend,
   getDashboardBusinessTrend,
+  getDashboardDepartureBatchTrend,
   getDashboardIncomeStructure,
   getDashboardIncomeTrend,
   getDashboardLandingPartnerTop,
@@ -147,6 +151,65 @@ router.get(
         ...getDashboardFilters(req),
         granularity: getDashboardGranularity(req),
       });
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/business-scale-trend",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardBusinessScaleTrend({
+        ...getDashboardFilters(req),
+        granularity: getDashboardGranularity(req),
+      });
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/departure-batch-trend",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardDepartureBatchTrend({
+        startDate: req.query.startDate as string | undefined,
+        endDate: req.query.endDate as string | undefined,
+        granularity: getDashboardGranularity(req),
+      });
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/business-scale-by-city",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardBusinessScaleByCity(getDashboardFilters(req));
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/business-scale-by-route",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardBusinessScaleByRoute(getDashboardFilters(req));
       sendSuccess(res, data);
     } catch (err) {
       handleError(res, req, 500, err);

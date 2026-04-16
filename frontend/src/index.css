@@ -235,3 +235,10 @@ a:hover {
   }
 }
 
+/* 登录页页脚备案链接：键盘聚焦可见 */
+.login-page-footer a:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+

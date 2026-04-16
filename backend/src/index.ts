@@ -58,8 +58,9 @@ app.use("/api", dashboardRoutes);
 app.use("/api", createAiRouter());
 
 // 提供前端静态文件（生产环境）
+// 编译产物位于 backend/dist/backend/src，需回到与 backend/ 同级的应用根目录再找 frontend/dist
 if (process.env.NODE_ENV === "production") {
-  const frontendDist = path.join(__dirname, "../../frontend/dist");
+  const frontendDist = path.join(__dirname, "../../../../frontend/dist");
   app.use(express.static(frontendDist));
   // SPA 路由回退到 index.html
   app.get("*", (req, res) => {

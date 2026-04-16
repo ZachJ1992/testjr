@@ -95,7 +95,7 @@ X-API-Key: <READONLY_API_KEY>
 1. 平台收入概览
 2. 运单概览
 
-### 驾驶舱聚合接口（9 个）
+### 驾驶舱聚合接口（13 个）
 
 1. 经营总览
 2. 收益趋势分析
@@ -106,6 +106,10 @@ X-API-Key: <READONLY_API_KEY>
 7. 结算进度分析
 8. 合作方效率分析
 9. 区域汇总（地图，供山海鲸中间中国地图主视觉）
+10. 业务规模趋势（山海鲸：撮合运费 `grossFreightAmount` 按日/周/月）
+11. 融满发车批次趋势（按 `waybill_number` 去重；独立路径）
+12. 城市业务规模分布（山海鲸：按城市聚合 `grossFreightAmount` 与运单数）
+13. 线路业务规模分布（山海鲸：按线路聚合累计 `grossFreightAmount`）
 
 ---
 
@@ -870,6 +874,372 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 
 ---
 
+## 12. 业务规模趋势
+
+### 接口说明
+
+- **接口路径**：`/api/dashboard/business-scale-trend`
+- **接口用途**：供山海鲸等大屏展示 **业务规模（撮合运费 `grossFreightAmount`）** 的时间趋势；口径与本文档「核心口径说明」及 `/api/dashboard/business-trend` 中 `grossFreightAmount` **一致**（`waybills.receivable_total` 优先，缺失时 `revenue_records.principal_amount`）。
+- **与 `business-trend` 的差异**：本接口**仅**返回趋势所需的周期标签与 `grossFreightAmount`，不混入 `waybillCount` / `platformIncome`；支持独立默认时间窗与周语义说明字段，避免改动既有 `business-trend` 结构。
+
+### 请求信息
+
+- 请求方法：`GET`
+- Base URL：`https://<your-domain>`
+- 接口路径：`/api/dashboard/business-scale-trend`
+- 完整 URL：`https://<your-domain>/api/dashboard/business-scale-trend`
+
+### 查询参数
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | `string` | 否 | 开始日期，`YYYY-MM-DD`；与 `endDate` 均不传时使用默认窗口（见下） |
+| `endDate` | `string` | 否 | 结束日期，`YYYY-MM-DD` |
+| `granularity` | `string` | 否 | `day` \| `week` \| `month`；**不传或非法时默认 `week`**，此时 `data.usedDefaultGranularity` = `true` |
+| `partnerName` | `string` | 否 | 与其它 dashboard 一致，匹配 `revenue_records.financier_name` |
+| `landingPartnerName` | `string` | 否 | 落地合作方筛选 |
+| `routeName` | `string` | 否 | 线路筛选 |
+
+**默认时间行为（大屏首版）**：若 **未传** `startDate` 且 **未传** `endDate`，服务端按 **服务器本地日历** 取 **最近 8 个自然周** 的窗口（见代码 `getDefaultLast8WeeksDateRange`）：
+
+- `endDate` = **今天**
+- `startDate` = **今天所在周的周一**，再向前 **49 天**（即再往前 7 个整周的周一），使时间跨度覆盖 **8 个自然周**，避免无日期参数时拉全量历史。
+- 响应中 `data.dateScope` = `"last8weeks"`，`data.usedDefaultDateRange` = `true`。
+
+若请求中 **传了** `startDate` 或 `endDate` **任意一端**，则视为自定义区间：`data.dateScope` = `"custom"`，`data.usedDefaultDateRange` = `false`；`data.startDate` / `data.endDate` **回显**本次实际参与 SQL 的日期边界（与入参及底层 `WHERE` 一致）。
+
+### 粒度与周语义
+
+| `granularity` | 数据来源 | 说明 |
+|---|---|---|
+| `day` / `month` | 与 `business-trend` 相同的按桶 SQL | `data.weekPeriodSemantics` = `null` |
+| `week`（默认） | 先按 **日** 取数，再在应用层按 **ISO 8601 周**汇总 | `data.weekPeriodSemantics` 非空，见下表 |
+
+**`data.weekPeriodSemantics`（仅 `granularity=week`）**
+
+| 字段 | 说明 |
+|---|---|
+| `periodLabelStandard` | 固定 `iso8601`：`items[].periodLabel` 为 **ISO 8601 周编号**（`YYYY-Www`），一周为 **周一至周日**。 |
+| `itemDateBounds` | 固定 `query_window_intersection_per_iso_week`：`items[].startDate` / `endDate` 表示在 **本次查询** `data.startDate`～`data.endDate` 限定下，该 ISO 周内 **实际有 `revenue_date` 的最小日、最大日**（闭区间），**不是**强制铺满的整周日历边界。 |
+| `partialWeekInterpretation` | 人类可读长文案：首尾周被查询窗口截断时，金额为 **交集片段** 的 `grossFreightAmount` 之和；**不可用** `items[].startDate`/`endDate` 反推完整周一至周日。 |
+
+### 成功响应示例（默认 8 周 + 默认周粒度）
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "dateScope": "last8weeks",
+    "startDate": "2026-02-23",
+    "endDate": "2026-04-16",
+    "usedDefaultDateRange": true,
+    "granularity": "week",
+    "usedDefaultGranularity": true,
+    "weekPeriodSemantics": {
+      "periodLabelStandard": "iso8601",
+      "itemDateBounds": "query_window_intersection_per_iso_week",
+      "partialWeekInterpretation": "当查询下沿或上沿截断某一 ISO 周时……"
+    },
+    "items": [
+      {
+        "periodLabel": "2026-W10",
+        "startDate": "2026-03-02",
+        "endDate": "2026-03-08",
+        "grossFreightAmount": 1250000
+      }
+    ]
+  }
+}
+```
+
+### 返回字段说明（`data` 顶层）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `dateScope` | `string` | `last8weeks`：未传两端日期；`custom`：至少传了一端日期 |
+| `startDate` | `string` | 本次 `revenue_date` 下界（含），**始终回显** |
+| `endDate` | `string` | 本次 `revenue_date` 上界（含），**始终回显** |
+| `usedDefaultDateRange` | `boolean` | `true`：未传 `startDate` 且未传 `endDate`，使用默认 8 周 |
+| `granularity` | `string` | 实际使用的 `day` \| `week` \| `month` |
+| `usedDefaultGranularity` | `boolean` | `true`：未传或非法 `granularity`，服务端采用 `week` |
+| `weekPeriodSemantics` | `object` \| `null` | 仅周粒度非 `null`，含义见上表 |
+| `items[].periodLabel` | `string` | 日：`YYYY-MM-DD`；月：`YYYY-MM`；周：`YYYY-Www`（ISO） |
+| `items[].startDate` | `string` | 该桶在查询窗口内的起始日（周/月见语义说明） |
+| `items[].endDate` | `string` | 该桶在查询窗口内的结束日 |
+| `items[].grossFreightAmount` | `number` | 该周期内撮合运费合计，两位小数 |
+
+### 验数建议
+
+1. 与 `/api/dashboard/business-trend` 在相同 `startDate`/`endDate`/`granularity` 下核对各桶 `grossFreightAmount`（周粒度本接口为日汇总后再卷周，应与按日相加一致）。  
+2. 不传日期时核对 `dateScope`、`startDate`/`endDate` 与默认 8 周规则。  
+3. 阅读 `weekPeriodSemantics.partialWeekInterpretation`，确认前端 tooltip 与坐标轴标签不与整周边界混淆。
+
+---
+
+## 13. 融满发车批次趋势（按批次号去重）
+
+### 字段与口径确认（实现依据）
+
+以下四点与当前库表及 dashboard 事实链路一致，供联调与验收对照：
+
+1. **「合作方」来源**：`revenue_records.financier_name`（与其它 dashboard 中 `partnerName` 筛选、`PARTNER_NAME_SQL` 一致）。本接口首版 **固定** 筛选 `TRIM(rr.financier_name) = '融满'`，**不接受**查询参数覆盖合作方。
+2. **「批次号」来源**：`waybills.waybill_number`（运单表「批次号」列；与导入/爬虫字段映射一致）。
+3. **按周（及日/月）分桶使用的日期**：`COALESCE(DATE(waybills.departure_time), DATE(waybills.created_time))`。语义上优先 **发车日**；无有效发车日时回退 **批次创建/入库日**。**不是** `revenue_records.revenue_date`，因此与第 12 节「业务规模趋势」的日期轴含义不同；仅 **默认时间窗算法**（未传两端日期时最近 8 周）与第 12 节对齐。
+4. **与下节「发车车次数（业务口径）」一致**：去重键为 `waybills.waybill_number`；空值处理见该节。
+
+### 接口说明
+
+- **接口路径**：`/api/dashboard/departure-batch-trend`
+- **接口用途**：返回合作方 **融满** 下，按时间桶聚合的 **发车车次数** 趋势（口径见下节）。
+- **事实链路**：与其它 dashboard 一致，从 `revenue_records`（`record_type=revenue`、`beneficiary_type=platform`、`source_type=waybill_commission`）关联 `waybills`，再用于批次号与分桶日期。
+
+### 发车车次数（业务口径）
+
+本接口中的 **「发车车次数」** 在首版与当前系统约定如下，**请勿**将其理解为「普通运单条数」或「任意运单号去重数量」：
+
+- **统计定义**：每个时间桶内的 **发车车次数** = 对该桶内所有命中行，按 **`waybills.waybill_number` 去重后的个数**。
+- **字段语义**：在本系统当前业务语义中，**`waybill_number` 承载的是「批次号」口径**（与运单导入、TMS 同步及列表展示中的「批次号」一致），**不是**泛指的「业务运单号」若另有定义时的替代含义。
+- **排除规则**：**`waybill_number` 为空、仅空白或去首尾空格后为空的记录，一律不计入** 去重统计。
+
+### 数据质量说明
+
+- 若融满相关数据中 **`waybill_number` 大量为空或仅空白**，则本接口各桶的 **`departureBatchCount` 会系统性偏低**（可理解为「有批次号可数的车辆/批次数」变少）。
+- 上述现象反映的是 **源数据或同步链路中批次号未填、未落库或未对齐** 等问题，**不属于** 本接口聚合逻辑错误；治理应优先在 TMS / 同步 / 清洗侧补齐 **`waybill_number`（批次号）**。
+
+### 请求信息
+
+- 请求方法：`GET`
+- 接口路径：`/api/dashboard/departure-batch-trend`
+- 完整 URL：`https://<your-domain>/api/dashboard/departure-batch-trend`
+
+### 查询参数
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | `string` | 否 | 分桶日期下界（含），`YYYY-MM-DD`；与 `endDate` 均不传时使用默认 8 周窗口（与第 12 节 `getDefaultLast8WeeksDateRange` 一致） |
+| `endDate` | `string` | 否 | 分桶日期上界（含） |
+| `granularity` | `string` | 否 | `day` \| `week` \| `month`；**不传或非法时默认 `week`**，`data.usedDefaultGranularity` = `true`。**山海鲸首版建议**：调用时 **显式传 `granularity=week`**，与当前后端默认一致；显式传参可避免日后若调整默认值时，大屏与文档理解不一致。 |
+
+**说明**：本接口 **不提供** `partnerName` / `landingPartnerName` / `routeName` 等筛选参数（首版合作方写死为融满）。
+
+### 成功响应示例
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "dateScope": "last8weeks",
+    "startDate": "2026-02-23",
+    "endDate": "2026-04-16",
+    "usedDefaultDateRange": true,
+    "granularity": "week",
+    "usedDefaultGranularity": true,
+    "items": [
+      {
+        "periodLabel": "2026-W10",
+        "startDate": "2026-03-02",
+        "endDate": "2026-03-08",
+        "departureBatchCount": 186
+      }
+    ]
+  }
+}
+```
+
+### 返回字段说明（`data`）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `dateScope` | `string` | `last8weeks`：未传 `startDate` 且未传 `endDate`；`custom`：至少传了一端日期 |
+| `startDate` | `string` | 本次参与过滤的 **分桶日期** 下界（含），**始终回显** |
+| `endDate` | `string` | 本次 **分桶日期** 上界（含），**始终回显** |
+| `usedDefaultDateRange` | `boolean` | 与第 12 节语义一致 |
+| `granularity` | `string` | 实际粒度 |
+| `usedDefaultGranularity` | `boolean` | 未传或非法 `granularity` 时为 `true` |
+| `items[].periodLabel` | `string` | 日：`YYYY-MM-DD`；月：`YYYY-MM`；周：MySQL ISO 周格式 `YYYY-Www`（与第 12 节周标签一致） |
+| `items[].startDate` | `string` | 该桶在查询窗口内的实际最小分桶日 |
+| `items[].endDate` | `string` | 该桶在查询窗口内的实际最大分桶日 |
+| `items[].departureBatchCount` | `number` | 该周期内按 **`waybill_number`（批次号）** 去重后的 **发车车次数**（空批次不计，语义见上节「发车车次数（业务口径）」） |
+
+### 验数建议
+
+1. 固定 `startDate`/`endDate` 与 `granularity=day`，按 SQL 手工 `COUNT(DISTINCT waybill_number)` 与某日 `items[].departureBatchCount` 对齐。  
+2. 周桶与 ISO 周标签对照 MySQL `DATE_FORMAT(分桶日期, '%x-W%v')`。  
+3. 抽样核对 `financier_name` 去空格后均为「融满」。
+
+---
+
+## 14. 城市业务规模分布
+
+### 接口说明
+
+- **接口路径**：`/api/dashboard/business-scale-by-city`
+- **接口用途**：供山海鲸展示 **按城市聚合的业务规模**（`grossFreightAmount`）及 **运单数**（`waybillCount`），用于城市排行、分布图等。
+- **区域规则**：与 **第 11 节 `region-summary`** **完全一致**——同一套 `normalizeDashboardRegionName`（融满字样、金罗缺省区域、城市→省静态表）及 **相同的 `items` 输出过滤**（不含「未维护区域」「未知省」桶）。
+- **金额口径**：与 `grossFreightAmount` 全局说明一致；**`waybillCount`** 为区域内 **`waybill_id` 去重计数**，与 `region-summary` 一致。
+
+### 请求信息
+
+- 请求方法：`GET`
+- Base URL：`https://<your-domain>`
+- 接口路径：`/api/dashboard/business-scale-by-city`
+- 完整 URL：`https://<your-domain>/api/dashboard/business-scale-by-city`
+
+### 查询参数
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | `string` | 否 | 开始日期，`YYYY-MM-DD` |
+| `endDate` | `string` | 否 | 结束日期，`YYYY-MM-DD` |
+| `partnerName` | `string` | 否 | 与其它 dashboard 一致 |
+| `landingPartnerName` | `string` | 否 | 落地合作方筛选 |
+| `routeName` | `string` | 否 | 线路筛选 |
+
+**默认时间行为**：若 **未传** `startDate` 且 **未传** `endDate`，服务端按 **服务器本地日历** 取 **最近 30 天（含今天）**：
+
+- `endDate` = **今天**
+- `startDate` = **今天往前 29 天**（闭区间共 **30** 个自然日）
+- 响应中 `data.dateScope` = `"last30days"`，`data.usedDefaultDateRange` = `true`。
+
+若 **传了** 任一端日期：`data.dateScope` = `"custom"`，`data.usedDefaultDateRange` = `false`；**`data.startDate` / `data.endDate` 始终回显**本次实际参与过滤的边界（与入参及 SQL 一致）。
+
+**排序**：`items` 按 `grossFreightAmount` **降序**；金额相同时按 `waybillCount` 降序，再按城市名。
+
+### 成功响应示例（默认近 30 天）
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "dateScope": "last30days",
+    "startDate": "2026-03-18",
+    "endDate": "2026-04-16",
+    "usedDefaultDateRange": true,
+    "items": [
+      {
+        "regionName": "成都",
+        "provinceName": "四川",
+        "waybillCount": 120,
+        "grossFreightAmount": 32056000
+      },
+      {
+        "regionName": "重庆",
+        "provinceName": "重庆",
+        "waybillCount": 45,
+        "grossFreightAmount": 2831787
+      }
+    ]
+  }
+}
+```
+
+### 返回字段说明（`data` 顶层与 `items`）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `dateScope` | `string` | `last30days` \| `custom` |
+| `startDate` | `string` | 本次 `revenue_date` 下界（含），**始终回显** |
+| `endDate` | `string` | 本次上界（含），**始终回显** |
+| `usedDefaultDateRange` | `boolean` | 是否与 `business-scale-trend` 同风格：`true` 表示使用了默认 30 天窗口 |
+| `items[].regionName` | `string` | 展示用城市名 |
+| `items[].provinceName` | `string` | 省级映射，规则同第 11 节 |
+| `items[].waybillCount` | `number` | `waybill_id` 去重计数 |
+| `items[].grossFreightAmount` | `number` | 撮合运费合计，两位小数 |
+
+### 验数建议
+
+1. 与第 11 节同一窗口、同一筛选下，抽样对比城市桶的 **`waybillCount`** 是否与 `region-summary` 一致（`grossFreightAmount` 与 `platformIncome` 不同维，勿混比）。  
+2. 核对默认 `last30days` 时 `startDate`/`endDate` 与 `dateScope`。  
+3. 验证列表按 `grossFreightAmount` 降序。
+
+---
+
+## 15. 线路业务规模分布（按线路累计撮合运费）
+
+### 接口说明
+
+- **接口路径**：`/api/dashboard/business-scale-by-route`
+- **接口用途**：供山海鲸展示 **按线路分组的撮合运费累计**（`grossFreightAmount`），用于线路排行、线路分布等；**每行一条线路（或一类无 `route_id` 的兜底分桶）**，非「按线路名过滤后的单一总额」。
+- **金额口径**：与本文档「核心口径说明」及 `overview` / `business-trend` / **第 14 节** `business-scale-by-city` 中的 **`grossFreightAmount` 完全一致**（`waybills.receivable_total` 优先，缺失时 `revenue_records.principal_amount`）。
+- **线路维度**：有 `revenue_records.route_id` 时按 **线路 id** 聚合，展示名取 **`routes.name`**（与全局 `routeName` 映射一致）；`route_id` 为空时按 **`waybills.vehicle_route`** 文本分桶（展示同名），二者皆空时归入 **「未命名线路」** 桶，且 **`routeId` 回 `null`**。
+
+### 请求信息
+
+- 请求方法：`GET`
+- Base URL：`https://<your-domain>`
+- 接口路径：`/api/dashboard/business-scale-by-route`
+- 完整 URL：`https://<your-domain>/api/dashboard/business-scale-by-route`
+
+### 查询参数
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | `string` | 否 | 开始日期，`YYYY-MM-DD`，过滤 **`revenue_date`** 下界（含） |
+| `endDate` | `string` | 否 | 结束日期，`YYYY-MM-DD`，过滤 **`revenue_date`** 上界（含） |
+| `partnerName` | `string` | 否 | 与其它 dashboard 一致 |
+| `landingPartnerName` | `string` | 否 | 落地合作方筛选 |
+| `routeName` | `string` | 否 | 线路筛选（精确匹配 **`routes.name`**，与其它接口一致） |
+
+**默认时间行为**：若 **未传** `startDate` 且 **未传** `endDate`，服务端按 **服务器本地日历** 使用：
+
+- `startDate` = **`2026-03-01`**
+- `endDate` = **今天**（含）
+- 响应中 `data.dateScope` = `"fixedStartToToday"`，`data.usedDefaultDateRange` = `true`。
+
+若 **传了** 任一端日期：`data.dateScope` = `"custom"`，`data.usedDefaultDateRange` = `false`；行为与 **第 14 节** `business-scale-by-city` **一致**——**仅传入的一端**参与 `revenue_date` 过滤，**未传的一端不加边界**（该侧为全历史开放）。`data.startDate` / `data.endDate` **始终回显**本次实际参与过滤的边界（与入参及 SQL 一致）。
+
+**排序**：`items` 按 `grossFreightAmount` **降序**；金额相同时按 `routeName` 升序。
+
+### 成功响应示例（默认窗）
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "dateScope": "fixedStartToToday",
+    "startDate": "2026-03-01",
+    "endDate": "2026-04-16",
+    "usedDefaultDateRange": true,
+    "items": [
+      {
+        "routeId": "xxx",
+        "routeName": "嘉上嘉供应链重庆广西海南A",
+        "grossFreightAmount": 32056000
+      },
+      {
+        "routeId": "yyy",
+        "routeName": "某某线路",
+        "grossFreightAmount": 2831787.12
+      }
+    ]
+  }
+}
+```
+
+### 返回字段说明（`data` 顶层与 `items`）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `dateScope` | `string` | `fixedStartToToday`：未传两端日期；`custom`：至少传了一端日期 |
+| `startDate` | `string` | 本次 `revenue_date` 下界（含），**始终回显** |
+| `endDate` | `string` | 本次上界（含），**始终回显** |
+| `usedDefaultDateRange` | `boolean` | 是否使用默认「2026-03-01～今天」窗口 |
+| `items[].routeId` | `string` \| `null` | 有 `route_id` 时为线路主键字符串；无 id 的兜底分桶为 `null` |
+| `items[].routeName` | `string` | 展示用线路名（有 id 时为 `routes.name`；无 id 时优先运单 `vehicle_route`） |
+| `items[].grossFreightAmount` | `number` | 该线路（或该兜底桶）下撮合运费合计，两位小数 |
+
+### 验数建议
+
+1. 与 `overview` 或 `business-trend` 在 **相同** `startDate`/`endDate` 及相同筛选下，核对各线路 `grossFreightAmount` **之和**是否与全量口径一致（注意本接口为 **按线路拆分**，非平台收益维度）。  
+2. 核对默认窗下 `dateScope`、`usedDefaultDateRange` 与回显 `startDate`/`endDate`。  
+3. 验证 `items` 按 `grossFreightAmount` 降序；抽样有 `route_id` 的行核对底层 `routes.name`。
+
+---
+
 ## 验数建议清单
 
 以下建议用于驾驶舱 dashboard 聚合接口（含区域地图）上线前的人工验数：
@@ -883,6 +1253,10 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 7. `grossFreightAmount` 当前含过渡期兜底逻辑，验数时应优先看 `waybills.receivable_total`，仅在缺失时再检查 `revenue_records.principal_amount`。
 8. `effectiveContractCount` 当前只作为辅助观察指标，建议做趋势比对，不建议拿它与平台全局合同总数直接对账。
 9. `region-summary`：核对默认 `last7days` 窗口、`dateScope` 与 `startDate/endDate`；按区域手工汇总与 `items` 交叉验证。
+10. `business-scale-trend`：默认 8 周与 `usedDefaultDateRange`；周粒度与 `business-trend` 日数据对齐验 `grossFreightAmount`。
+11. `departure-batch-trend`：默认 8 周窗与回显；核对分桶日期为「发车/创建日」而非 `revenue_date`；按日粒度与手工 `COUNT(DISTINCT waybill_number)` 对齐。
+12. `business-scale-by-city`：默认 30 天与回显日期；与 `region-summary` 对齐抽样验 `waybillCount` 与城市过滤。  
+13. `business-scale-by-route`：默认 `2026-03-01`～今天与 `usedDefaultDateRange`；各线路 `grossFreightAmount` 之和与同期全量口径对齐；核对无 `route_id` 时 `vehicle_route` 分桶与 `routeId=null`。
 
 ---
 
@@ -903,3 +1277,5 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 - 如需轮换密钥，建议平台侧提前通知调用方并设置切换窗口。
 - 如后续新增只读看板接口，建议沿用当前统一返回结构。
 - 山海鲸中间地图请使用 **`/api/dashboard/region-summary`**：默认近 7 天；`regionName` 作展示、`provinceName` 作省界定位；返回 `items` 已排除无地理语义的桶。
+- **线路维度撮合运费排行/分布**请使用 **`/api/dashboard/business-scale-by-route`**（**第 15 节**）：不传日期时默认自 **`2026-03-01`** 累计至今天；与 `grossFreightAmount` 全局口径一致。
+- **融满发车批次趋势**（**`/api/dashboard/departure-batch-trend`**，见第 13 节）：首版调用建议 **始终显式携带 `granularity=week`**（与当前默认一致，避免依赖隐式默认）；`startDate`/`endDate` 可按大屏需求传自定义窗，不传则使用文档所述默认 8 周。图表建议：以 **`items[].periodLabel`** 为横轴（或类目轴）、**`departureBatchCount`** 为柱/折线序列；**`items[].startDate` / `endDate`** 用于 tooltip 说明该周在查询窗内的实际有数据日区间（非强制整周边界）。指标含义为 **按 `waybill_number`（批次号）去重的发车车次数**，勿与运单条数或其它接口的 `waybillCount` 混读。
