@@ -20,6 +20,7 @@ import {
   getDashboardSettlementProgress,
   normalizeDashboardDateValue,
 } from "./dashboard-store.js";
+import { DASHBOARD_REGION_SUMMARY_TEMPLATE } from "./dashboard-region-summary-template.js";
 
 test("getPlatformRevenueOverview ignores incoming date filters", async () => {
   const calls: Array<Record<string, unknown>> = [];
@@ -365,6 +366,7 @@ test("getDashboardRegionSummary aggregates by normalized region and respects dat
   assert.equal(result.dateScope, "custom");
   assert.equal(result.startDate, "2026-04-01");
   assert.equal(result.endDate, "2026-04-07");
+  assert.equal(result.usedFixedRegionTemplate, false);
   // 「未维护区域」「provinceName=未知」在地图接口输出层被过滤
   assert.equal(result.items.length, 2);
   assert.ok(!result.items.some((i) => i.regionName === "未维护区域"));
@@ -393,6 +395,129 @@ test("getDashboardRegionSummary aggregates by normalized region and respects dat
     activeRouteCount: 1,
     displayText: "重庆｜平台收益，3.00 元｜活跃线路，1 条",
   });
+});
+
+test("getDashboardRegionSummary includeZeroRegions=true fills template order and zeros", async () => {
+  const result = await getDashboardRegionSummary(
+    {
+      startDate: "2026-04-01",
+      endDate: "2026-04-07",
+      includeZeroRegions: true,
+    },
+    { getRegionFactRows: async () => [] }
+  );
+  assert.equal(result.usedFixedRegionTemplate, true);
+  assert.equal(result.items.length, DASHBOARD_REGION_SUMMARY_TEMPLATE.length);
+  assert.deepEqual(
+    result.items.map((i) => ({
+      provinceName: i.provinceName,
+      regionName: i.regionName,
+    })),
+    [...DASHBOARD_REGION_SUMMARY_TEMPLATE]
+  );
+  assert.ok(
+    result.items.every(
+      (i) =>
+        i.waybillCount === 0 &&
+        i.platformIncome === 0 &&
+        i.landingPartnerCount === 0 &&
+        i.routeCount === 0 &&
+        i.activeRouteCount === 0
+    )
+  );
+  assert.ok(
+    result.items.every(
+      (i) => i.displayText === "该区域数据持续接入中"
+    )
+  );
+});
+
+test("getDashboardRegionSummary includeZeroRegions=true overlays by province+region only", async () => {
+  const result = await getDashboardRegionSummary(
+    {
+      startDate: "2026-04-01",
+      endDate: "2026-04-07",
+      includeZeroRegions: true,
+    },
+    {
+      getRegionFactRows: async () => [
+        {
+          waybill_id: "w1",
+          amount: 10,
+          gross_freight_amount: 0,
+          financier_name: "金罗",
+          raw_area_name: null,
+          landing_partner_id: "lp1",
+          landing_partner_name: "落地A",
+          route_id: "route-cd-1",
+        },
+        {
+          waybill_id: "w2",
+          amount: 3,
+          gross_freight_amount: 0,
+          financier_name: "其他",
+          raw_area_name: "重庆融满",
+          landing_partner_id: "lp2",
+          landing_partner_name: "落地B",
+          route_id: "route-cq-1",
+        },
+        {
+          waybill_id: "w3",
+          amount: 999,
+          gross_freight_amount: 0,
+          financier_name: "其他",
+          raw_area_name: "南京融满",
+          landing_partner_id: "lp3",
+          landing_partner_name: "落地C",
+          route_id: "route-nj-1",
+        },
+      ],
+    }
+  );
+  assert.equal(result.usedFixedRegionTemplate, true);
+  assert.equal(result.items.length, DASHBOARD_REGION_SUMMARY_TEMPLATE.length);
+  const chengdu = result.items.find(
+    (i) => i.provinceName === "四川" && i.regionName === "成都"
+  );
+  const chongqing = result.items.find(
+    (i) => i.provinceName === "重庆" && i.regionName === "重庆"
+  );
+  assert.ok(chengdu);
+  assert.ok(chongqing);
+  assert.equal(chengdu!.platformIncome, 10);
+  assert.equal(chongqing!.platformIncome, 3);
+  assert.ok(!result.items.some((i) => i.regionName === "南京"));
+  const changchun = result.items.find(
+    (i) => i.provinceName === "吉林" && i.regionName === "长春"
+  );
+  assert.ok(changchun);
+  assert.equal(changchun!.displayText, "该区域数据持续接入中");
+});
+
+test("getDashboardRegionSummary displayText pending when waybillCount is zero", async () => {
+  const result = await getDashboardRegionSummary(
+    { startDate: "2026-04-01", endDate: "2026-04-07" },
+    {
+      getRegionFactRows: async () => [
+        {
+          waybill_id: null,
+          amount: 100,
+          gross_freight_amount: 0,
+          financier_name: "其他",
+          raw_area_name: "广州融满",
+          landing_partner_id: "lp1",
+          landing_partner_name: "落地A",
+          route_id: "r1",
+        },
+      ],
+    }
+  );
+  assert.equal(result.items.length, 1);
+  const gz = result.items[0];
+  assert.equal(gz?.regionName, "广州");
+  assert.equal(gz?.waybillCount, 0);
+  assert.equal(gz?.platformIncome, 100);
+  assert.equal(gz?.displayText, "该区域数据持续接入中");
 });
 
 test("getDefaultLast7DaysDateRange spans 7 inclusive local days", () => {
@@ -751,4 +876,5 @@ test("getDashboardRegionSummary without dates uses last7days and forwards range 
   assert.equal(captured.endDate, expected.endDate);
   assert.equal(result.startDate, expected.startDate);
   assert.equal(result.endDate, expected.endDate);
+  assert.equal(result.usedFixedRegionTemplate, false);
 });

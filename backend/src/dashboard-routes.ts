@@ -45,6 +45,25 @@ function getDashboardFilters(req: Request): DashboardAggregateFilters {
   };
 }
 
+/** 解析 `includeZeroRegions` 等布尔查询串；无法识别时返回 `undefined`（等同未传）。 */
+function parseOptionalBooleanQuery(raw: unknown): boolean | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof v !== "string") {
+    return undefined;
+  }
+  const s = v.trim().toLowerCase();
+  if (s === "true" || s === "1" || s === "yes") {
+    return true;
+  }
+  if (s === "false" || s === "0" || s === "no") {
+    return false;
+  }
+  return undefined;
+}
+
 function getDashboardGranularity(req: Request): DashboardGranularity | undefined {
   const value = req.query.granularity;
   if (value === "week" || value === "month" || value === "day") {
@@ -301,7 +320,12 @@ router.get(
   requireApiKey,
   async (req: Request, res: Response) => {
     try {
-      const data = await getDashboardRegionSummary(getDashboardFilters(req));
+      const data = await getDashboardRegionSummary({
+        ...getDashboardFilters(req),
+        includeZeroRegions: parseOptionalBooleanQuery(
+          req.query.includeZeroRegions
+        ),
+      });
       sendSuccess(res, data);
     } catch (err) {
       handleError(res, req, 500, err);

@@ -8,6 +8,7 @@ import {
   DASHBOARD_REGION_UNKNOWN_PROVINCE,
   normalizeDashboardRegionName,
 } from "./dashboard-region.js";
+import { DASHBOARD_REGION_SUMMARY_TEMPLATE } from "./dashboard-region-summary-template.js";
 import {
   getWaybillsOverview,
   type WaybillOverview,
@@ -33,6 +34,11 @@ export interface DashboardAggregateFilters {
   partnerName?: string;
   landingPartnerName?: string;
   routeName?: string;
+  /**
+   * 仅 `getDashboardRegionSummary` 使用：为 true 时在输出层按固定底表补齐无数据区域（指标为 0），不改变 SQL 聚合口径。
+   * 其它 dashboard 聚合函数忽略该字段。
+   */
+  includeZeroRegions?: boolean;
 }
 
 export interface DashboardTrendFilters extends DashboardAggregateFilters {
@@ -259,7 +265,10 @@ export interface DashboardRegionSummaryItem {
   routeCount: number;
   /** 与 routeCount 同值；山海鲸展示用「活跃线路」语义 */
   activeRouteCount: number;
-  /** 展示辅助文案，不参与聚合；格式与 platformIncome 两位小数一致 */
+  /**
+   * 展示辅助文案，不参与聚合；`waybillCount > 0` 时为「省｜平台收益…｜活跃线路…」；
+   * **`waybillCount === 0` 时为固定兜底句**（默认模式与 `includeZeroRegions` 底表补零行一致）。
+   */
   displayText: string;
 }
 
@@ -269,6 +278,8 @@ export interface DashboardRegionSummary {
   startDate?: string;
   /** 本次统计实际上界（含） */
   endDate?: string;
+  /** 与请求 `includeZeroRegions=true` 一致：本次 `items` 是否按固定 20 城底表输出 */
+  usedFixedRegionTemplate: boolean;
   items: DashboardRegionSummaryItem[];
 }
 
@@ -1109,6 +1120,26 @@ function buildRegionSummaryDisplayText(
   return `${provinceName}｜平台收益，${formatRegionSummaryIncomeForDisplay(platformIncomeRounded)} 元｜活跃线路，${activeRouteCount} 条`;
 }
 
+/** `waybillCount === 0` 时山海鲸地图卡片兜底展示（与 `platformIncome` 等数值是否为 0 无关）。 */
+const DASHBOARD_REGION_SUMMARY_PENDING_DISPLAY_TEXT = "该区域数据持续接入中";
+
+/** 全接口统一：`waybillCount === 0` 时用固定兜底句，避免空串仍渲染占位卡片。 */
+function formatRegionSummaryItemDisplayText(item: {
+  provinceName: string;
+  platformIncome: number;
+  activeRouteCount: number;
+  waybillCount: number;
+}): string {
+  if (item.waybillCount === 0) {
+    return DASHBOARD_REGION_SUMMARY_PENDING_DISPLAY_TEXT;
+  }
+  return buildRegionSummaryDisplayText(
+    item.provinceName,
+    item.platformIncome,
+    item.activeRouteCount
+  );
+}
+
 export async function getPlatformRevenueOverview(
   _filters?: {
     startDate?: string;
@@ -1734,19 +1765,21 @@ function aggregateDashboardRegionSummary(
     const [regionName, provinceName] = key.split("\u0000");
     const platformIncome = roundMoney(bucket.platformIncome);
     const activeRouteCount = bucket.routes.size;
+    const waybillCount = bucket.waybills.size;
     items.push({
       regionName,
       provinceName,
-      waybillCount: bucket.waybills.size,
+      waybillCount,
       platformIncome,
       landingPartnerCount: bucket.landingPartners.size,
       routeCount: activeRouteCount,
       activeRouteCount,
-      displayText: buildRegionSummaryDisplayText(
+      displayText: formatRegionSummaryItemDisplayText({
         provinceName,
         platformIncome,
-        activeRouteCount
-      ),
+        activeRouteCount,
+        waybillCount,
+      }),
     });
   }
 
@@ -1761,6 +1794,52 @@ function aggregateDashboardRegionSummary(
   });
 
   return items;
+}
+
+/** 与 `includeZeroRegions` 底表合并一致：`provinceName` + `regionName` 唯一键 */
+function regionSummaryMergeKey(
+  provinceName: string,
+  regionName: string
+): string {
+  return `${provinceName}\u0000${regionName}`;
+}
+
+/**
+ * 在已通过地图输出过滤的聚合结果上，按固定底表顺序输出完整集合；
+ * 以 `provinceName`+`regionName` 覆盖真实桶，未命中则指标补 0。
+ * 不追加底表外的区域（含仅有数据但不在底表中的城市，以及「未维护区域」「未知」等已过滤桶）。
+ */
+function mergeRegionSummaryWithFixedTemplate(
+  filteredAggregated: DashboardRegionSummaryItem[]
+): DashboardRegionSummaryItem[] {
+  const byKey = new Map<string, DashboardRegionSummaryItem>();
+  for (const item of filteredAggregated) {
+    byKey.set(
+      regionSummaryMergeKey(item.provinceName, item.regionName),
+      item
+    );
+  }
+
+  const out: DashboardRegionSummaryItem[] = [];
+  for (const row of DASHBOARD_REGION_SUMMARY_TEMPLATE) {
+    const key = regionSummaryMergeKey(row.provinceName, row.regionName);
+    const hit = byKey.get(key);
+    if (hit) {
+      out.push(hit);
+    } else {
+      out.push({
+        regionName: row.regionName,
+        provinceName: row.provinceName,
+        waybillCount: 0,
+        platformIncome: 0,
+        landingPartnerCount: 0,
+        routeCount: 0,
+        activeRouteCount: 0,
+        displayText: DASHBOARD_REGION_SUMMARY_PENDING_DISPLAY_TEXT,
+      });
+    }
+  }
+  return out;
 }
 
 function aggregateDashboardRegionBusinessScaleByCity(
@@ -1826,14 +1905,17 @@ export async function getDashboardRegionSummary(
     getRegionFactRows: queryDashboardRegionFactRows,
   }
 ): Promise<DashboardRegionSummary> {
-  const hasCustomRange = Boolean(filters.startDate || filters.endDate);
-  let effectiveFilters: DashboardAggregateFilters = { ...filters };
+  const { includeZeroRegions, ...factFilters } = filters;
+  const hasCustomRange = Boolean(
+    factFilters.startDate || factFilters.endDate
+  );
+  let effectiveFilters: DashboardAggregateFilters = { ...factFilters };
   let dateScope: DashboardRegionSummaryDateScope = "custom";
 
   if (!hasCustomRange) {
     const { startDate, endDate } = getDefaultLast7DaysDateRange();
     effectiveFilters = {
-      ...filters,
+      ...factFilters,
       startDate,
       endDate,
     };
@@ -1843,16 +1925,22 @@ export async function getDashboardRegionSummary(
   const rows = await deps.getRegionFactRows(effectiveFilters);
   const aggregated = aggregateDashboardRegionSummary(rows);
   // 地图展示层输出过滤：无城市语义或未配置省份映射的桶不交给山海鲸主视觉渲染
-  const items = aggregated.filter(
+  const filtered = aggregated.filter(
     (item) =>
       item.regionName !== DASHBOARD_REGION_FALLBACK_CITY &&
       item.provinceName !== DASHBOARD_REGION_UNKNOWN_PROVINCE
   );
 
+  const items =
+    includeZeroRegions === true
+      ? mergeRegionSummaryWithFixedTemplate(filtered)
+      : filtered;
+
   return {
     dateScope,
     startDate: effectiveFilters.startDate,
     endDate: effectiveFilters.endDate,
+    usedFixedRegionTemplate: includeZeroRegions === true,
     items,
   };
 }

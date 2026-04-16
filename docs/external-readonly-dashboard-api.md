@@ -732,6 +732,7 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 | `partnerName` | `string` | 否 | 合作方筛选，与其它 dashboard 一致，匹配 `revenue_records.financier_name` |
 | `landingPartnerName` | `string` | 否 | 落地合作方筛选 |
 | `routeName` | `string` | 否 | 线路筛选 |
+| `includeZeroRegions` | `string`（布尔） | 否 | 传 `true`/`1`/`yes`（大小写不敏感）时，在**输出层**按固定省份/城市底表返回完整 `items`，无业务数据的区域指标为 **0**，并与真实聚合结果按 `provinceName`+`regionName` 合并；未传、`false`/`0`/`no` 或无法识别时保持旧行为（仅返回窗口内有数据的区域）。**不改变** SQL 聚合与区域标准化口径。响应中 `data.usedFixedRegionTemplate` 与该模式一致（`true`/`false`）。 |
 
 **默认时间行为**：若请求中 **未传** `startDate` 且 **未传** `endDate`，则服务端按 **服务器本地日历** 自动取 **近 7 天（含今天）**：
 
@@ -788,6 +789,17 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 
 因此山海鲸首版 **只需渲染接口返回的 `items`**，无需再自行剔除「未维护区域」或「未知省」。
 
+### `includeZeroRegions=true`（固定底表 + 零值补齐）
+
+- **用途**：山海鲸地图等场景在**当前统计窗口内无业务数据**时，仍希望拿到**稳定、完整**的城市列表（便于占位与着色），而不改变既有金额/运单等**聚合口径**。
+- **回显标志**：`data.usedFixedRegionTemplate` — 当且仅当本次请求生效为固定底表模式（`includeZeroRegions=true`）时为 **`true`**，否则为 **`false`**（含未传、传 `false`、无法解析等）。
+- **底表**：固定 **20** 条「省 + 市」组合，顺序由服务端常量 `DASHBOARD_REGION_SUMMARY_TEMPLATE` 定义（代码文件 `backend/src/dashboard-region-summary-template.ts`）；本次清单由产品/大屏侧直接提供（吉林/长春、四川/成都、陕西/西安、广东/广州、山东/临沂、湖南/长沙、重庆/重庆、天津/天津、山东/济南、云南/昆明、江苏/镇江、湖北/武汉、辽宁/沈阳、福建/泉州、河南/郑州、安徽/合肥、上海/上海、贵州/贵阳、河北/石家庄、北京/北京）。
+- **`items` 集合边界（必读）**：`includeZeroRegions=true` 时，**仅**返回上述固定底表中的 **20** 条省/市组合，**不会多也不会少**。即使当前统计窗口内、在默认模式下本会出现在 `items` 里的**底表外城市**（例如映射表已支持但未列入底表的城市）**存在业务数据**，在该模式下也**一律不会**出现在 `items` 中（数据仍在底层聚合中计算，只是本接口该模式下不向调用方透出这些行）。
+- **处理顺序**：先按既有逻辑完成事实聚合与输出过滤（剔除「未维护区域」「未知」桶，与 `includeZeroRegions` 无关）；再在**响应组装阶段**以底表顺序生成 `items`，对每条底表记录查找 **`provinceName` + `regionName`** 与过滤后聚合结果是否一致，一致则**整项沿用真实值**（含 `routeCount`/`activeRouteCount`/`displayText`），否则数值字段均为 **0**。
+- **`displayText` 与 `waybillCount`**：**全接口统一**——当 **`waybillCount === 0`** 时，`displayText` **固定为** **`该区域数据持续接入中`**（山海鲸在空串时仍会显示标记卡片，故用固定兜底句）；**`waybillCount > 0`** 时仍按「省｜平台收益…｜活跃线路…」生成。数值字段（含 `platformIncome` 等）不因本规则改变。
+- **不追加项**：「未维护区域」「未知省」等已过滤桶**不会**混入；底表外城市见上条，同样不返回。
+- **排序**：`includeZeroRegions=false`（默认）时仍为 **按 `platformIncome` 降序 → `waybillCount` 降序 → `regionName` 中文排序**；`includeZeroRegions=true` 时为 **底表定义顺序**，便于地图固定展示。
+
 ### 成功响应示例（默认近 7 天）
 
 ```json
@@ -798,6 +810,7 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
     "dateScope": "last7days",
     "startDate": "2026-04-03",
     "endDate": "2026-04-09",
+    "usedFixedRegionTemplate": false,
     "items": [
       {
         "regionName": "成都",
@@ -834,6 +847,7 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
     "dateScope": "custom",
     "startDate": "2026-04-01",
     "endDate": "2026-04-07",
+    "usedFixedRegionTemplate": false,
     "items": [
       {
         "regionName": "广州",
@@ -850,6 +864,47 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 }
 ```
 
+### 成功响应示例（`includeZeroRegions=true`，节选）
+
+`items` **固定为 20 条**，顺序与底表一致；以下为示意（首条无数据补 0，第二条为窗口内有数据时的真实值）：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "dateScope": "last7days",
+    "startDate": "2026-04-03",
+    "endDate": "2026-04-09",
+    "usedFixedRegionTemplate": true,
+    "items": [
+      {
+        "regionName": "长春",
+        "provinceName": "吉林",
+        "waybillCount": 0,
+        "platformIncome": 0,
+        "landingPartnerCount": 0,
+        "routeCount": 0,
+        "activeRouteCount": 0,
+        "displayText": "该区域数据持续接入中"
+      },
+      {
+        "regionName": "成都",
+        "provinceName": "四川",
+        "waybillCount": 1233,
+        "platformIncome": 95781.15,
+        "landingPartnerCount": 1,
+        "routeCount": 12,
+        "activeRouteCount": 12,
+        "displayText": "四川｜平台收益，95781.15 元｜活跃线路，12 条"
+      }
+    ]
+  }
+}
+```
+
+（实际响应中 `items` 含底表全部 20 个城市，此处 JSON 仅展示前 2 条结构。）
+
 ### 返回字段说明
 
 | 字段 | 类型 | 说明 |
@@ -857,6 +912,7 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 | `data.dateScope` | `string` | `last7days`：未传 `startDate` 且未传 `endDate`；`custom`：传了任一端日期 |
 | `data.startDate` | `string` | 本次统计 `revenue_date` 下界（含）；默认近 7 天时与自动计算的 `startDate` 一致，便于联调确认窗口 |
 | `data.endDate` | `string` | 本次统计上界（含） |
+| `data.usedFixedRegionTemplate` | `boolean` | **`true`**：本次为固定 20 城底表输出（请求 `includeZeroRegions` 生效为真）；**`false`**：默认模式（仅返回窗口内有数据的区域）。与 `items` 形态一致，便于前端分支渲染 |
 | `data.items[].regionName` | `string` | **地图展示名**（城市级），用于 tooltip、标签；已排除「未维护区域」 |
 | `data.items[].provinceName` | `string` | **省级定位/映射用**；已排除值为「未知」的桶 |
 | `data.items[].waybillCount` | `number` | 该区域运单数，`waybill_id` 去重 |
@@ -864,7 +920,7 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 | `data.items[].landingPartnerCount` | `number` | 该区域关联落地合作方去重数 |
 | `data.items[].routeCount` | `number` | 该区域下命中事实的去重线路数（`route_id` / `routes.id`）；无 `route_id` 时为 `0` |
 | `data.items[].activeRouteCount` | `number` | 与 `routeCount` 相同，供展示语义「活跃线路」 |
-| `data.items[].displayText` | `string` | 山海鲸可直接绑定的展示辅助文案，不改变聚合口径 |
+| `data.items[].displayText` | `string` | **`waybillCount > 0`** 时为「省｜平台收益…｜活跃线路…」；**`waybillCount === 0`** 时为固定句 **`该区域数据持续接入中`**（默认模式与底表补零行一致）；不改变各数值字段聚合口径 |
 
 ### 验数建议
 
