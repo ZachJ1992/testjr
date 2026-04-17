@@ -31,6 +31,7 @@ import { runRevenueContractLinkMigration } from "./migrations/revenue-contract-l
 import revenueRoutes from "./revenue-routes.js";
 import contractLoanRoutes from "./contract-loan-routes.js";
 import dashboardRoutes from "./dashboard-routes.js";
+import capacityDashboardRoutes from "./dashboard-capacity-routes.js";
 import { startRevenueScheduler } from "./revenue-scheduler.js";
 import { startScheduler, handleShutdownSignals } from "./crawler/crawler-scheduler.js";
 import { startSettlementScheduler } from "./settlement-scheduler.js";
@@ -55,6 +56,7 @@ app.use("/api", apiRouter);
 app.use("/api", revenueRoutes);
 app.use("/api", contractLoanRoutes);
 app.use("/api", dashboardRoutes);
+app.use("/api", capacityDashboardRoutes);
 app.use("/api", createAiRouter());
 
 // 提供前端静态文件（生产环境）
