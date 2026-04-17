@@ -102,6 +102,58 @@ export interface SafeUser {
   isActive?: boolean;
 }
 
+// ---- 主体与数据权限（阶段 A 契约） ----
+
+export type TenantType = OrgType; // 语义别名：platform/funder/financier
+
+export interface TenantSummary {
+  id: string;
+  name: string;
+  type?: TenantType;
+  parentId?: string;
+  relatedEntityId?: string;
+  status: "active" | "disabled";
+}
+
+export interface TenantContext {
+  isPlatform: boolean;
+  isFrozen: boolean;
+  accessibleTenantIds: string[];
+}
+
+export type DataScopeMode =
+  | "self_only"
+  | "tenant_only"
+  | "tenant_and_children"
+  | "tenants_specified"
+  | "all_tenants";
+
+export interface DataScope {
+  module: string;
+  mode: DataScopeMode;
+  tenantIds: string[];
+  includeChildren: boolean;
+  readonly: boolean;
+  exportable: boolean;
+}
+
+export interface GrantBoundary {
+  canGrantPermissionCodes: Permission[] | null; // null = 不限制
+  canGrantScopeModes: DataScopeMode[] | null;
+  canGrantTenantIds: string[] | null;
+}
+
+export interface UserContext {
+  user: SafeUser;
+  tenant?: TenantSummary;
+  tenantContext: TenantContext;
+  roles: Array<{ id: string; name?: string }>;
+  groups: Array<{ id: string; name?: string }>;
+  permissions: Permission[]; // 扁平列表（兼容老码）
+  dataScopes: Record<string, DataScope>; // moduleCode -> scope
+  grantBoundary: GrantBoundary;
+}
+
 export interface AuthTokenPayload {
   userId: string;
 }

@@ -40,7 +40,62 @@ export interface SafeUser {
   roleIds: string[];
   groupIds: string[];
   permissions: string[];
-   isActive?: boolean;
+  isActive?: boolean;
+  // 下列字段为阶段 A 引入，/auth/me 顶层下发，AuthProvider 回填到 user 上
+  // 便于现有 `user?.orgContext` 等读法继续可用
+  orgContext?: OrgContextSummary;
+  tenant?: TenantSummary;
+  tenantContext?: TenantContext;
+  dataScopes?: Record<string, DataScope>;
+  grantBoundary?: GrantBoundary;
+  roles?: Array<{ id: string; name?: string }>;
+  groups?: Array<{ id: string; name?: string }>;
+}
+
+// ==================== 多方主体权限 · 前端契约 ====================
+
+export interface OrgContextSummary {
+  orgId?: string;
+  orgType?: OrgType;
+  relatedEntityId?: string;
+  isPlatformUser: boolean;
+}
+
+export interface TenantSummary {
+  id: string;
+  name: string;
+  type?: OrgType;
+  parentId?: string;
+  relatedEntityId?: string;
+  status: "active" | "disabled";
+}
+
+export interface TenantContext {
+  isPlatform: boolean;
+  isFrozen: boolean;
+  accessibleTenantIds: string[];
+}
+
+export type DataScopeMode =
+  | "self_only"
+  | "tenant_only"
+  | "tenant_and_children"
+  | "tenants_specified"
+  | "all_tenants";
+
+export interface DataScope {
+  module: string;
+  mode: DataScopeMode;
+  tenantIds: string[];
+  includeChildren: boolean;
+  readonly: boolean;
+  exportable: boolean;
+}
+
+export interface GrantBoundary {
+  canGrantPermissionCodes: string[] | null;
+  canGrantScopeModes: DataScopeMode[] | null;
+  canGrantTenantIds: string[] | null;
 }
 
 export interface PermissionNode {

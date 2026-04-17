@@ -147,12 +147,84 @@ export async function loginApi(input: {
   });
 }
 
-export async function fetchMe(token: string): Promise<{ user: SafeUser }> {
+export async function fetchMe(token: string): Promise<{
+  user: SafeUser;
+  permissions?: string[];
+  orgContext?: SafeUser["orgContext"];
+  tenant?: SafeUser["tenant"];
+  tenantContext?: SafeUser["tenantContext"];
+  roles?: SafeUser["roles"];
+  groups?: SafeUser["groups"];
+  dataScopes?: SafeUser["dataScopes"];
+  grantBoundary?: SafeUser["grantBoundary"];
+}> {
   return request("/auth/me", {
     headers: {
       Authorization: `Bearer ${token}`
     }
   });
+}
+
+// 老权限码 -> 新细粒度码映射（与后端 permission-policy.ts 保持一致）
+const LEGACY_TO_NEW_CAP_MAP: Record<string, string[]> = {
+  manage_users: ["manage_users", "view_page_users", "action_edit_user"],
+  manage_roles: ["manage_roles", "view_page_roles", "action_edit_role"],
+  manage_permissions: ["manage_permissions", "view_page_permissions"],
+  manage_contracts: [
+    "manage_contracts",
+    "view_page_contracts",
+    "view_page_recon_batches",
+    "action_edit_contract"
+  ],
+  view_waybills: ["view_waybills", "view_page_waybills", "action_view_waybill"],
+  manage_waybills: ["manage_waybills", "action_edit_waybill"],
+  export_waybills: ["export_waybills", "action_export_waybill"],
+  view_platform_revenue: [
+    "view_platform_revenue",
+    "view_page_platform_revenue",
+    "action_view_revenue"
+  ],
+  view_funder_revenue: [
+    "view_funder_revenue",
+    "view_page_funder_revenue",
+    "action_view_funder_revenue"
+  ],
+  view_financier_expense: [
+    "view_financier_expense",
+    "view_page_financier_expense"
+  ],
+  manage_directed_pay: [
+    "manage_directed_pay",
+    "view_page_directed_pay",
+    "action_edit_directed_pay"
+  ],
+  approve_directed_pay: ["approve_directed_pay", "action_approve_directed_pay"],
+  view_operation_logs: ["view_operation_logs", "view_page_operation_logs"]
+};
+
+function expandCapabilities(perms: string[] | undefined): Set<string> {
+  const expanded = new Set<string>();
+  (perms || []).forEach((p) => {
+    expanded.add(p);
+    const mapped = LEGACY_TO_NEW_CAP_MAP[p];
+    if (mapped) mapped.forEach((m) => expanded.add(m));
+  });
+  return expanded;
+}
+
+/**
+ * 统一的权限判断工具：兼容老权限码与新细粒度码。
+ * 组件里如果还在用 `user?.permissions?.includes("xxx")`，可继续使用；
+ * 若要检查新码（view_page_xxx / action_edit_xxx），请切换到 `hasCapability`。
+ */
+export function hasCapability(
+  user: Pick<SafeUser, "permissions"> | undefined | null,
+  cap: string
+): boolean {
+  const perms = user?.permissions;
+  if (!perms || perms.length === 0) return false;
+  if (perms.includes("*")) return true;
+  return expandCapabilities(perms).has(cap);
 }
 
 export async function fetchPermissions(

@@ -6,6 +6,11 @@ import {
   requireAnyPermission,
   signToken
 } from "./auth.js";
+import {
+  buildUserContextPayload,
+  ensureTenantWritable,
+  loadUserContext,
+} from "./permission-policy.js";
 import { pool } from "./db.js";
 import { RowDataPacket } from "mysql2";
 import * as directedPayStore from "./directed-pay-contracts-store.js";
@@ -239,8 +244,29 @@ router.post("/auth/login", async (req: Request, res: Response) => {
 router.get(
   "/auth/me",
   authenticate,
-  (req: AuthenticatedRequest, res: Response) => {
-    res.json({ user: req.currentUser });
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.currentUser;
+      if (!user) {
+        sendError(res, req, 401, "error.users.unauthorized");
+        return;
+      }
+      const context = await buildUserContextPayload(user, req.orgContext);
+      // 老字段保留：user + permissions 扁平列表；新字段挂在顶层
+      res.json({
+        user,
+        permissions: user.permissions,
+        orgContext: req.orgContext,
+        tenant: context.tenant,
+        tenantContext: context.tenantContext,
+        roles: context.roles,
+        groups: context.groups,
+        dataScopes: context.dataScopes,
+        grantBoundary: context.grantBoundary,
+      });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
   }
 );
 
@@ -2074,6 +2100,8 @@ router.get(
 router.post(
   "/waybills",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   // requirePermissions("manage_waybills"), // 暂时移除权限检查
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -2137,6 +2165,8 @@ router.post(
 router.put(
   "/waybills/:id",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   // requirePermissions("manage_waybills"), // 暂时移除权限检查
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -2194,6 +2224,8 @@ router.put(
 router.delete(
   "/waybills/:id",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   // requirePermissions("manage_waybills"), // 暂时移除权限检查
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -2210,6 +2242,8 @@ router.delete(
 router.post(
   "/waybills/import",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   // requirePermissions("manage_waybills"), // 暂时移除权限检查
   async (req: AuthenticatedRequest, res: Response) => {
     try {

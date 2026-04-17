@@ -21,6 +21,34 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null);
 const STORAGE_KEY = "auth_token";
 
+/**
+ * 将 /auth/me 顶层返回（含 tenant/tenantContext/dataScopes 等）合并回 user 对象，
+ * 使既有 `user?.orgContext` / `user?.permissions` 用法继续可用，同时暴露新字段。
+ */
+function mergeMeResponse(res: {
+  user: SafeUser;
+  permissions?: string[];
+  orgContext?: SafeUser["orgContext"];
+  tenant?: SafeUser["tenant"];
+  tenantContext?: SafeUser["tenantContext"];
+  roles?: SafeUser["roles"];
+  groups?: SafeUser["groups"];
+  dataScopes?: SafeUser["dataScopes"];
+  grantBoundary?: SafeUser["grantBoundary"];
+}): SafeUser {
+  return {
+    ...res.user,
+    permissions: res.permissions ?? res.user.permissions,
+    orgContext: res.orgContext,
+    tenant: res.tenant,
+    tenantContext: res.tenantContext,
+    roles: res.roles,
+    groups: res.groups,
+    dataScopes: res.dataScopes,
+    grantBoundary: res.grantBoundary
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SafeUser | undefined>();
   const [token, setToken] = useState<string | undefined>();
@@ -34,9 +62,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (username: string, password: string) => {
     const res = await loginApi({ username, password });
-    setUser(res.user);
     setToken(res.token);
     localStorage.setItem(STORAGE_KEY, res.token);
+    // 登录后再拉一次 /auth/me 以拿到完整上下文
+    try {
+      const me = await fetchMe(res.token);
+      setUser(mergeMeResponse(me));
+    } catch {
+      setUser(res.user);
+    }
     message.success("登录成功");
   }, []);
 
@@ -49,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     fetchMe(existingToken)
       .then((res) => {
-        setUser(res.user);
+        setUser(mergeMeResponse(res));
         setToken(existingToken);
       })
       .catch(() => {

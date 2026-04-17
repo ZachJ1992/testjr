@@ -896,7 +896,8 @@ export const defaultTranslations: Record<string, Record<string, string>> = {
     "error.login.account_disabled": "账号已停用",
     "error.login.user_not_found": "用户不存在或已被删除",
     "error.login.failed": "登录失败",
-    
+    "error.tenant.frozen": "所在主体已停用，暂不可执行写操作",
+
     "error.users.required_fields": "username、password、displayName 必填",
     "error.users.password_required": "oldPassword、newPassword 必填",
     "error.users.unauthorized": "未授权",
@@ -1858,6 +1859,7 @@ export const defaultTranslations: Record<string, Record<string, string>> = {
     "error.login.account_disabled": "Account is disabled",
     "error.login.user_not_found": "User not found or deleted",
     "error.login.failed": "Login failed",
+    "error.tenant.frozen": "Your tenant is disabled, write operations are not allowed",
     
     "error.users.required_fields": "username, password, displayName are required",
     "error.users.password_required": "oldPassword and newPassword are required",

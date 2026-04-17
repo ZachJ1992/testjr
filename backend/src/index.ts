@@ -28,6 +28,7 @@ import { fixInterestRateCalculation } from "./migrations/fix-interest-rate-calcu
 import { trimTestData } from "./migrations/trim-test-data.js";
 import { runCommissionV2Migration } from "./migrations/commission-v2-tables.js";
 import { runRevenueContractLinkMigration } from "./migrations/revenue-contract-link.js";
+import { runMultiTenantPermissionMigration } from "./migrations/multi-tenant-permission.js";
 import revenueRoutes from "./revenue-routes.js";
 import contractLoanRoutes from "./contract-loan-routes.js";
 import dashboardRoutes from "./dashboard-routes.js";
@@ -86,6 +87,7 @@ initData()
   .then(() => trimTestData())
   .then(() => runCommissionV2Migration())
   .then(() => runRevenueContractLinkMigration())
+  .then(() => runMultiTenantPermissionMigration())
   .then(() => {
     // 清理旧的临时目录
     cleanupOldTempDirectories();
