@@ -35,6 +35,7 @@ import { TabManagerProvider, TabConfig, TabBar, TabContent } from "../components
 import GroupsPage from "../pages/Groups";
 import PermissionsPage from "../pages/Permissions";
 import OrgsPage from "../pages/Orgs";
+import RolesPage from "../pages/Roles";
 import WorkbenchPage from "../pages/Workbench";
 import I18nAdminPage from "../pages/I18nAdmin";
 import UsersPage from "../pages/Users";
@@ -335,6 +336,14 @@ function AppLayout() {
       });
     }
 
+    if (user?.permissions?.includes("manage_roles")) {
+      systemChildren.push({
+        key: "/roles",
+        icon: <TeamOutlined />,
+        label: <Link to="/roles">{t("menu.roles", "角色管理")}</Link>
+      });
+    }
+
     if (user?.permissions?.includes("manage_permissions")) {
       systemChildren.push({
         key: "/permissions",
@@ -416,6 +425,16 @@ function AppLayout() {
         label: t("menu.users", "用户管理"),
         icon: <TeamOutlined />,
         element: <UsersPage />
+      });
+    }
+
+    if (user?.permissions?.includes("manage_roles")) {
+      configs.push({
+        key: "/roles",
+        path: "/roles",
+        label: t("menu.roles", "角色管理"),
+        icon: <TeamOutlined />,
+        element: <RolesPage />
       });
     }
 

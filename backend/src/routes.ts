@@ -11,6 +11,10 @@ import {
   ensureTenantWritable,
   loadUserContext,
 } from "./permission-policy.js";
+import {
+  getOperationLogs,
+  recordOperationLog,
+} from "./operation-log-store.js";
 import { pool } from "./db.js";
 import { RowDataPacket } from "mysql2";
 import * as directedPayStore from "./directed-pay-contracts-store.js";
@@ -29,6 +33,11 @@ import {
   createOrgUnit,
   createPermission,
   createRole,
+  updateRole,
+  deleteRole,
+  findRoleById,
+  setOrgActive,
+  findOrgById,
   createUser,
   deletePermission,
   deleteTranslation,
@@ -397,6 +406,8 @@ router.get(
 router.post(
   "/roles",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requirePermissions("manage_roles"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -411,7 +422,81 @@ router.post(
         permissions as Permission[],
         description
       );
+      void recordOperationLog({
+        operatorUserId: req.currentUser?.id,
+        operatorTenantId: req.orgContext?.orgId,
+        targetType: "role",
+        targetId: role.id,
+        action: "role.create",
+        afterSnapshot: role,
+        isSensitive: true,
+        ip: req.ip,
+        ua: String(req.headers["user-agent"] || ""),
+      });
       res.status(201).json({ role });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+router.put(
+  "/roles/:id",
+  authenticate,
+  loadUserContext,
+  ensureTenantWritable,
+  requirePermissions("manage_roles"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const before = await findRoleById(req.params.id);
+      const { name, permissions, description } = req.body ?? {};
+      const role = await updateRole({
+        id: req.params.id,
+        name,
+        description,
+        permissions: Array.isArray(permissions) ? permissions : undefined,
+      });
+      void recordOperationLog({
+        operatorUserId: req.currentUser?.id,
+        operatorTenantId: req.orgContext?.orgId,
+        targetType: "role",
+        targetId: req.params.id,
+        action: "role.update",
+        beforeSnapshot: before,
+        afterSnapshot: role,
+        isSensitive: true,
+        ip: req.ip,
+        ua: String(req.headers["user-agent"] || ""),
+      });
+      res.json({ role });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+router.delete(
+  "/roles/:id",
+  authenticate,
+  loadUserContext,
+  ensureTenantWritable,
+  requirePermissions("manage_roles"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const before = await findRoleById(req.params.id);
+      await deleteRole(req.params.id);
+      void recordOperationLog({
+        operatorUserId: req.currentUser?.id,
+        operatorTenantId: req.orgContext?.orgId,
+        targetType: "role",
+        targetId: req.params.id,
+        action: "role.delete",
+        beforeSnapshot: before,
+        isSensitive: true,
+        ip: req.ip,
+        ua: String(req.headers["user-agent"] || ""),
+      });
+      res.status(204).send();
     } catch (err) {
       handleError(res, req, 400, err);
     }
@@ -679,6 +764,193 @@ router.delete(
     try {
       await deleteOrgUnit(req.params.id);
       res.status(204).send();
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// 主体启停（统一名称对齐 PRD：tenant 启用 / 停用）
+router.post(
+  "/tenants/:id/enable",
+  authenticate,
+  loadUserContext,
+  requirePermissions("manage_orgs"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const before = await findOrgById(req.params.id);
+      const org = await setOrgActive(req.params.id, true);
+      void recordOperationLog({
+        operatorUserId: req.currentUser?.id,
+        operatorTenantId: req.orgContext?.orgId,
+        targetType: "tenant",
+        targetId: req.params.id,
+        action: "tenant.enable",
+        beforeSnapshot: before,
+        afterSnapshot: org,
+        isSensitive: true,
+        ip: req.ip,
+        ua: String(req.headers["user-agent"] || ""),
+      });
+      res.json({ org });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+router.post(
+  "/tenants/:id/disable",
+  authenticate,
+  loadUserContext,
+  requirePermissions("manage_orgs"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const before = await findOrgById(req.params.id);
+      const org = await setOrgActive(req.params.id, false);
+      void recordOperationLog({
+        operatorUserId: req.currentUser?.id,
+        operatorTenantId: req.orgContext?.orgId,
+        targetType: "tenant",
+        targetId: req.params.id,
+        action: "tenant.disable",
+        beforeSnapshot: before,
+        afterSnapshot: org,
+        isSensitive: true,
+        confirmed: String(req.headers["x-confirmed"] || "").toLowerCase() === "true",
+        ip: req.ip,
+        ua: String(req.headers["user-agent"] || ""),
+      });
+      res.json({ org });
+    } catch (err) {
+      handleError(res, req, 400, err);
+    }
+  }
+);
+
+// 操作日志查询（平台看全量、租户管理员仅看本主体）
+router.get(
+  "/operation-logs",
+  authenticate,
+  loadUserContext,
+  requireAnyPermission(["view_operation_logs", "manage_users", "manage_roles"]),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const isPlatform = !!req.orgContext?.isPlatformUser;
+      const tenantScope = isPlatform
+        ? (req.query.tenantId as string | undefined)
+        : req.orgContext?.orgId;
+      const page = req.query.page ? Number(req.query.page) : 1;
+      const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 20;
+      const result = await getOperationLogs({
+        operatorTenantId: tenantScope,
+        operatorUserId: (req.query.operatorUserId as string) || undefined,
+        action: (req.query.action as string) || undefined,
+        isSensitive:
+          req.query.isSensitive === "true"
+            ? true
+            : req.query.isSensitive === "false"
+              ? false
+              : undefined,
+        startDate: (req.query.startDate as string) || undefined,
+        endDate: (req.query.endDate as string) || undefined,
+        page,
+        pageSize,
+      });
+      res.json(result);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+// 用户授权上限：本期先支持读写，不强校验“可分配集合 ⊇ 子账户实际授权”
+router.get(
+  "/users/:id/grant-boundary",
+  authenticate,
+  loadUserContext,
+  requirePermissions(["manage_users"]),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const [rows] = await pool.query<RowDataPacket[]>(
+        `SELECT user_id, grantable_permission_codes, grantable_scope_modes, grantable_tenant_ids
+         FROM grant_boundaries WHERE user_id = ? LIMIT 1`,
+        [req.params.id]
+      );
+      const r = rows[0];
+      const parse = (raw: unknown) => {
+        if (raw == null) return null;
+        if (Array.isArray(raw)) return raw;
+        try {
+          return JSON.parse(String(raw));
+        } catch {
+          return null;
+        }
+      };
+      res.json({
+        userId: req.params.id,
+        boundary: r
+          ? {
+              canGrantPermissionCodes: parse(r.grantable_permission_codes),
+              canGrantScopeModes: parse(r.grantable_scope_modes),
+              canGrantTenantIds: parse(r.grantable_tenant_ids),
+            }
+          : {
+              canGrantPermissionCodes: null,
+              canGrantScopeModes: null,
+              canGrantTenantIds: null,
+            },
+      });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.put(
+  "/users/:id/grant-boundary",
+  authenticate,
+  loadUserContext,
+  ensureTenantWritable,
+  requirePermissions(["manage_users"]),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { canGrantPermissionCodes, canGrantScopeModes, canGrantTenantIds } =
+        req.body ?? {};
+      const toJson = (v: unknown) =>
+        v === null || v === undefined ? null : JSON.stringify(v);
+      await pool.query(
+        `INSERT INTO grant_boundaries
+          (user_id, grantable_permission_codes, grantable_scope_modes, grantable_tenant_ids)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           grantable_permission_codes = VALUES(grantable_permission_codes),
+           grantable_scope_modes = VALUES(grantable_scope_modes),
+           grantable_tenant_ids = VALUES(grantable_tenant_ids),
+           updated_at = NOW()`,
+        [
+          req.params.id,
+          toJson(canGrantPermissionCodes),
+          toJson(canGrantScopeModes),
+          toJson(canGrantTenantIds),
+        ]
+      );
+      void recordOperationLog({
+        operatorUserId: req.currentUser?.id,
+        operatorTenantId: req.orgContext?.orgId,
+        targetType: "user",
+        targetId: req.params.id,
+        action: "user.grant_boundary.update",
+        afterSnapshot: {
+          canGrantPermissionCodes,
+          canGrantScopeModes,
+          canGrantTenantIds,
+        },
+        isSensitive: true,
+        ip: req.ip,
+        ua: String(req.headers["user-agent"] || ""),
+      });
+      res.json({ ok: true });
     } catch (err) {
       handleError(res, req, 400, err);
     }

@@ -353,6 +353,148 @@ export async function deleteOrgApi(
   });
 }
 
+// 主体启用 / 停用（阶段 B）
+export async function enableTenantApi(
+  token: string,
+  id: string
+): Promise<{ org: OrgUnit }> {
+  return request(`/tenants/${id}/enable`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+export async function disableTenantApi(
+  token: string,
+  id: string
+): Promise<{ org: OrgUnit }> {
+  return request(`/tenants/${id}/disable`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Confirmed": "true"
+    }
+  });
+}
+
+// 角色管理（阶段 B 补齐）
+export interface RoleDetail {
+  id: string;
+  name: string;
+  description?: string;
+  permissions: string[];
+}
+
+export async function fetchRoles(token: string): Promise<{ roles: RoleDetail[] }> {
+  return request(`/roles`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+export async function createRoleApi(
+  token: string,
+  payload: { name: string; description?: string; permissions: string[] }
+): Promise<{ role: RoleDetail }> {
+  return request(`/roles`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateRoleApi(
+  token: string,
+  id: string,
+  payload: { name?: string; description?: string; permissions?: string[] }
+): Promise<{ role: RoleDetail }> {
+  return request(`/roles/${id}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteRoleApi(token: string, id: string): Promise<void> {
+  await request(`/roles/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+// 操作日志
+export interface OperationLogItem {
+  id: string;
+  operatorUserId?: string;
+  operatorTenantId?: string;
+  targetType?: string;
+  targetId?: string;
+  action: string;
+  beforeSnapshot?: any;
+  afterSnapshot?: any;
+  isSensitive: boolean;
+  confirmed: boolean;
+  ip?: string;
+  ua?: string;
+  createdAt: string;
+}
+
+export async function fetchOperationLogs(
+  token: string,
+  query?: {
+    tenantId?: string;
+    operatorUserId?: string;
+    action?: string;
+    isSensitive?: boolean;
+    startDate?: string;
+    endDate?: string;
+    page?: number;
+    pageSize?: number;
+  }
+): Promise<{ items: OperationLogItem[]; total: number }> {
+  const params = new URLSearchParams();
+  if (query?.tenantId) params.append("tenantId", query.tenantId);
+  if (query?.operatorUserId) params.append("operatorUserId", query.operatorUserId);
+  if (query?.action) params.append("action", query.action);
+  if (query?.isSensitive !== undefined)
+    params.append("isSensitive", String(query.isSensitive));
+  if (query?.startDate) params.append("startDate", query.startDate);
+  if (query?.endDate) params.append("endDate", query.endDate);
+  if (query?.page) params.append("page", String(query.page));
+  if (query?.pageSize) params.append("pageSize", String(query.pageSize));
+  const qs = params.toString();
+  return request(`/operation-logs${qs ? `?${qs}` : ""}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+// 用户授权上限
+export interface GrantBoundaryPayload {
+  canGrantPermissionCodes: string[] | null;
+  canGrantScopeModes: string[] | null;
+  canGrantTenantIds: string[] | null;
+}
+
+export async function fetchUserGrantBoundary(
+  token: string,
+  userId: string
+): Promise<{ userId: string; boundary: GrantBoundaryPayload }> {
+  return request(`/users/${userId}/grant-boundary`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+export async function updateUserGrantBoundary(
+  token: string,
+  userId: string,
+  boundary: GrantBoundaryPayload
+): Promise<{ ok: boolean }> {
+  return request(`/users/${userId}/grant-boundary`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(boundary)
+  });
+}
+
 export async function createGroupApi(
   token: string,
   payload: {

@@ -2,6 +2,8 @@ import {
   createOrgApi,
   createUserApi,
   deleteOrgApi,
+  disableTenantApi,
+  enableTenantApi,
   fetchOrgs,
   fetchUsers,
   fetchGroups,
@@ -208,6 +210,39 @@ function OrgsPage() {
     });
   };
 
+  const handleToggleTenant = async () => {
+    if (!token || !selectedOrg) return;
+    const willDisable = selectedOrg.isActive !== false;
+    Modal.confirm({
+      title: willDisable
+        ? t("orgs.confirm_disable_tenant", "确认停用该主体？")
+        : t("orgs.confirm_enable_tenant", "确认启用该主体？"),
+      content: willDisable
+        ? t(
+            "orgs.disable_tenant_hint",
+            "停用后该主体下的用户仍可登录，但所有写操作会被后端统一拦截。"
+          )
+        : t("orgs.enable_tenant_hint", "启用后该主体恢复正常写操作。"),
+      okButtonProps: willDisable ? { danger: true } : undefined,
+      okText: t("common.confirm", "确认"),
+      cancelText: t("common.cancel", "取消"),
+      onOk: async () => {
+        try {
+          if (willDisable) {
+            await disableTenantApi(token, selectedOrg.id);
+            message.success(t("orgs.tenant_disabled", "已停用主体"));
+          } else {
+            await enableTenantApi(token, selectedOrg.id);
+            message.success(t("orgs.tenant_enabled", "已启用主体"));
+          }
+          await refresh();
+        } catch (err) {
+          message.error(getErrorMessage(err));
+        }
+      }
+    });
+  };
+
   const openUserModal = () => {
     if (!selectedOrgId) {
       message.warning(t("orgs.select_org_prompt", "请选择组织"));
@@ -337,6 +372,15 @@ function OrgsPage() {
           <Space style={{ marginBottom: 12 }}>
             <Button type="primary" onClick={openEditOrg} disabled={!selectedOrgId}>
               {t("orgs.edit", "编辑组织")}
+            </Button>
+            <Button
+              onClick={handleToggleTenant}
+              disabled={!selectedOrg}
+              danger={selectedOrg?.isActive !== false}
+            >
+              {selectedOrg?.isActive === false
+                ? t("orgs.enable_tenant", "启用主体")
+                : t("orgs.disable_tenant", "停用主体")}
             </Button>
             <Button danger onClick={handleDeleteOrg} disabled={!selectedOrgId}>
               {t("orgs.delete", "删除组织")}

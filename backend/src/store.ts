@@ -1778,6 +1778,108 @@ export async function createRole(
   };
 }
 
+export async function updateRole(input: {
+  id: string;
+  name?: string;
+  description?: string;
+  permissions?: Permission[];
+}): Promise<Role> {
+  const current = await findRoleById(input.id);
+  if (!current) {
+    throw new Error("角色不存在");
+  }
+
+  // 重名校验（排除自身）
+  if (input.name && input.name !== current.name) {
+    const [exists] = await pool.query<RowDataPacket[]>(
+      "SELECT 1 FROM roles WHERE name = ? AND id <> ? LIMIT 1",
+      [input.name, input.id]
+    );
+    if (exists.length) {
+      throw new Error("角色名已存在");
+    }
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const newName = input.name ?? current.name;
+    const newDesc =
+      input.description !== undefined ? input.description : current.description ?? null;
+
+    await conn.query(
+      "UPDATE roles SET name = ?, description = ? WHERE id = ?",
+      [newName, newDesc, input.id]
+    );
+
+    if (input.permissions) {
+      await ensurePermissionsExist(input.permissions);
+      await conn.query("DELETE FROM role_permissions WHERE role_id = ?", [input.id]);
+      if (input.permissions.length) {
+        const values = input.permissions.map((p) => [input.id, p]);
+        await conn.query(
+          "INSERT INTO role_permissions (role_id, permission_code) VALUES ?",
+          [values]
+        );
+      }
+    }
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  return (await findRoleById(input.id)) as Role;
+}
+
+export async function deleteRole(roleId: string): Promise<void> {
+  const role = await findRoleById(roleId);
+  if (!role) {
+    throw new Error("角色不存在");
+  }
+  if (role.name === "admin") {
+    throw new Error("内置 admin 角色不允许删除");
+  }
+  const [usedRows] = await pool.query<RowDataPacket[]>(
+    "SELECT 1 FROM user_roles WHERE role_id = ? LIMIT 1",
+    [roleId]
+  );
+  if (usedRows.length) {
+    throw new Error("当前角色下仍有用户，请先解除关联再删除");
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query("DELETE FROM role_permissions WHERE role_id = ?", [roleId]);
+    await conn.query("DELETE FROM roles WHERE id = ?", [roleId]);
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+export async function setOrgActive(orgId: string, isActive: boolean): Promise<OrgUnit> {
+  const current = await findOrgById(orgId);
+  if (!current) {
+    throw new Error("组织不存在");
+  }
+  await pool.query(
+    "UPDATE org_units SET is_active = ? WHERE id = ?",
+    [isActive ? 1 : 0, orgId]
+  );
+  clearOrgUnitsCache();
+  const after = await findOrgById(orgId);
+  return after as OrgUnit;
+}
+
 export async function createGroup(
   name: string,
   description?: string,
