@@ -1296,6 +1296,154 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 
 ---
 
+## 16. 经营地图跨省业务飞线（总览 + 山海鲸单层接口）
+
+### 为什么拆成「1 个总接口 + 3 个子接口」
+
+与运力中枢一致：山海鲸在部分场景下 **难以稳定消费**「同一 `data` 下多组飞线数组」（`coreFlows` / `importantFlows` / `normalFlows`）的绑定与刷新。因此：
+
+- **推荐生产绑定**：三个飞线图层分别请求 **三个子接口**，每层只消费 **`data.items[]`**，最稳。
+- **总接口保留**：`/api/dashboard/business-flow` 仍返回三组数组，便于 **调试、全量排查、对照验数**。
+
+子接口与总接口 **共用同一套聚合与分层逻辑**（服务端一次查询、一次分层，路由层仅拆分输出），**不复制**三套业务代码。
+
+### 接口一览
+
+| 接口路径 | 用途 |
+|---|---|
+| `GET /api/dashboard/business-flow` | 总览：`coreFlows`、`importantFlows`、`normalFlows` 三组 |
+| `GET /api/dashboard/business-flow-core` | 单层：`flowType=core`，`items` = 原 `coreFlows` |
+| `GET /api/dashboard/business-flow-important` | 单层：`flowType=important`，`items` = 原 `importantFlows` |
+| `GET /api/dashboard/business-flow-normal` | 单层：`flowType=normal`，`items` = 原 `normalFlows` |
+
+### 山海鲸推荐绑定（生产）
+
+| 飞线层 | 绑定接口 | 数据路径 |
+|---|---|---|
+| 飞线层 1（核心业务通道） | `/api/dashboard/business-flow-core` | `data.items` |
+| 飞线层 2（重点业务通道） | `/api/dashboard/business-flow-important` | `data.items` |
+| 飞线层 3（常规业务通道） | `/api/dashboard/business-flow-normal` | `data.items` |
+
+每层在组件侧单独配置颜色、高亮色、线宽、飞行速度、飞行物样式（勿依赖服务端 `lineWeight` 字段）。
+
+### 接口说明（共性）
+
+- **业务语义**：跨省 **经营** 通道（撮合业务额、平台收益、运单量），**不是**运力中枢的运输网络/车辆轨迹，也**不**使用运力车辆数等指标。
+- **职责边界**：飞线**不**并入 **第 11 节** `region-summary`。
+- **请求方法**：`GET`
+- **Base URL**：`https://<your-domain>`
+
+### 查询参数（四个接口相同）
+
+与 **第 14 节** `business-scale-by-city` 一致：
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | `string` | 否 | 开始日期，`YYYY-MM-DD`，过滤 **`revenue_date`** 下界（含） |
+| `endDate` | `string` | 否 | 结束日期，`YYYY-MM-DD`，过滤 **`revenue_date`** 上界（含） |
+| `partnerName` | `string` | 否 | 合作方（`financier_name`） |
+| `landingPartnerName` | `string` | 否 | 落地合作方 |
+| `routeName` | `string` | 否 | 线路名 |
+
+**默认时间行为**：与 **`/api/dashboard/business-scale-by-city` 完全一致**——未传两端日期 → **最近 30 个自然日（含今天）**；`data.dateScope.usedDefaultDateRange` = `true`。自定义窗时仅传入端参与过滤（与第 14 节相同）。
+
+### 数据与聚合口径
+
+| 项目 | 说明 |
+|---|---|
+| 事实表 | `revenue_records` + `waybills` 等，筛选与 `buildDashboardSqlParts` 一致。 |
+| 跨省方向 | **`waybills.departure_place` / `arrival_place`**；仅 **`fromProvince !== toProvince`**（内部先得到省名简称再映射全称）。 |
+| 地理解析 | 与运力 **`province-flow`** 同源：`capacityProvinceFromPlaceRaw`；未知省方向丢弃。 |
+| **省名字段** | HTTP 响应中 **`fromProvince` / `toProvince`** 为 **民政部标准全称**（如 `山东省`、`广东省`、`重庆市`），映射表见 `dashboard-region.ts` 中 `DASHBOARD_PROVINCE_SHORT_TO_OFFICIAL_FULL_NAME`。 |
+| **`lineLabel`** | 固定为 **省名简称** 箭头串，如 **`山东 → 广东`**（便于 tooltip 简短展示，与全称字段并存）。 |
+| `grossFreightAmount` | 同 overview：`COALESCE(w.receivable_total, rr.principal_amount, 0)` 桶内求和。 |
+| `platformIncome` | 桶内 `rr.amount` 求和。 |
+| `waybillCount` | 桶内 `waybill_id` 去重。 |
+| `fromCity` / `toCity` | 桶内众数城市对（按运单去重计票）。 |
+
+### 分层规则（按 `grossFreightAmount` 降序）
+
+| 字段 / 子接口 | 语义 | 排名 |
+|---|---|---|
+| `coreFlows` / `business-flow-core` | 核心业务通道 | Top 1～5 |
+| `importantFlows` / `business-flow-important` | 重点业务通道 | Top 6～15 |
+| `normalFlows` / `business-flow-normal` | 常规业务通道 | Top 16～30 |
+
+### 总接口响应示例：`/api/dashboard/business-flow`
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "dateScope": {
+      "startDate": "2026-04-01",
+      "endDate": "2026-04-20",
+      "usedDefaultDateRange": false
+    },
+    "coreFlows": [
+      {
+        "fromProvince": "山东省",
+        "toProvince": "广东省",
+        "fromCity": "济南",
+        "toCity": "广州",
+        "lineLabel": "山东 → 广东",
+        "grossFreightAmount": 8935594,
+        "waybillCount": 186,
+        "platformIncome": 32754.98
+      }
+    ],
+    "importantFlows": [],
+    "normalFlows": []
+  }
+}
+```
+
+### 子接口响应示例：`/api/dashboard/business-flow-core`（`important` / `normal` 结构相同，仅 `flowType` / `flowTypeName` / `items` 不同）
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "flowType": "core",
+    "flowTypeName": "核心业务通道",
+    "dateScope": {
+      "startDate": "2026-04-01",
+      "endDate": "2026-04-20",
+      "usedDefaultDateRange": false
+    },
+    "items": [
+      {
+        "fromProvince": "山东省",
+        "toProvince": "广东省",
+        "fromCity": "济南",
+        "toCity": "广州",
+        "lineLabel": "山东 → 广东",
+        "grossFreightAmount": 8935594,
+        "waybillCount": 186,
+        "platformIncome": 32754.98
+      }
+    ]
+  }
+}
+```
+
+**`flowType` / `flowTypeName` 约定**：`core` / 核心业务通道；`important` / 重点业务通道；`normal` / 常规业务通道。
+
+### 空数据
+
+- **总接口**：三组均可为 `[]`。  
+- **子接口**：`items` 为 `[]`，`flowType` / `flowTypeName` / `dateScope` 仍正常回显。
+
+### 验数建议
+
+1. 与 **第 14 节** 同窗核对桶内金额与运单去重。  
+2. 子接口 `items` 与总接口对应数组 **应完全一致**（同一查询参数下）。  
+3. 生产大屏优先用三个子接口绑定图层；总接口用于联调对照。
+
+---
+
 ## 验数建议清单
 
 以下建议用于驾驶舱 dashboard 聚合接口（含区域地图）上线前的人工验数：
@@ -1312,7 +1460,8 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 10. `business-scale-trend`：默认 8 周与 `usedDefaultDateRange`；周粒度与 `business-trend` 日数据对齐验 `grossFreightAmount`。
 11. `departure-batch-trend`：默认 8 周窗与回显；核对分桶日期为「发车/创建日」而非 `revenue_date`；按日粒度与手工 `COUNT(DISTINCT waybill_number)` 对齐。
 12. `business-scale-by-city`：默认 30 天与回显日期；与 `region-summary` 对齐抽样验 `waybillCount` 与城市过滤。  
-13. `business-scale-by-route`：默认 `2026-03-01`～今天与 `usedDefaultDateRange`；各线路 `grossFreightAmount` 之和与同期全量口径对齐；核对无 `route_id` 时 `vehicle_route` 分桶与 `routeId=null`。
+13. `business-scale-by-route`：默认 `2026-03-01`～今天与 `usedDefaultDateRange`；各线路 `grossFreightAmount` 之和与同期全量口径对齐；核对无 `route_id` 时 `vehicle_route` 分桶与 `routeId=null`。  
+14. `business-flow` / `business-flow-core|important|normal`：同窗下与 `business-scale-by-city` 抽样对齐桶内指标；总接口三组与子接口 `items` 一致；勿与运力 `capacity/province-flow` 混读（指标不同）。
 
 ---
 
@@ -1332,6 +1481,6 @@ curl -G "https://<your-domain>/api/dashboard/waybills/overview" \
 - `X-API-Key` 应由接入方保存在服务端，不建议暴露到前端页面源码中。
 - 如需轮换密钥，建议平台侧提前通知调用方并设置切换窗口。
 - 如后续新增只读看板接口，建议沿用当前统一返回结构。
-- 山海鲸中间地图请使用 **`/api/dashboard/region-summary`**：默认近 7 天；`regionName` 作展示、`provinceName` 作省界定位；返回 `items` 已排除无地理语义的桶。
+- 山海鲸中间地图请使用 **`/api/dashboard/region-summary`**：默认近 7 天；`regionName` 作展示、`provinceName` 作省界定位；返回 `items` 已排除无地理语义的桶。跨省 **经营** 飞线（**第 16 节**）：**生产推荐**三层分别绑定 **`/api/dashboard/business-flow-core`**、**`business-flow-important`**、**`business-flow-normal`**（各取 `data.items`）；总接口 **`/api/dashboard/business-flow`** 用于调试与总览。勿使用运力 `capacity/province-flow` 表达经营撮合规模。
 - **线路维度撮合运费排行/分布**请使用 **`/api/dashboard/business-scale-by-route`**（**第 15 节**）：不传日期时默认自 **`2026-03-01`** 累计至今天；与 `grossFreightAmount` 全局口径一致。
 - **融满发车批次趋势**（**`/api/dashboard/departure-batch-trend`**，见第 13 节）：首版调用建议 **始终显式携带 `granularity=week`**（与当前默认一致，避免依赖隐式默认）；`startDate`/`endDate` 可按大屏需求传自定义窗，不传则使用文档所述默认 8 周。图表建议：以 **`items[].periodLabel`** 为横轴（或类目轴）、**`departureBatchCount`** 为柱/折线序列；**`items[].startDate` / `endDate`** 用于 tooltip 说明该周在查询窗内的实际有数据日区间（非强制整周边界）。指标含义为 **按 `waybill_number`（批次号）去重的发车车次数**，勿与运单条数或其它接口的 `waybillCount` 混读。
