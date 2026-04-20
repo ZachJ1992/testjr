@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 import {
   aggregateCapacityCityHeat,
   aggregateCapacityOverview,
+  aggregateCapacityProvinceFlow,
   aggregateCapacityProvinceMap,
+  buildCapacityProvinceFlowLayerResponse,
   aggregateCapacityRouteTop,
   aggregateCapacityTrend,
   buildCapacityRegionDetailItem,
@@ -23,9 +25,15 @@ import {
   CAPACITY_REGION_DETAIL_ROTATION_DEFAULT_SECONDS,
   CAPACITY_REGION_DETAIL_ROTATION_MAX_SECONDS,
   CAPACITY_REGION_PENDING_DISPLAY_TEXT,
+  capacityProvinceFromPlaceRaw,
+  CAPACITY_PROVINCE_FLOW_CORE_MAX_RANK,
+  CAPACITY_PROVINCE_FLOW_IMPORTANT_MAX_RANK,
+  CAPACITY_PROVINCE_FLOW_NORMAL_MAX_RANK,
+  type CapacityProvinceFlow,
   type CapacityRegionDetailItem,
   type CapacityWaybillFactRow,
 } from "./dashboard-capacity-store.js";
+import { DASHBOARD_CITY_TO_PROVINCE } from "./dashboard-region.js";
 
 const baseFact = (over: Partial<CapacityWaybillFactRow>): CapacityWaybillFactRow => ({
   businessDay: "2026-04-10",
@@ -134,6 +142,201 @@ test("mergeCapacityProvinceMapWithFixedTemplate pads missing provinces", () => {
   assert.equal(jl!.waybillCount, 0);
   assert.equal(jl!.displayText, CAPACITY_REGION_PENDING_DISPLAY_TEXT);
   assert.equal(jl!.isFallback, true);
+});
+
+test("aggregateCapacityProvinceFlow drops intraprovince and unknown-province legs", () => {
+  const intra = aggregateCapacityProvinceFlow([
+    baseFact({ departurePlace: "济南", arrivalPlace: "临沂", routeId: null, routeName: null }),
+  ]);
+  assert.equal(intra.coreFlows.length + intra.importantFlows.length + intra.normalFlows.length, 0);
+
+  const unknownSide = aggregateCapacityProvinceFlow([
+    baseFact({
+      departurePlace: "某无法识别站点",
+      arrivalPlace: "广州",
+      routeId: null,
+      routeName: null,
+    }),
+  ]);
+  assert.equal(
+    unknownSide.coreFlows.length +
+      unknownSide.importantFlows.length +
+      unknownSide.normalFlows.length,
+    0
+  );
+
+  const cross = aggregateCapacityProvinceFlow([
+    baseFact({
+      departurePlace: "济南",
+      arrivalPlace: "广州",
+      routeId: null,
+      routeName: null,
+      vehiclePlate: "A1",
+    }),
+  ]);
+  assert.equal(cross.coreFlows.length, 1);
+  assert.equal(cross.coreFlows[0]!.fromProvince, "山东省");
+  assert.equal(cross.coreFlows[0]!.toProvince, "广东省");
+  assert.equal(cross.coreFlows[0]!.lineLabel, "山东 → 广东");
+  assert.equal(cross.coreFlows[0]!.waybillCount, 1);
+  assert.equal(cross.coreFlows[0]!.activeVehicleCount, 1);
+});
+
+test("aggregateCapacityProvinceFlow activeVehicleCount is distinct trimmed plates", () => {
+  const r = aggregateCapacityProvinceFlow([
+    baseFact({
+      departurePlace: "济南",
+      arrivalPlace: "广州",
+      routeId: null,
+      routeName: null,
+      vehiclePlate: "  SAME  ",
+    }),
+    baseFact({
+      departurePlace: "济南",
+      arrivalPlace: "广州",
+      routeId: null,
+      routeName: null,
+      vehiclePlate: "SAME",
+    }),
+    baseFact({
+      departurePlace: "济南",
+      arrivalPlace: "广州",
+      routeId: null,
+      routeName: null,
+      vehiclePlate: null,
+    }),
+  ]);
+  assert.equal(r.coreFlows[0]!.waybillCount, 3);
+  assert.equal(r.coreFlows[0]!.activeVehicleCount, 1);
+});
+
+test("aggregateCapacityProvinceFlow partitions top 1-5, 6-15, 16-30 by waybillCount", () => {
+  const citiesByProvince = new Map<string, string[]>();
+  for (const [city, prov] of Object.entries(DASHBOARD_CITY_TO_PROVINCE)) {
+    const arr = citiesByProvince.get(prov) ?? [];
+    arr.push(city);
+    citiesByProvince.set(prov, arr);
+  }
+  const provinces = [...citiesByProvince.keys()].filter((p) => p !== "未知");
+  const provincePairs: Array<[string, string, string, string]> = [];
+  for (const fp of provinces) {
+    for (const tp of provinces) {
+      if (fp === tp) continue;
+      const fromCity = citiesByProvince.get(fp)![0]!;
+      const toCity = citiesByProvince.get(tp)![0]!;
+      provincePairs.push([fp, tp, fromCity, toCity]);
+    }
+  }
+  assert.ok(provincePairs.length >= 35);
+
+  const facts: CapacityWaybillFactRow[] = [];
+  for (let i = 0; i < 35; i++) {
+    const [, , depCity, arrCity] = provincePairs[i]!;
+    const n = 35 - i;
+    for (let j = 0; j < n; j++) {
+      facts.push(
+        baseFact({
+          departurePlace: depCity,
+          arrivalPlace: arrCity,
+          routeId: null,
+          routeName: null,
+          vehiclePlate: `P${i}_${j}`,
+        })
+      );
+    }
+  }
+  const { coreFlows, importantFlows, normalFlows } = aggregateCapacityProvinceFlow(facts);
+  assert.equal(coreFlows.length, CAPACITY_PROVINCE_FLOW_CORE_MAX_RANK);
+  assert.equal(importantFlows.length, CAPACITY_PROVINCE_FLOW_IMPORTANT_MAX_RANK - CAPACITY_PROVINCE_FLOW_CORE_MAX_RANK);
+  assert.equal(normalFlows.length, CAPACITY_PROVINCE_FLOW_NORMAL_MAX_RANK - CAPACITY_PROVINCE_FLOW_IMPORTANT_MAX_RANK);
+  assert.equal(coreFlows[0]!.waybillCount, 35);
+  assert.equal(coreFlows[4]!.waybillCount, 31);
+  assert.equal(importantFlows[0]!.waybillCount, 30);
+  assert.equal(importantFlows[9]!.waybillCount, 21);
+  assert.equal(normalFlows[0]!.waybillCount, 20);
+  assert.equal(normalFlows[14]!.waybillCount, 6);
+});
+
+test("aggregateCapacityProvinceFlow empty input yields three empty arrays", () => {
+  const r = aggregateCapacityProvinceFlow([]);
+  assert.deepEqual(r.coreFlows, []);
+  assert.deepEqual(r.importantFlows, []);
+  assert.deepEqual(r.normalFlows, []);
+});
+
+const sampleDateScope = (): CapacityProvinceFlow["dateScope"] => ({
+  startDate: "2026-04-01",
+  endDate: "2026-04-17",
+  usedDefaultDateRange: false,
+});
+
+test("buildCapacityProvinceFlowLayerResponse reuses grouped arrays without copying legs", () => {
+  const agg = aggregateCapacityProvinceFlow([
+    baseFact({
+      departurePlace: "济南",
+      arrivalPlace: "广州",
+      routeId: null,
+      routeName: null,
+      vehiclePlate: "A1",
+    }),
+  ]);
+  const grouped: CapacityProvinceFlow = { dateScope: sampleDateScope(), ...agg };
+
+  const core = buildCapacityProvinceFlowLayerResponse(grouped, "core");
+  assert.equal(core.flowType, "core");
+  assert.equal(core.flowTypeName, "核心干线");
+  assert.equal(core.items, grouped.coreFlows);
+  assert.deepEqual(core.items, grouped.coreFlows);
+
+  const imp = buildCapacityProvinceFlowLayerResponse(grouped, "important");
+  assert.equal(imp.flowType, "important");
+  assert.equal(imp.flowTypeName, "重点干线");
+  assert.equal(imp.items, grouped.importantFlows);
+
+  const norm = buildCapacityProvinceFlowLayerResponse(grouped, "normal");
+  assert.equal(norm.flowType, "normal");
+  assert.equal(norm.flowTypeName, "常规干线");
+  assert.equal(norm.items, grouped.normalFlows);
+});
+
+test("buildCapacityProvinceFlowLayerResponse empty items for all layers", () => {
+  const grouped: CapacityProvinceFlow = {
+    dateScope: sampleDateScope(),
+    coreFlows: [],
+    importantFlows: [],
+    normalFlows: [],
+  };
+  for (const layer of ["core", "important", "normal"] as const) {
+    const r = buildCapacityProvinceFlowLayerResponse(grouped, layer);
+    assert.deepEqual(r.items, []);
+    assert.equal(r.dateScope.startDate, "2026-04-01");
+  }
+});
+
+test("layer items are identical slices to total province-flow shape", () => {
+  const facts: CapacityWaybillFactRow[] = [
+    baseFact({
+      departurePlace: "济南",
+      arrivalPlace: "广州",
+      routeId: null,
+      routeName: null,
+      vehiclePlate: "p1",
+    }),
+  ];
+  const dateScope = sampleDateScope();
+  const agg = aggregateCapacityProvinceFlow(facts);
+  const total: CapacityProvinceFlow = { dateScope, ...agg };
+  assert.deepEqual(buildCapacityProvinceFlowLayerResponse(total, "core").items, total.coreFlows);
+  assert.deepEqual(
+    buildCapacityProvinceFlowLayerResponse(total, "important").items,
+    total.importantFlows
+  );
+  assert.deepEqual(buildCapacityProvinceFlowLayerResponse(total, "normal").items, total.normalFlows);
+});
+
+test("capacityProvinceFromPlaceRaw unknown when city not in mapping table", () => {
+  const u = capacityProvinceFromPlaceRaw("银河系转运中心");
+  assert.equal(u.provinceName, "未知");
 });
 
 test("normalizePlaceToDisplayCity matches longest known city substring", () => {

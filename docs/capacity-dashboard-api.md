@@ -113,7 +113,182 @@
 
 ---
 
-### 4. `GET /api/dashboard/capacity/route-top`（P1）
+### 4. 省际飞线（`province-flow` 族，P0）
+
+与 `province-map`（省级点/面聚合）**职责分离**：本族接口只描述**省与省之间的边**，不混入省级汇总行。
+
+**为何曾返回三组数组、又拆出子接口**
+
+- 飞线组件**不能**按数据字段动态控制线宽/速度；粗细、颜色、飞行速度需在组件上**手工配置**。后端按运单量**固定 Top 分层**得到核心 / 重点 / 常规三档。
+- 部分山海鲸版本在**一个数据源里解析多组并列数组**（`coreFlows` + `importantFlows` + `normalFlows`）时会出现展示异常或不显示；因此除**总接口**外，再提供 **3 个独立 URL**，每层只消费 **`data.items[]`**，结构稳定。
+
+**聚合逻辑**：总接口与子接口共用同一套 store 计算（`queryCapacityWaybillFacts` → `aggregateCapacityProvinceFlow`），子接口仅在输出层用 `buildCapacityProvinceFlowLayerResponse` 拆出单层，**不复制三份聚合代码**。
+
+---
+
+#### 4.1 `GET /api/dashboard/capacity/province-flow`（总览 / 调试）
+
+**用途**：一次返回三组飞线，便于调试、全量排查、对照 `coreFlows` / `importantFlows` / `normalFlows` 结构。
+
+**查询参数**：与通用节一致，仅 `startDate` / `endDate`（可选）；默认时间窗与其它运力接口相同（未传两端日期 → 含今日共 30 自然日）。**子接口（§4.2～4.4）** 使用相同查询参数。
+
+**响应 `data`**：`dateScope`、`coreFlows[]`、`importantFlows[]`、`normalFlows[]`（单条飞线结构见下文「飞线单条字段」）。
+
+**零数据**：三组均可为 `[]`，HTTP 200、`code: 0`。
+
+---
+
+#### 4.2 `GET /api/dashboard/capacity/province-flow-core`（山海鲸·核心干线层）
+
+**用途**：飞线层 1 专用；响应中 **`data.items` 与总接口 `data.coreFlows` 元素与顺序一致**（实现上对同一聚合结果直接取 `coreFlows` 分支，不重复聚合、不拷贝 leg 对象）。
+
+| 字段 | 值 |
+|------|-----|
+| `flowType` | `"core"` |
+| `flowTypeName` | `核心干线` |
+| `dateScope` | 同总接口 |
+| `items` | 同总接口 `coreFlows` |
+
+---
+
+#### 4.3 `GET /api/dashboard/capacity/province-flow-important`（山海鲸·重点干线层）
+
+| 字段 | 值 |
+|------|-----|
+| `flowType` | `"important"` |
+| `flowTypeName` | `重点干线` |
+| `items` | 同总接口 `importantFlows` |
+
+---
+
+#### 4.4 `GET /api/dashboard/capacity/province-flow-normal`（山海鲸·常规干线层）
+
+| 字段 | 值 |
+|------|-----|
+| `flowType` | `"normal"` |
+| `flowTypeName` | `常规干线` |
+| `items` | 同总接口 `normalFlows` |
+
+**山海鲸推荐绑定（生产）**
+
+| 飞线层 | 请求 URL | 数据路径 | 样式（仍须手工） |
+|--------|-----------|-----------|------------------|
+| 核心干线 | `/api/dashboard/capacity/province-flow-core` | `data.items` | 最粗、高对比色等 |
+| 重点干线 | `/api/dashboard/capacity/province-flow-important` | `data.items` | 中等 |
+| 常规干线 | `/api/dashboard/capacity/province-flow-normal` | `data.items` | 最细、弱化 |
+
+总接口 `province-flow` 建议保留给开发/联调；大屏图层请优先绑定上表三个子接口。
+
+**子接口零数据**：`items: []`，其余字段照常；HTTP 200、`code: 0`。
+
+---
+
+#### 4.5 分组与排序（总接口与子接口共用）
+
+**分组规则（按 `waybillCount` 降序后的名次）**
+
+| 字段 | 名次区间（含） | 最多条数 |
+|------|----------------|----------|
+| `coreFlows` | Top 1～5 | 5 |
+| `importantFlows` | Top 6～15 | 10 |
+| `normalFlows` | Top 16～30 | 15 |
+
+第 31 名及以后的省际方向**不返回**（避免单层数据过多）。同运单量时按**内部省名简称**的 `from`→`to` 字典序稳定排序（与响应里 `lineLabel` 的简称一致）；**不**按标准全称排序，避免与简称分层习惯不一致。
+
+**数据来源与过滤**
+
+- 方向来自运单字段 **`departure_place`**、**`arrival_place`**（与 `vehicle-monitor` 城市清洗同源：`normalizePlaceToDisplayCity` 子串匹配 `DASHBOARD_CITY_TO_PROVINCE` 城市键）。
+- **仅跨省**：`fromProvince !== toProvince`。
+- **任一端省份为「未知」** 的方向**丢弃**：映射失败时不伪造省份，且无法在省级底图上稳定落点；与「静默错连」相比，宁可不展示该边。
+- **不是**车辆 GPS 轨迹、不是全量线路铺开；指标为时间窗内该省际方向的**运单行数**与 **DISTINCT `vehicle_plate`**（空车牌不计）。
+
+**总接口 `data` 字段**：`dateScope`、`coreFlows[]`、`importantFlows[]`、`normalFlows[]`。
+
+**子接口 `data` 字段**：`flowType`、`flowTypeName`、`dateScope`、`items[]`（`items` 中单条与总接口三组内单条**字段与语义完全一致**）。
+
+**飞线单条字段**（`coreFlows` / `importantFlows` / `normalFlows` / `items` 元素相同）
+
+| 字段 | 说明 |
+|------|------|
+| `fromProvince` / `toProvince` | 出发 / 到达省：**中国省级行政区标准全称**（如 `四川省`、`重庆市`、`新疆维吾尔自治区`），由内部简称经 `DASHBOARD_PROVINCE_SHORT_TO_OFFICIAL_FULL_NAME`（`backend/src/dashboard-region.ts`）转换，便于山海鲸与地图底图行政区名称对齐 |
+| `fromCity` / `toCity` | 出发 / 到达展示城市；无法稳定提取时为空串 |
+| `lineLabel` | 建议 tooltip；仍为**省名简称 + 箭头**（如 `四川 → 重庆`），与上两列全称区分、便于阅读；**不要求**与 `fromProvince`/`toProvince` 字符串一致 |
+| `waybillCount` | 该省际方向桶内运单行数 |
+| `activeVehicleCount` | 该桶内 DISTINCT 车牌（`TRIM` 后非空），与 overview 口径一致 |
+
+**简称 → 全称未命中时的兜底**（不静默伪造「某某省」）：
+
+- 空简称：`未映射省份（空简称）`
+- 简称为 `未知`：`未映射省份（未知）`（本接口聚合已丢弃「未知」省际边，此为防御性分支）
+- 其它未在表中的简称：`未映射省份（{原文}）` —— 需在 `dashboard-region.ts` 中补充映射
+
+**`lineLabel` 不随全称同步改写**：仅 `fromProvince`、`toProvince` 使用全称。
+
+**桶内 `fromCity` / `toCity` 取值**：同一省际方向上，取时间窗内出现次数最多的「发站展示城市 + 到站展示城市」组合；并列时取组合键字典序较小者，保证稳定。
+
+**返回示例：总接口（节选）**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "dateScope": {
+      "startDate": "2026-04-01",
+      "endDate": "2026-04-17",
+      "usedDefaultDateRange": false
+    },
+    "coreFlows": [
+      {
+        "fromProvince": "山东省",
+        "toProvince": "新疆维吾尔自治区",
+        "fromCity": "济南",
+        "toCity": "乌鲁木齐",
+        "lineLabel": "山东 → 新疆",
+        "waybillCount": 186,
+        "activeVehicleCount": 42
+      }
+    ],
+    "importantFlows": [],
+    "normalFlows": []
+  }
+}
+```
+
+（示例中城市名依赖 TMS 文本能否命中映射表；未命中时对应省为「未知」且该边不会进入本接口。）
+
+**返回示例子接口（`province-flow-core`，节选）**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "flowType": "core",
+    "flowTypeName": "核心干线",
+    "dateScope": {
+      "startDate": "2026-04-01",
+      "endDate": "2026-04-17",
+      "usedDefaultDateRange": false
+    },
+    "items": [
+      {
+        "fromProvince": "山东省",
+        "toProvince": "广东省",
+        "fromCity": "济南",
+        "toCity": "广州",
+        "lineLabel": "山东 → 广东",
+        "waybillCount": 71,
+        "activeVehicleCount": 30
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 5. `GET /api/dashboard/capacity/route-top`（P1）
 
 **用途**：重点线路 / 方向 TOP。
 
@@ -129,7 +304,7 @@
 
 ---
 
-### 5. `GET /api/dashboard/capacity/region-detail`（P1）
+### 6. `GET /api/dashboard/capacity/region-detail`（P1）
 
 **用途**：区域详情卡（山海鲸联动：筛选与「当前选中」由前端完成，后端只返回列表）。
 
@@ -210,7 +385,7 @@
 
 ---
 
-### 6. `GET /api/dashboard/capacity/region-detail-current`（P1）
+### 7. `GET /api/dashboard/capacity/region-detail-current`（P1）
 
 **用途**：山海鲸等指标卡组件**不会自动轮播数组**时，由大屏按**与接口一致的轮播周期**（默认 **5 秒**，可改）定时请求本接口，只取**当前应展示的一条**区域详情，实现与 `region-detail` 多省列表同序的「伪轮播」。
 
@@ -218,7 +393,7 @@
 
 | 参数 | 必填 | 说明 |
 |------|------|------|
-| `startDate` / `endDate` / `provinceName` / `regionName` / `topLimit` | 否 | 与「5. `region-detail`」相同 |
+| `startDate` / `endDate` / `provinceName` / `regionName` / `topLimit` | 否 | 与「6. `region-detail`」相同 |
 | `rotationIntervalSeconds` | 否 | 轮播周期（**秒**）。**不传**时默认 **`5`**。非数字、空串、`<= 0`、非有限数时**回落为 `5`**；合法正数先 `Math.floor` 再限制在 **`[1, 600]`** 秒内（含边界），超出上下限则**夹取**到 `1` 或 `600` |
 
 **轮播规则（服务端无状态）**：
@@ -267,7 +442,7 @@ curl -s -H "X-API-Key: $API_KEY" \
 
 ---
 
-### 7. `GET /api/dashboard/capacity/trend`（P2）
+### 8. `GET /api/dashboard/capacity/trend`（P2）
 
 **用途**：运力趋势（按业务日）。
 
@@ -283,7 +458,7 @@ curl -s -H "X-API-Key: $API_KEY" \
 
 ---
 
-### 8. `GET /api/dashboard/capacity/vehicle-monitor`（P2，降级）
+### 9. `GET /api/dashboard/capacity/vehicle-monitor`（P2，降级）
 
 **用途**：**运单 / 运输动态列表**，用于大屏「动态卡片」。  
 
@@ -338,7 +513,7 @@ curl -s -H "X-API-Key: $API_KEY" \
 
 ```bash
 cd backend
-npx tsc
+npm run build
 node --test dist/backend/src/dashboard-capacity-store.test.js
 ```
 
@@ -349,6 +524,18 @@ node --test dist/backend/src/dashboard-capacity-store.test.js
 ```bash
 curl -s -H "X-API-Key: $API_KEY" \
   "http://127.0.0.1:3001/api/dashboard/capacity/overview?startDate=2026-04-01&endDate=2026-04-17"
+
+curl -s -H "X-API-Key: $API_KEY" \
+  "http://127.0.0.1:3001/api/dashboard/capacity/province-flow?startDate=2026-04-01&endDate=2026-04-17"
+
+curl -s -H "X-API-Key: $API_KEY" \
+  "http://127.0.0.1:3001/api/dashboard/capacity/province-flow-core?startDate=2026-04-01&endDate=2026-04-17"
+
+curl -s -H "X-API-Key: $API_KEY" \
+  "http://127.0.0.1:3001/api/dashboard/capacity/province-flow-important?startDate=2026-04-01&endDate=2026-04-17"
+
+curl -s -H "X-API-Key: $API_KEY" \
+  "http://127.0.0.1:3001/api/dashboard/capacity/province-flow-normal?startDate=2026-04-01&endDate=2026-04-17"
 ```
 
 ---

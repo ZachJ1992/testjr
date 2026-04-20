@@ -11,6 +11,10 @@ import { handleError } from "./errorHandler.js";
 import {
   getCapacityCityHeat,
   getCapacityOverview,
+  getCapacityProvinceFlow,
+  getCapacityProvinceFlowCore,
+  getCapacityProvinceFlowImportant,
+  getCapacityProvinceFlowNormal,
   getCapacityProvinceMap,
   getCapacityRegionDetail,
   getCapacityRegionDetailCurrent,
@@ -75,6 +79,65 @@ router.get(
   async (req: Request, res: Response) => {
     try {
       const data = await getCapacityCityHeat(capacityDateFilters(req));
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+/**
+ * 省际飞线总览：一次返回 core / important / normal 三组，便于调试与全量排查。
+ * 生产大屏绑定飞线层请优先使用下方三个 `province-flow-*` 单层接口。
+ */
+router.get(
+  "/dashboard/capacity/province-flow",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getCapacityProvinceFlow(capacityDateFilters(req));
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+/** 省际飞线·核心干线层（`data.items` = 原 `coreFlows`） */
+router.get(
+  "/dashboard/capacity/province-flow-core",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getCapacityProvinceFlowCore(capacityDateFilters(req));
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+/** 省际飞线·重点干线层（`data.items` = 原 `importantFlows`） */
+router.get(
+  "/dashboard/capacity/province-flow-important",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getCapacityProvinceFlowImportant(capacityDateFilters(req));
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+/** 省际飞线·常规干线层（`data.items` = 原 `normalFlows`） */
+router.get(
+  "/dashboard/capacity/province-flow-normal",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getCapacityProvinceFlowNormal(capacityDateFilters(req));
       sendSuccess(res, data);
     } catch (err) {
       handleError(res, req, 500, err);

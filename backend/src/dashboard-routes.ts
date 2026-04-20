@@ -3,6 +3,10 @@ import { Router, type Request, type Response } from "express";
 import { requireApiKey } from "./api-key-auth.js";
 import { handleError } from "./errorHandler.js";
 import {
+  getDashboardBusinessFlow,
+  getDashboardBusinessFlowTier,
+} from "./dashboard-business-flow-store.js";
+import {
   getDashboardBusinessScaleByCity,
   getDashboardBusinessScaleByRoute,
   getDashboardBusinessScaleTrend,
@@ -326,6 +330,71 @@ router.get(
           req.query.includeZeroRegions
         ),
       });
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+/** 经营地图跨省业务飞线总览（三组数组，调试用） */
+router.get(
+  "/dashboard/business-flow",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardBusinessFlow(getDashboardFilters(req));
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+/** 经营飞线单层：核心业务通道（山海鲸飞线层 1 → `data.items`） */
+router.get(
+  "/dashboard/business-flow-core",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardBusinessFlowTier(
+        "core",
+        getDashboardFilters(req)
+      );
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+/** 经营飞线单层：重点业务通道（飞线层 2） */
+router.get(
+  "/dashboard/business-flow-important",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardBusinessFlowTier(
+        "important",
+        getDashboardFilters(req)
+      );
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+/** 经营飞线单层：常规业务通道（飞线层 3） */
+router.get(
+  "/dashboard/business-flow-normal",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getDashboardBusinessFlowTier(
+        "normal",
+        getDashboardFilters(req)
+      );
       sendSuccess(res, data);
     } catch (err) {
       handleError(res, req, 500, err);

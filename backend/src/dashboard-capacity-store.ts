@@ -16,9 +16,17 @@ import {
   DASHBOARD_CITY_TO_PROVINCE,
   DASHBOARD_REGION_FALLBACK_CITY,
   DASHBOARD_REGION_UNKNOWN_PROVINCE,
+  dashboardProvinceShortToOfficialFullName,
   normalizeDashboardRegionName,
 } from "./dashboard-region.js";
 import { DASHBOARD_REGION_SUMMARY_TEMPLATE } from "./dashboard-region-summary-template.js";
+
+/** 省际飞线 Top 1～5，供山海鲸「飞线层 1」绑定（手工样式：粗细/颜色/速度）。 */
+export const CAPACITY_PROVINCE_FLOW_CORE_MAX_RANK = 5;
+/** Top 6～15 → 飞线层 2 */
+export const CAPACITY_PROVINCE_FLOW_IMPORTANT_MAX_RANK = 15;
+/** Top 16～30 → 飞线层 3；超出部分不返回（避免单层数据过载） */
+export const CAPACITY_PROVINCE_FLOW_NORMAL_MAX_RANK = 30;
 
 // ---------------------------------------------------------------------------
 // 公共口径说明（首版代理指标，非 TMS 实时真值）
@@ -595,6 +603,254 @@ export async function getCapacityCityHeat(
     dateScope,
     items: aggregateCapacityCityHeat(enrichCapacityFacts(facts)),
   };
+}
+
+// --- province-flow（省际飞线，山海鲸多飞线层）---------------------------------
+
+/**
+ * 由发/到站文本解析「展示城市 + 省份」。
+ * - 城市：`normalizePlaceToDisplayCity`（与 vehicle-monitor 同源启发式）。
+ * - 省：`DASHBOARD_CITY_TO_PROVINCE[城市]`，未命中则为「未知」，**不伪造**。
+ * - 任一端为「未知」的省际边**不参与**本接口聚合：无法在省级底图上稳定落点，避免静默错连。
+ */
+export function capacityProvinceFromPlaceRaw(
+  raw: string | null | undefined
+): { displayCity: string; provinceName: string } {
+  const norm = normalizePlaceToDisplayCity(raw);
+  const displayCity = norm.city;
+  const mapped =
+    displayCity && DASHBOARD_CITY_TO_PROVINCE[displayCity]
+      ? DASHBOARD_CITY_TO_PROVINCE[displayCity]
+      : DASHBOARD_REGION_UNKNOWN_PROVINCE;
+  return { displayCity, provinceName: mapped };
+}
+
+export interface CapacityProvinceFlowLeg {
+  /** 出发省：中国省级行政区标准全称（如 `山东省`），由简称经 `dashboardProvinceShortToOfficialFullName` 转换 */
+  fromProvince: string;
+  /** 到达省：标准全称；未命中映射时为 `未映射省份（…）` 前缀字面量，见 `dashboard-region.ts` 注释 */
+  toProvince: string;
+  /** 出发侧展示城市；无法从文本稳定提取时为空串（不臆造城市名） */
+  fromCity: string;
+  /** 到达侧展示城市 */
+  toCity: string;
+  /** 建议用于 tooltip；仍为**省名简称**箭头（如 `四川 → 重庆`），与 `fromProvince`/`toProvince` 全称区分便于阅读 */
+  lineLabel: string;
+  waybillCount: number;
+  /** 该省际方向桶内 DISTINCT `vehicle_plate`，空车牌不计（与 overview 一致） */
+  activeVehicleCount: number;
+}
+
+type ProvinceFlowBucket = {
+  waybillCount: number;
+  plates: Set<string>;
+  /** `(fromCity)\0(toCity)` → 条数，用于在桶内选众数起终点城市对 */
+  cityPairHits: Map<string, number>;
+};
+
+function pickRepresentativeCities(
+  cityPairHits: Map<string, number>
+): { fromCity: string; toCity: string } {
+  let bestKey = "";
+  let bestN = -1;
+  for (const [k, n] of cityPairHits) {
+    if (n > bestN || (n === bestN && k.localeCompare(bestKey, "zh-Hans-CN") < 0)) {
+      bestN = n;
+      bestKey = k;
+    }
+  }
+  if (!bestKey) {
+    return { fromCity: "", toCity: "" };
+  }
+  const [fromCity, toCity] = bestKey.split("\u0000");
+  return { fromCity: fromCity ?? "", toCity: toCity ?? "" };
+}
+
+type ProvinceFlowLegSortKey = {
+  fromShort: string;
+  toShort: string;
+  fromCity: string;
+  toCity: string;
+  waybillCount: number;
+  activeVehicleCount: number;
+};
+
+function compareProvinceFlowLegSortKey(a: ProvinceFlowLegSortKey, b: ProvinceFlowLegSortKey): number {
+  if (b.waybillCount !== a.waybillCount) return b.waybillCount - a.waybillCount;
+  const c1 = a.fromShort.localeCompare(b.fromShort, "zh-Hans-CN");
+  if (c1 !== 0) return c1;
+  return a.toShort.localeCompare(b.toShort, "zh-Hans-CN");
+}
+
+function provinceFlowLegFromSortKey(row: ProvinceFlowLegSortKey): CapacityProvinceFlowLeg {
+  return {
+    fromProvince: dashboardProvinceShortToOfficialFullName(row.fromShort),
+    toProvince: dashboardProvinceShortToOfficialFullName(row.toShort),
+    fromCity: row.fromCity,
+    toCity: row.toCity,
+    lineLabel: `${row.fromShort} → ${row.toShort}`,
+    waybillCount: row.waybillCount,
+    activeVehicleCount: row.activeVehicleCount,
+  };
+}
+
+/**
+ * 省际重点专线方向：按 `(fromProvince,toProvince)` 聚合运单条数与 DISTINCT 车牌。
+ * - 仅 **跨省** 且 **两端省份均非「未知」** 的方向。
+ * - 排序后按运单量固定分层：Top 1～5 / 6～15 / 16～30，供山海鲸分三层飞线组件绑定（无法按字段动态线宽）。
+ */
+export function aggregateCapacityProvinceFlow(
+  facts: CapacityWaybillFactRow[]
+): {
+  coreFlows: CapacityProvinceFlowLeg[];
+  importantFlows: CapacityProvinceFlowLeg[];
+  normalFlows: CapacityProvinceFlowLeg[];
+} {
+  const buckets = new Map<string, ProvinceFlowBucket>();
+
+  for (const f of facts) {
+    const from = capacityProvinceFromPlaceRaw(f.departurePlace);
+    const to = capacityProvinceFromPlaceRaw(f.arrivalPlace);
+    if (from.provinceName === to.provinceName) continue;
+    if (
+      from.provinceName === DASHBOARD_REGION_UNKNOWN_PROVINCE ||
+      to.provinceName === DASHBOARD_REGION_UNKNOWN_PROVINCE
+    ) {
+      continue;
+    }
+    const key = `${from.provinceName}\u0000${to.provinceName}`;
+    let b = buckets.get(key);
+    if (!b) {
+      b = { waybillCount: 0, plates: new Set(), cityPairHits: new Map() };
+      buckets.set(key, b);
+    }
+    b.waybillCount += 1;
+    if (f.vehiclePlate && String(f.vehiclePlate).trim()) {
+      b.plates.add(String(f.vehiclePlate).trim());
+    }
+    const fc = from.displayCity;
+    const tc = to.displayCity;
+    const pairKey = `${fc}\u0000${tc}`;
+    b.cityPairHits.set(pairKey, (b.cityPairHits.get(pairKey) ?? 0) + 1);
+  }
+
+  const sortRows: ProvinceFlowLegSortKey[] = [];
+  for (const [k, b] of buckets) {
+    const [fromShort, toShort] = k.split("\u0000");
+    const { fromCity, toCity } = pickRepresentativeCities(b.cityPairHits);
+    sortRows.push({
+      fromShort: fromShort ?? "",
+      toShort: toShort ?? "",
+      fromCity,
+      toCity,
+      waybillCount: b.waybillCount,
+      activeVehicleCount: b.plates.size,
+    });
+  }
+
+  sortRows.sort(compareProvinceFlowLegSortKey);
+
+  const legs = sortRows.map(provinceFlowLegFromSortKey);
+
+  const coreFlows = legs.slice(0, CAPACITY_PROVINCE_FLOW_CORE_MAX_RANK);
+  const importantFlows = legs.slice(
+    CAPACITY_PROVINCE_FLOW_CORE_MAX_RANK,
+    CAPACITY_PROVINCE_FLOW_IMPORTANT_MAX_RANK
+  );
+  const normalFlows = legs.slice(
+    CAPACITY_PROVINCE_FLOW_IMPORTANT_MAX_RANK,
+    CAPACITY_PROVINCE_FLOW_NORMAL_MAX_RANK
+  );
+
+  return { coreFlows, importantFlows, normalFlows };
+}
+
+export interface CapacityProvinceFlow {
+  dateScope: CapacityResolvedDateRange;
+  coreFlows: CapacityProvinceFlowLeg[];
+  importantFlows: CapacityProvinceFlowLeg[];
+  normalFlows: CapacityProvinceFlowLeg[];
+}
+
+/** 山海鲸单层飞线接口用：`flowType` 与路由一一对应 */
+export type CapacityProvinceFlowLayerKind = "core" | "important" | "normal";
+
+/** 单层飞线响应（仅 `items[]`，避免大屏解析多组数组异常） */
+export interface CapacityProvinceFlowLayerResponse {
+  flowType: CapacityProvinceFlowLayerKind;
+  flowTypeName: string;
+  dateScope: CapacityResolvedDateRange;
+  /** 与总接口 `coreFlows` / `importantFlows` / `normalFlows` 中单条结构一致 */
+  items: CapacityProvinceFlowLeg[];
+}
+
+async function queryAndAggregateCapacityProvinceFlow(
+  filters: CapacityDateFilters
+): Promise<CapacityProvinceFlow> {
+  const dateScope = resolveCapacityDateRange(filters);
+  const facts = await queryCapacityWaybillFacts(dateScope);
+  const { coreFlows, importantFlows, normalFlows } = aggregateCapacityProvinceFlow(facts);
+  return { dateScope, coreFlows, importantFlows, normalFlows };
+}
+
+/**
+ * 由已聚合的 `province-flow` 总包拆出单层响应（纯函数，供路由与测试复用）。
+ * 与 `aggregateCapacityProvinceFlow` 共用同一组 `CapacityProvinceFlowLeg`，不重复计算。
+ */
+export function buildCapacityProvinceFlowLayerResponse(
+  grouped: CapacityProvinceFlow,
+  layer: CapacityProvinceFlowLayerKind
+): CapacityProvinceFlowLayerResponse {
+  const { dateScope, coreFlows, importantFlows, normalFlows } = grouped;
+  if (layer === "core") {
+    return {
+      flowType: "core",
+      flowTypeName: "核心干线",
+      dateScope,
+      items: coreFlows,
+    };
+  }
+  if (layer === "important") {
+    return {
+      flowType: "important",
+      flowTypeName: "重点干线",
+      dateScope,
+      items: importantFlows,
+    };
+  }
+  return {
+    flowType: "normal",
+    flowTypeName: "常规干线",
+    dateScope,
+    items: normalFlows,
+  };
+}
+
+export async function getCapacityProvinceFlow(
+  filters: CapacityDateFilters = {}
+): Promise<CapacityProvinceFlow> {
+  return queryAndAggregateCapacityProvinceFlow(filters);
+}
+
+export async function getCapacityProvinceFlowCore(
+  filters: CapacityDateFilters = {}
+): Promise<CapacityProvinceFlowLayerResponse> {
+  const grouped = await queryAndAggregateCapacityProvinceFlow(filters);
+  return buildCapacityProvinceFlowLayerResponse(grouped, "core");
+}
+
+export async function getCapacityProvinceFlowImportant(
+  filters: CapacityDateFilters = {}
+): Promise<CapacityProvinceFlowLayerResponse> {
+  const grouped = await queryAndAggregateCapacityProvinceFlow(filters);
+  return buildCapacityProvinceFlowLayerResponse(grouped, "important");
+}
+
+export async function getCapacityProvinceFlowNormal(
+  filters: CapacityDateFilters = {}
+): Promise<CapacityProvinceFlowLayerResponse> {
+  const grouped = await queryAndAggregateCapacityProvinceFlow(filters);
+  return buildCapacityProvinceFlowLayerResponse(grouped, "normal");
 }
 
 // --- route-top ---------------------------------------------------------------
