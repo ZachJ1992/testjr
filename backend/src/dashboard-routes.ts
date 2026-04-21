@@ -348,6 +348,30 @@ router.get(
 // 届时同步给 dashboard-store 增加 financierId / funderId 入参。
 // =============================================
 
+// 通用工具：根据登录用户主体派生 dashboard 过滤的 partnerName
+//   - 平台用户：透传 query.partnerName（可不传 = 全量）
+//   - financier 主体：用主体名强制覆盖 partnerName（dashboard-store 用 financier_name 列匹配）
+//   - funder 主体：dashboard-store 当前无 funder 维度，本期返回 emptyResult，等待 store 扩展
+async function deriveTenantPartnerName(
+  req: AuthenticatedRequest
+): Promise<{ ok: true; partnerName?: string } | { ok: false }> {
+  const scope = await resolveBusinessScope(req);
+  if (scope.isPlatform) {
+    return {
+      ok: true,
+      partnerName: (req.query.partnerName as string | undefined) || undefined,
+    };
+  }
+  if (scope.emptyResult) return { ok: false };
+  if (scope.financierId && req.orgContext?.orgId) {
+    const tenant = await findOrgById(req.orgContext.orgId);
+    if (!tenant?.name) return { ok: false };
+    return { ok: true, partnerName: tenant.name };
+  }
+  // funder 主体：本期 dashboard-store 不支持 funder 维度，返回空
+  return { ok: false };
+}
+
 router.get(
   "/dashboard/tenant/platform-revenue/overview",
   authenticate,
@@ -355,21 +379,93 @@ router.get(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const scope = await resolveBusinessScope(req);
-      // 非平台用户在主体无业务实体（emptyResult）时直接返回空数据；
-      // 完整按主体过滤（financier_name / funder_id 等）在阶段 D 与
-      // dashboard-store 入参扩展一并落地。
       if (!scope.isPlatform && scope.emptyResult) {
         return sendSuccess(res, { totalRevenue: 0 });
       }
-      // 解析当前主体名称（备用，为阶段 D 调用 store 接口时复用）
-      const _tenant =
-        !scope.isPlatform && req.orgContext?.orgId
-          ? await findOrgById(req.orgContext.orgId)
-          : undefined;
-      void _tenant;
+      // 注：getPlatformRevenueOverview 当前不接受 partnerName 入参（依赖 getRevenueStats），
+      // 故此端点的"按主体过滤"语义在阶段 E 由 revenue-store 一并扩展；
+      // 暂且在 emptyResult 时给出空数据，避免误导。
       const data = await getPlatformRevenueOverview({
         startDate: req.query.startDate as string | undefined,
         endDate: req.query.endDate as string | undefined,
+      });
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/tenant/overview",
+  authenticate,
+  loadUserContext,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const derived = await deriveTenantPartnerName(req);
+      if (!derived.ok) {
+        // 主体没有有效 partnerName 时返回零值结构，前端不破
+        const empty = await getDashboardOverview({
+          ...getDashboardFilters(req),
+          partnerName: "__no_match__",
+        });
+        return sendSuccess(res, empty);
+      }
+      const data = await getDashboardOverview({
+        ...getDashboardFilters(req),
+        partnerName: derived.partnerName,
+      });
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/tenant/income-structure",
+  authenticate,
+  loadUserContext,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const derived = await deriveTenantPartnerName(req);
+      if (!derived.ok) {
+        const empty = await getDashboardIncomeStructure({
+          ...getDashboardFilters(req),
+          partnerName: "__no_match__",
+        });
+        return sendSuccess(res, empty);
+      }
+      const data = await getDashboardIncomeStructure({
+        ...getDashboardFilters(req),
+        partnerName: derived.partnerName,
+      });
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
+  "/dashboard/tenant/income-trend",
+  authenticate,
+  loadUserContext,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const derived = await deriveTenantPartnerName(req);
+      if (!derived.ok) {
+        const empty = await getDashboardIncomeTrend({
+          ...getDashboardFilters(req),
+          partnerName: "__no_match__",
+          granularity: getDashboardGranularity(req),
+        });
+        return sendSuccess(res, empty);
+      }
+      const data = await getDashboardIncomeTrend({
+        ...getDashboardFilters(req),
+        partnerName: derived.partnerName,
+        granularity: getDashboardGranularity(req),
       });
       sendSuccess(res, data);
     } catch (err) {

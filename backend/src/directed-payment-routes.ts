@@ -6,6 +6,7 @@
 
 import { Router, Request, Response } from "express";
 import { authenticate, requirePermissions, AuthenticatedRequest, getOrgDataFilter } from "./auth.js";
+import { ensureTenantWritable, loadUserContext } from "./permission-policy.js";
 import { pool } from "./db.js";
 import { randomUUID } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
@@ -203,6 +204,8 @@ router.get(
 router.post(
   "/directed-pay/contracts",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       const {
@@ -263,6 +266,8 @@ router.post(
 router.put(
   "/directed-pay/contracts/:id",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       const {
@@ -345,6 +350,8 @@ router.put(
 router.delete(
   "/directed-pay/contracts/:id",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       await pool.query(
@@ -363,6 +370,8 @@ router.delete(
 router.post(
   "/directed-pay/contracts/:id/approve",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       await pool.query(
@@ -382,6 +391,8 @@ router.post(
 router.post(
   "/directed-pay/contracts/:id/suspend",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       await pool.query(
@@ -401,6 +412,8 @@ router.post(
 router.post(
   "/directed-pay/contracts/:id/resume",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       await pool.query(
@@ -420,6 +433,8 @@ router.post(
 router.post(
   "/directed-pay/contracts/:id/terminate",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       await pool.query(
@@ -491,6 +506,8 @@ router.get(
 router.post(
   "/directed-pay/contracts/:id/categories",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       const id = randomUUID();
@@ -550,6 +567,8 @@ router.post(
 router.put(
   "/directed-pay/contracts/:id/categories/:catId",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       const updates: string[] = [];
@@ -604,6 +623,8 @@ router.put(
 router.delete(
   "/directed-pay/contracts/:id/categories/:catId",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       await pool.query(`DELETE FROM payment_category_configs WHERE id = ?`, [
@@ -858,6 +879,8 @@ router.get(
 router.post(
   "/directed-pay/requests",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const currentUser = req.currentUser;
@@ -901,6 +924,8 @@ router.post(
 router.post(
   "/directed-pay/requests/:id/platform-approve",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       // 权限验证：只有平台用户可以进行平台审批
@@ -930,6 +955,8 @@ router.post(
 router.post(
   "/directed-pay/requests/:id/platform-reject",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       // 权限验证：只有平台用户可以进行平台审批
@@ -959,6 +986,8 @@ router.post(
 router.post(
   "/directed-pay/requests/:id/funder-approve",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       // 权限验证：只有资金方用户或平台用户可以进行资金方审批
@@ -999,6 +1028,8 @@ router.post(
 router.post(
   "/directed-pay/requests/:id/funder-reject",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       // 权限验证：只有资金方用户或平台用户可以进行资金方审批
@@ -1038,6 +1069,8 @@ router.post(
 router.post(
   "/directed-pay/requests/:id/cancel",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       await core.cancelPaymentRequest(req.params.id);
@@ -1053,6 +1086,8 @@ router.post(
 router.post(
   "/directed-pay/requests/:id/execute",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       const request = await core.executePayment(req.params.id);
@@ -1159,6 +1194,8 @@ router.get(
 router.post(
   "/directed-pay/fix-data",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       const results: any = {
@@ -1207,6 +1244,8 @@ router.post(
 router.post(
   "/directed-pay/fix-category-encoding",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   async (req: Request, res: Response) => {
     try {
       const categoryMap: Record<string, string> = {

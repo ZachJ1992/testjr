@@ -8,6 +8,7 @@ import { handleError, sendError } from "./errorHandler.js";
 import * as revenueStore from "./revenue-store.js";
 import { calculateDailyRevenue, recalculateHistoricalWaybillCommissions } from "./revenue-scheduler.js";
 import { RevenueSourceType, RevenueStatus } from "./types.js";
+import { ensureTenantWritable, loadUserContext } from "./permission-policy.js";
 
 const router = Router();
 
@@ -208,6 +209,8 @@ router.get(
 router.get(
   "/revenue/platform/export",
   authenticate,
+  loadUserContext,
+  // 兼容期：保留 view_platform_revenue 老码；同时通过 LEGACY_TO_NEW_MAP 派生 action_export_revenue
   requirePermissions("view_platform_revenue"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -414,6 +417,7 @@ router.get(
 router.get(
   "/revenue/funder/export",
   authenticate,
+  loadUserContext,
   requirePermissions("view_funder_revenue"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -629,6 +633,7 @@ router.get(
 router.get(
   "/expense/financier/export",
   authenticate,
+  loadUserContext,
   requirePermissions("view_financier_expense"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {

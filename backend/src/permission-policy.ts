@@ -67,15 +67,18 @@ const LEGACY_TO_NEW_MAP: Record<string, string[]> = {
     "view_platform_revenue",
     "view_page_platform_revenue",
     "action_view_revenue",
+    "action_export_revenue",
   ],
   view_funder_revenue: [
     "view_funder_revenue",
     "view_page_funder_revenue",
     "action_view_funder_revenue",
+    "action_export_funder_revenue",
   ],
   view_financier_expense: [
     "view_financier_expense",
     "view_page_financier_expense",
+    "action_export_financier_expense",
   ],
 
   // 定向支付
