@@ -13,6 +13,7 @@ import GroupsPage from "./pages/Groups";
 import LoginPage from "./pages/Login";
 import PermissionsPage from "./pages/Permissions";
 import OrgsPage from "./pages/Orgs";
+import RolesPage from "./pages/Roles";
 import WorkbenchPage from "./pages/Workbench";
 import { I18nProvider } from "./i18n";
 import I18nAdminPage from "./pages/I18nAdmin";
@@ -81,6 +82,7 @@ function App() {
               <Route element={<AppLayout />}>
                 <Route index element={<WorkbenchPage />} />
                 <Route path="/users" element={<UsersPage />} />
+                <Route path="/roles" element={<RolesPage />} />
                 <Route path="/groups" element={<GroupsPage />} />
                 <Route path="/orgs" element={<OrgsPage />} />
                 <Route path="/permissions" element={<PermissionsPage />} />
