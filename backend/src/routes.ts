@@ -321,17 +321,45 @@ router.post(
 router.put(
   "/users/:id",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requirePermissions("manage_users"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { displayName, password, orgId, groupIds, isActive } = req.body ?? {};
+      const { displayName, password, orgId, groupIds, roleIds, isActive } =
+        req.body ?? {};
       const user = await updateUser(req.params.id, {
         displayName,
         password,
         orgId,
         groupIds,
+        roleIds,
         isActive
       });
+      // 仅当涉及关键变更时才记录敏感日志（角色/启停/密码）
+      const isSensitive =
+        roleIds !== undefined ||
+        groupIds !== undefined ||
+        isActive !== undefined ||
+        password !== undefined;
+      if (isSensitive) {
+        void recordOperationLog({
+          operatorUserId: req.currentUser?.id,
+          operatorTenantId: req.orgContext?.orgId,
+          targetType: "user",
+          targetId: req.params.id,
+          action: password ? "user.reset_password" : "user.update",
+          afterSnapshot: {
+            roleIds,
+            groupIds,
+            isActive,
+            passwordChanged: password ? true : undefined
+          },
+          isSensitive: true,
+          ip: req.ip,
+          ua: String(req.headers["user-agent"] || "")
+        });
+      }
       res.json({ user });
     } catch (err) {
       handleError(res, req, 400, err);

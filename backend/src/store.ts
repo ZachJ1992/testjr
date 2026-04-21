@@ -2321,6 +2321,7 @@ export async function updateUser(
     password?: string;
     orgId?: string | null;
     groupIds?: string[];
+    roleIds?: string[];
     isActive?: boolean;
   }
 ): Promise<SafeUser> {
@@ -2344,6 +2345,18 @@ export async function updateUser(
     }
   }
 
+  // 保护 admin 用户：不允许移除其内置 admin 角色
+  if (current.username === "admin" && input.roleIds !== undefined) {
+    const [adminRoleRows] = await pool.query<RoleRow[]>(
+      "SELECT id FROM roles WHERE name = ? LIMIT 1",
+      ["admin"]
+    );
+    const adminRoleId = adminRoleRows[0]?.id;
+    if (adminRoleId && !input.roleIds.includes(adminRoleId)) {
+      throw new Error("admin 用户必须始终拥有 admin 角色");
+    }
+  }
+
   const currentRelations = await getUserRelations(userId);
 
   if (input.orgId !== undefined && input.orgId !== null) {
@@ -2364,6 +2377,20 @@ export async function updateUser(
     const count = Number(rows[0]?.cnt ?? 0);
     if (count !== groupIds.length) {
       throw new Error("存在无效的用户组");
+    }
+  }
+
+  const roleIds = input.roleIds ?? currentRelations.roleIds;
+  if (roleIds.length) {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as cnt FROM roles WHERE id IN (${roleIds
+        .map(() => "?")
+        .join(",")})`,
+      roleIds
+    );
+    const count = Number(rows[0]?.cnt ?? 0);
+    if (count !== roleIds.length) {
+      throw new Error("存在无效的角色");
     }
   }
 
@@ -2401,6 +2428,15 @@ export async function updateUser(
         await conn.query("INSERT INTO user_group_members (user_id, group_id) VALUES ?", [values]);
       }
       clearGroupsCache();
+      clearUsersCache();
+    }
+
+    if (input.roleIds) {
+      await conn.query("DELETE FROM user_roles WHERE user_id = ?", [userId]);
+      if (input.roleIds.length) {
+        const values = input.roleIds.map((r) => [userId, r]);
+        await conn.query("INSERT INTO user_roles (user_id, role_id) VALUES ?", [values]);
+      }
       clearUsersCache();
     }
 

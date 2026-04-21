@@ -1,10 +1,12 @@
 import {
+  RoleDetail,
   createOrgApi,
   createUserApi,
   deleteOrgApi,
   disableTenantApi,
   enableTenantApi,
   fetchOrgs,
+  fetchRoles,
   fetchUsers,
   fetchGroups,
   getErrorMessage,
@@ -59,6 +61,7 @@ interface UserFormValues {
   displayName: string;
   password?: string;
   groupIds?: string[];
+  roleIds?: string[];
   isActive?: boolean;
 }
 
@@ -99,6 +102,7 @@ function OrgsPage() {
   const [orgs, setOrgs] = useState<OrgUnit[]>([]);
   const [users, setUsers] = useState<SafeUser[]>([]);
   const [groups, setGroups] = useState<UserGroupDetail[]>([]);
+  const [roles, setRoles] = useState<RoleDetail[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
   const [orgModalOpen, setOrgModalOpen] = useState(false);
@@ -118,19 +122,29 @@ function OrgsPage() {
     () => groups.map((g) => ({ label: g.name, value: g.id })),
     [groups]
   );
+  const roleOptions = useMemo(
+    () =>
+      roles.map((r) => ({
+        label: `${r.name}${r.permissions?.length ? `（${r.permissions.length} 个权限）` : ""}`,
+        value: r.id
+      })),
+    [roles]
+  );
 
   const refresh = async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const [orgRes, userRes, groupRes] = await Promise.all([
+      const [orgRes, userRes, groupRes, roleRes] = await Promise.all([
         fetchOrgs(token),
         fetchUsers(token),
-        fetchGroups(token)
+        fetchGroups(token),
+        fetchRoles(token).catch(() => ({ roles: [] as RoleDetail[] }))
       ]);
       setOrgs(orgRes.orgs);
       setUsers(userRes.users);
       setGroups(groupRes.groups);
+      setRoles((roleRes as { roles: RoleDetail[] }).roles || []);
       if (!selectedOrgId && orgRes.orgs.length) {
         setSelectedOrgId(orgRes.orgs[0].id);
       }
@@ -249,7 +263,7 @@ function OrgsPage() {
       return;
     }
     userForm.resetFields();
-    userForm.setFieldsValue({ isActive: true, groupIds: [] });
+    userForm.setFieldsValue({ isActive: true, groupIds: [], roleIds: [] });
     setEditingUser(null);
     setUserModalOpen(true);
   };
@@ -260,6 +274,7 @@ function OrgsPage() {
       username: record.username,
       displayName: record.displayName,
       groupIds: record.groupIds,
+      roleIds: record.roleIds,
       isActive: record.isActive !== false
     });
     setUserModalOpen(true);
@@ -274,6 +289,7 @@ function OrgsPage() {
           displayName: values.displayName,
           password: values.password || undefined,
           groupIds: values.groupIds,
+          roleIds: values.roleIds,
           isActive: values.isActive
         });
       } else {
@@ -287,6 +303,7 @@ function OrgsPage() {
           displayName: values.displayName,
           orgId: selectedOrgId,
           groupIds: values.groupIds,
+          roleIds: values.roleIds,
           isActive: values.isActive
         });
       }
@@ -555,11 +572,35 @@ function OrgsPage() {
           >
             <Input.Password placeholder={editingUser ? t("users.password_optional", "留空不改") : ""} />
           </Form.Item>
-          <Form.Item name="groupIds" label={t("groups.members", "成员")}>
+          <Form.Item
+            name="roleIds"
+            label={t("users.roles", "角色")}
+            tooltip={t(
+              "users.roles_hint",
+              "角色是权限主载体（推荐配置）。角色 + 用户组 + 用户微调最终合并为该用户的权限集合。"
+            )}
+          >
+            <Select
+              mode="multiple"
+              options={roleOptions}
+              placeholder={t("users.roles_placeholder", "选择角色")}
+              allowClear
+              showSearch
+              optionFilterProp="label"
+            />
+          </Form.Item>
+          <Form.Item
+            name="groupIds"
+            label={t("users.groups_label", "用户组")}
+            tooltip={t(
+              "users.groups_hint",
+              "用户组用于批量授权；选了 Administrators 等于平台全权，请按需谨慎。"
+            )}
+          >
             <Select
               mode="multiple"
               options={groupOptions}
-              placeholder={t("groups.members_placeholder", "选择成员")}
+              placeholder={t("groups.members_placeholder", "选择用户组")}
               allowClear
               showSearch
               optionFilterProp="label"

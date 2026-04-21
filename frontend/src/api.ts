@@ -583,6 +583,7 @@ export async function updateUserApi(
     password?: string;
     orgId?: string | null;
     groupIds?: string[];
+    roleIds?: string[];
     isActive?: boolean;
   }
 ): Promise<{ user: SafeUser }> {

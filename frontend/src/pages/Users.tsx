@@ -1,8 +1,10 @@
 import {
+  RoleDetail,
   createUserApi,
   deleteUserApi,
   fetchGroups,
   fetchOrgs,
+  fetchRoles,
   fetchUsers,
   getErrorMessage,
   updateUserApi
@@ -32,6 +34,7 @@ type UserFormValues = {
   password?: string;
   orgId?: string;
   groupIds?: string[];
+  roleIds?: string[];
   isActive?: boolean;
 };
 
@@ -65,6 +68,7 @@ function UsersPage() {
   const [users, setUsers] = useState<SafeUser[]>([]);
   const [groups, setGroups] = useState<UserGroupDetail[]>([]);
   const [orgs, setOrgs] = useState<OrgUnit[]>([]);
+  const [roles, setRoles] = useState<RoleDetail[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<SafeUser | null>(null);
@@ -74,6 +78,14 @@ function UsersPage() {
     () => groups.map((g) => ({ label: g.name, value: g.id })),
     [groups]
   );
+  const roleOptions = useMemo(
+    () =>
+      roles.map((r) => ({
+        label: `${r.name}${r.permissions?.length ? `（${r.permissions.length} 个权限）` : ""}`,
+        value: r.id
+      })),
+    [roles]
+  );
 
   const orgTreeData = useMemo(() => buildOrgTree(orgs), [orgs]);
 
@@ -81,14 +93,16 @@ function UsersPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [uRes, gRes, oRes] = await Promise.all([
+      const [uRes, gRes, oRes, rRes] = await Promise.all([
         fetchUsers(token),
         fetchGroups(token),
-        fetchOrgs(token)
+        fetchOrgs(token),
+        fetchRoles(token).catch(() => ({ roles: [] as RoleDetail[] }))
       ]);
       setUsers(uRes.users);
       setGroups(gRes.groups);
       setOrgs(oRes.orgs);
+      setRoles((rRes as { roles: RoleDetail[] }).roles || []);
     } catch (err) {
       message.error(getErrorMessage(err));
     } finally {
@@ -103,7 +117,7 @@ function UsersPage() {
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ isActive: true });
+    form.setFieldsValue({ isActive: true, groupIds: [], roleIds: [] });
     setModalOpen(true);
   };
 
@@ -114,6 +128,7 @@ function UsersPage() {
       displayName: record.displayName,
       orgId: record.orgId,
       groupIds: record.groupIds,
+      roleIds: record.roleIds,
       isActive: record.isActive !== false
     });
     setModalOpen(true);
@@ -129,6 +144,7 @@ function UsersPage() {
           password: values.password || undefined,
           orgId: values.orgId || null,
           groupIds: values.groupIds,
+          roleIds: values.roleIds,
           isActive: values.isActive
         });
       } else {
@@ -142,6 +158,7 @@ function UsersPage() {
           password: values.password,
           orgId: values.orgId,
           groupIds: values.groupIds,
+          roleIds: values.roleIds,
           isActive: values.isActive
         });
       }
@@ -344,11 +361,35 @@ function UsersPage() {
           >
             <Input.Password placeholder={editing ? t("users.password_optional", "留空不改") : ""} />
           </Form.Item>
-          <Form.Item name="groupIds" label={t("groups.members", "成员")}>
+          <Form.Item
+            name="roleIds"
+            label={t("users.roles", "角色")}
+            tooltip={t(
+              "users.roles_hint",
+              "角色是权限主载体（推荐配置）。角色 + 用户组 + 用户微调最终合并为该用户的权限集合。"
+            )}
+          >
+            <Select
+              mode="multiple"
+              options={roleOptions}
+              placeholder={t("users.roles_placeholder", "选择角色")}
+              allowClear
+              showSearch
+              optionFilterProp="label"
+            />
+          </Form.Item>
+          <Form.Item
+            name="groupIds"
+            label={t("users.groups_label", "用户组")}
+            tooltip={t(
+              "users.groups_hint",
+              "用户组用于批量授权；选了 Administrators 等于平台全权，请按需谨慎。"
+            )}
+          >
             <Select
               mode="multiple"
               options={groupOptions}
-              placeholder={t("groups.members_placeholder", "选择成员")}
+              placeholder={t("groups.members_placeholder", "选择用户组")}
               allowClear
               showSearch
               optionFilterProp="label"
