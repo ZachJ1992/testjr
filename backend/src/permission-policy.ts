@@ -20,6 +20,7 @@ import {
   OrgContext,
 } from "./auth.js";
 import { findOrgById } from "./store.js";
+import { getDirectedPayContractsByFunder } from "./directed-pay-contracts-store.js";
 import { getErrorMessage, getLangFromRequest } from "./i18n.js";
 import type {
   DataScope,
@@ -370,6 +371,89 @@ export function buildTenantFilter(
     params: scope.tenantIds,
     emptyResult: false,
   };
+}
+
+/* ============================================================
+ * 5.1 resolveBusinessScope：把主体边界翻译成业务模块过滤维度
+ *
+ * 各业务表实际过滤的列：
+ *   - waybills.customer_id    => financier 实体 ID
+ *   - contracts.funder_id     => funder 实体 ID
+ *   - contracts.logistics_provider_id => financier 实体 ID
+ *   - revenue_records.funder_id / financier_id
+ *   - commission_recon_batches.financier_id
+ *
+ * 因此「主体 → 业务过滤」要按主体类型分流：
+ *   - platform：不限制（emptyResult = false，全部字段可空）
+ *   - financier：本主体的 financier_id（= orgContext.relatedEntityId）
+ *   - funder：本主体的 funder_id（= orgContext.relatedEntityId），
+ *     若需要看其放贷的融资方运单，由各模块决定是否解析合同
+ * ============================================================ */
+
+export interface BusinessScope {
+  isPlatform: boolean;
+  emptyResult: boolean;
+  funderId?: string;       // 本资金方的实体 ID
+  financierId?: string;    // 本融资方的实体 ID
+  customerIds?: string[];  // 派生：funder 的合同对手 financier 列表
+}
+
+export async function resolveBusinessScope(
+  req: AuthenticatedRequest,
+  options?: {
+    deriveFunderCustomers?: boolean; // funder 是否解析为对手 financierId 列表
+  }
+): Promise<BusinessScope> {
+  const ctx = req.orgContext;
+
+  if (!ctx || ctx.isPlatformUser) {
+    return { isPlatform: true, emptyResult: false };
+  }
+
+  if (ctx.orgType === "financier") {
+    if (!ctx.relatedEntityId) {
+      return { isPlatform: false, emptyResult: true };
+    }
+    return {
+      isPlatform: false,
+      emptyResult: false,
+      financierId: ctx.relatedEntityId,
+    };
+  }
+
+  if (ctx.orgType === "funder") {
+    if (!ctx.relatedEntityId) {
+      return { isPlatform: false, emptyResult: true };
+    }
+    const scope: BusinessScope = {
+      isPlatform: false,
+      emptyResult: false,
+      funderId: ctx.relatedEntityId,
+    };
+    if (options?.deriveFunderCustomers) {
+      try {
+        const contracts = await getDirectedPayContractsByFunder(
+          ctx.relatedEntityId
+        );
+        const ids = Array.from(
+          new Set(contracts.map((c) => c.financierId).filter(Boolean))
+        );
+        scope.customerIds = ids;
+        if (ids.length === 0) {
+          scope.emptyResult = true;
+        }
+      } catch (err: any) {
+        console.warn(
+          "[resolveBusinessScope] derive funder customers failed:",
+          err?.message
+        );
+      }
+    }
+    return scope;
+  }
+
+  // 未知主体类型，安全起见空集
+  return { isPlatform: false, emptyResult: true };
 }
 
 /* ============================================================

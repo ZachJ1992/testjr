@@ -23,6 +23,11 @@ import type {
 
 const router = Router();
 
+// TODO（阶段 D）：定向支付各写接口尚未接 ensureTenantWritable；
+// 由于此文件每个路由各自 authenticate，统一在 router.use 顶部前置中间件
+// 会破坏 authenticate 时序，需逐个路由叠加，留到一致性收口时统一治理。
+// 目前依赖路由层的 requirePermissions + 业务校验，不阻塞主体冻结的整体目标。
+
 // ==================== 支付类别模板 ====================
 
 const CATEGORY_TEMPLATES = [

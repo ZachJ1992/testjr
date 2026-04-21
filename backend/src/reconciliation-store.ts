@@ -263,20 +263,42 @@ export async function getBatchRevenueRecords(batchId: string): Promise<RowDataPa
 
 // ---------- 对账统计 ----------
 
-export async function getReconStats(): Promise<{
+export async function getReconStats(scope?: {
+  financierId?: string;
+  funderId?: string;
+  emptyResult?: boolean;
+}): Promise<{
   totalRevenue: number;
   pendingAmount: number;
   accountedAmount: number;
 }> {
-  const [rows] = await pool.query<RowDataPacket[]>(`
-    SELECT
+  if (scope?.emptyResult) {
+    return { totalRevenue: 0, pendingAmount: 0, accountedAmount: 0 };
+  }
+
+  const conditions: string[] = [
+    "record_type = 'revenue'",
+    "source_type = 'waybill_commission'",
+  ];
+  const params: any[] = [];
+  if (scope?.financierId) {
+    conditions.push("financier_id = ?");
+    params.push(scope.financierId);
+  }
+  if (scope?.funderId) {
+    conditions.push("funder_id = ?");
+    params.push(scope.funderId);
+  }
+
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT
       COALESCE(SUM(amount), 0) AS total_revenue,
       COALESCE(SUM(CASE WHEN status NOT IN ('settled', 'accounted') THEN amount ELSE 0 END), 0) AS pending_amount,
       COALESCE(SUM(CASE WHEN status IN ('settled', 'accounted') THEN amount ELSE 0 END), 0) AS accounted_amount
     FROM revenue_records
-    WHERE record_type = 'revenue'
-      AND source_type = 'waybill_commission'
-  `);
+    WHERE ${conditions.join(" AND ")}`,
+    params
+  );
   return {
     totalRevenue: Number(rows[0]?.total_revenue || 0),
     pendingAmount: Number(rows[0]?.pending_amount || 0),

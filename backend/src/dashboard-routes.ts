@@ -1,7 +1,10 @@
 import { Router, type Request, type Response } from "express";
 
+import { authenticate, type AuthenticatedRequest } from "./auth.js";
 import { requireApiKey } from "./api-key-auth.js";
 import { handleError } from "./errorHandler.js";
+import { loadUserContext, resolveBusinessScope } from "./permission-policy.js";
+import { findOrgById } from "./store.js";
 import {
   getDashboardBusinessScaleByCity,
   getDashboardBusinessScaleByRoute,
@@ -325,6 +328,48 @@ router.get(
         includeZeroRegions: parseOptionalBooleanQuery(
           req.query.includeZeroRegions
         ),
+      });
+      sendSuccess(res, data);
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+// =============================================
+// 双轨：登录态版本（按主体过滤）— 阶段 C POC
+//
+// 与上面 /dashboard/* 一组对外平台版本并行：
+//   - /dashboard/* （requireApiKey）→ 平台全量，对外契约不变
+//   - /dashboard/tenant/* （JWT + 主体边界）→ 当前用户所在主体可见数据
+//
+// 本期仅落地 platform-revenue/overview 一个示例端点；
+// 完整覆盖（waybills overview / partner-top / region-summary 等）放阶段 D，
+// 届时同步给 dashboard-store 增加 financierId / funderId 入参。
+// =============================================
+
+router.get(
+  "/dashboard/tenant/platform-revenue/overview",
+  authenticate,
+  loadUserContext,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const scope = await resolveBusinessScope(req);
+      // 非平台用户在主体无业务实体（emptyResult）时直接返回空数据；
+      // 完整按主体过滤（financier_name / funder_id 等）在阶段 D 与
+      // dashboard-store 入参扩展一并落地。
+      if (!scope.isPlatform && scope.emptyResult) {
+        return sendSuccess(res, { totalRevenue: 0 });
+      }
+      // 解析当前主体名称（备用，为阶段 D 调用 store 接口时复用）
+      const _tenant =
+        !scope.isPlatform && req.orgContext?.orgId
+          ? await findOrgById(req.orgContext.orgId)
+          : undefined;
+      void _tenant;
+      const data = await getPlatformRevenueOverview({
+        startDate: req.query.startDate as string | undefined,
+        endDate: req.query.endDate as string | undefined,
       });
       sendSuccess(res, data);
     } catch (err) {

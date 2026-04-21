@@ -10,6 +10,7 @@ import {
   buildUserContextPayload,
   ensureTenantWritable,
   loadUserContext,
+  resolveBusinessScope,
 } from "./permission-policy.js";
 import {
   getOperationLogs,
@@ -1493,10 +1494,11 @@ router.post(
 router.get(
   "/contracts",
   authenticate,
+  loadUserContext,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const filters: { 
+      const filters: {
         type?: "financing" | "brokerage";
         funderId?: string;
         logisticsProviderId?: string;
@@ -1504,11 +1506,26 @@ router.get(
       if (req.query.type === "financing" || req.query.type === "brokerage") {
         filters.type = req.query.type;
       }
-      if (req.query.funderId) {
-        filters.funderId = req.query.funderId as string;
+      // 主体边界过滤（funder 看自己的合同；financier 看自己作为物流方的合同；platform 不限制）
+      const scope = await resolveBusinessScope(req);
+      if (scope.emptyResult) {
+        return res.json({ contracts: [] });
       }
-      if (req.query.logisticsProviderId) {
-        filters.logisticsProviderId = req.query.logisticsProviderId as string;
+      if (!scope.isPlatform) {
+        if (scope.funderId) {
+          filters.funderId = scope.funderId;
+        }
+        if (scope.financierId) {
+          filters.logisticsProviderId = scope.financierId;
+        }
+      } else {
+        // 平台用户可以按 query 自由筛选
+        if (req.query.funderId) {
+          filters.funderId = req.query.funderId as string;
+        }
+        if (req.query.logisticsProviderId) {
+          filters.logisticsProviderId = req.query.logisticsProviderId as string;
+        }
       }
       const contracts = await getContracts(filters);
       res.json({ contracts });
@@ -1521,6 +1538,7 @@ router.get(
 router.get(
   "/contracts/:id",
   authenticate,
+  loadUserContext,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -1528,6 +1546,18 @@ router.get(
       if (!contract) {
         sendError(res, req, 404, "error.contracts.not_found");
         return;
+      }
+      // 主体边界检查：非平台用户只能看到与自己主体相关的合同
+      const scope = await resolveBusinessScope(req);
+      if (!scope.isPlatform) {
+        const matchFunder = scope.funderId && contract.funderId === scope.funderId;
+        const matchFinancier =
+          scope.financierId &&
+          contract.logisticsProviderId === scope.financierId;
+        if (!matchFunder && !matchFinancier) {
+          sendError(res, req, 404, "error.contracts.not_found");
+          return;
+        }
       }
       res.json({ contract });
     } catch (err) {
@@ -1539,6 +1569,8 @@ router.get(
 router.post(
   "/contracts/financing",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -1591,6 +1623,8 @@ router.post(
 router.post(
   "/contracts/brokerage",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -1634,6 +1668,8 @@ router.post(
 router.patch(
   "/contracts/:id/status",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -1655,6 +1691,8 @@ router.patch(
 router.put(
   "/contracts/:id",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -1670,6 +1708,8 @@ router.put(
 router.delete(
   "/contracts/:id",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -3210,6 +3250,14 @@ router.post(
 
 // =============================================
 // 定向支付申请 API
+//
+// ⚠️ DEPRECATED：以下 /directed-pay/* 一组路由与
+//   backend/src/directed-payment-routes.ts 中的定义完全重复。
+//   由于 routes.ts 顶部 `router.use(directedPaymentRoutes)` 在第 ~205 行
+//   先注册，下面这些定义实际不会被 Express 命中。
+//   计划在阶段 D 一致性收口时统一清理本段，统一以
+//   directed-payment-routes.ts 为正式入口；本期保留备查，但**请勿在此修改**，
+//   任何修复请同步到 directed-payment-routes.ts，否则不会生效。
 // =============================================
 
 // 获取支付申请统计
@@ -4369,11 +4417,25 @@ function requireReconV2(_req: Request, res: Response, next: NextFunction) {
 router.get(
   "/recon-batches",
   authenticate,
+  loadUserContext,
   requireReconV2,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { contractId, financierId, areaId, status, startDate, endDate } = req.query;
+      const { contractId, areaId, status, startDate, endDate } = req.query;
+      let { financierId } = req.query as { financierId?: string };
+      // 主体边界：funder 看自己；financier 仅看自己；platform 不限
+      const scope = await resolveBusinessScope(req);
+      if (scope.emptyResult) {
+        return res.json({ batches: [] });
+      }
+      if (!scope.isPlatform) {
+        if (scope.financierId) financierId = scope.financierId;
+        // funder 现阶段无 reconciliation 关联，本期返回空集
+        if (scope.funderId && !scope.financierId) {
+          return res.json({ batches: [] });
+        }
+      }
       const batches = await reconStore.getReconBatches({
         contractId: contractId as string,
         financierId: financierId as string,
@@ -4392,11 +4454,18 @@ router.get(
 router.get(
   "/recon-batches/stats",
   authenticate,
+  loadUserContext,
   requireReconV2,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const stats = await reconStore.getReconStats();
+      const scope = await resolveBusinessScope(req);
+      const stats = await reconStore.getReconStats({
+        financierId: scope.financierId,
+        funderId: scope.funderId,
+        emptyResult:
+          scope.emptyResult || (!scope.isPlatform && !scope.financierId && !scope.funderId),
+      });
       res.json(stats);
     } catch (err) {
       handleError(res, req, 500, err);
@@ -4407,12 +4476,22 @@ router.get(
 router.get(
   "/recon-batches/:id",
   authenticate,
+  loadUserContext,
   requireReconV2,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const batch = await reconStore.getReconBatchById(req.params.id);
       if (!batch) { sendError(res, req, 404, "对账批次不存在"); return; }
+      // 主体边界检查：非平台用户只能看本主体的批次
+      const scope = await resolveBusinessScope(req);
+      if (!scope.isPlatform) {
+        const allow = scope.financierId && batch.financierId === scope.financierId;
+        if (!allow) {
+          sendError(res, req, 404, "对账批次不存在");
+          return;
+        }
+      }
       const recordIds = await reconStore.getBatchRevenueRecordIds(batch.id);
       res.json({ batch, revenueRecordIds: recordIds });
     } catch (err) {
@@ -4425,6 +4504,8 @@ router.get(
 router.post(
   "/recon-batches",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requireReconV2,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
@@ -4448,6 +4529,8 @@ router.post(
 router.post(
   "/recon-batches/:id/reconciled",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requireReconV2,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
@@ -4464,6 +4547,8 @@ router.post(
 router.post(
   "/recon-batches/:id/generate-settlement",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requireReconV2,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
@@ -4496,6 +4581,8 @@ router.post(
 router.post(
   "/recon-batches/:id/paid-offline",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requireReconV2,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
@@ -4513,6 +4600,8 @@ router.post(
 router.post(
   "/recon-batches/:id/accounted",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requireReconV2,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
@@ -4529,6 +4618,8 @@ router.post(
 router.post(
   "/recon-batches/:id/cancel",
   authenticate,
+  loadUserContext,
+  ensureTenantWritable,
   requireReconV2,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
@@ -4545,10 +4636,22 @@ router.post(
 router.get(
   "/recon-batches/:id/records",
   authenticate,
+  loadUserContext,
   requireReconV2,
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
+      // 复用上面的主体边界判断
+      const batch = await reconStore.getReconBatchById(req.params.id);
+      if (!batch) { sendError(res, req, 404, "对账批次不存在"); return; }
+      const scope = await resolveBusinessScope(req);
+      if (!scope.isPlatform) {
+        const allow = scope.financierId && batch.financierId === scope.financierId;
+        if (!allow) {
+          sendError(res, req, 404, "对账批次不存在");
+          return;
+        }
+      }
       const records = await reconStore.getBatchRevenueRecords(req.params.id);
       res.json({ records });
     } catch (err) {
