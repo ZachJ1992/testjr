@@ -420,7 +420,9 @@ const PARTNER_NAME_SQL = "COALESCE(NULLIF(TRIM(rr.financier_name), ''), '未命�
 const LANDING_PARTNER_NAME_SQL =
   "COALESCE(NULLIF(TRIM(lp.name), ''), '未命名落地合作方')";
 const ROUTE_NAME_SQL = "COALESCE(NULLIF(TRIM(rt.name), ''), '未命名线路')";
-const GROSS_FREIGHT_SQL = "COALESCE(w.receivable_total, rr.principal_amount, 0)";
+/** 与 overview / business-trend / 经营飞线等业务聚合一致的单行撮合运费表达式 */
+export const GROSS_FREIGHT_SQL =
+  "COALESCE(w.receivable_total, rr.principal_amount, 0)";
 
 function normalizeGranularity(
   value?: DashboardGranularity
@@ -672,7 +674,7 @@ async function queryRows<T extends RowDataPacket>(
   return rows as T[];
 }
 
-function buildDashboardSqlParts(
+export function buildDashboardSqlParts(
   filters: DashboardAggregateFilters = {}
 ): DashboardSqlParts {
   const conditions = [
