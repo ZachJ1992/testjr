@@ -865,6 +865,11 @@ export interface Route {
   status: "active" | "disabled";
   createdAt: string;
   updatedAt: string;
+  tmsSource?: string;
+  tmsNodeId?: string;
+  tmsNodeName?: string;
+  /** 与 TMS 字典的绑定状态：bound=已绑且字典命中；stale=已绑但字典找不到；unbound=未绑，运维需要对齐 */
+  tmsBindingStatus?: "bound" | "stale" | "unbound";
 }
 
 export interface ContractRoute {

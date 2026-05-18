@@ -229,6 +229,13 @@ export async function deleteLocalPartner(id: string): Promise<void> {
 // =============================================
 
 function mapRouteRow(row: RowDataPacket): Route {
+  const tmsNodeId = row.tms_node_id ?? undefined;
+  const tmsNodeName = row.tms_node_name ?? undefined;
+  // 绑定状态：已绑且字典命中=bound；已绑但字典查不到=stale；未绑=unbound
+  let tmsBindingStatus: "bound" | "stale" | "unbound" = "unbound";
+  if (tmsNodeId) {
+    tmsBindingStatus = tmsNodeName ? "bound" : "stale";
+  }
   return {
     id: row.id,
     name: row.name,
@@ -239,6 +246,10 @@ function mapRouteRow(row: RowDataPacket): Route {
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    tmsSource: row.tms_source ?? undefined,
+    tmsNodeId,
+    tmsNodeName,
+    tmsBindingStatus,
   };
 }
 
@@ -249,10 +260,13 @@ export async function getRoutes(params?: {
   status?: string;
 }): Promise<Route[]> {
   let sql = `
-    SELECT r.*, lp.name AS local_partner_name, a.name AS area_name
+    SELECT r.*, lp.name AS local_partner_name, a.name AS area_name,
+           o.node_name AS tms_node_name
     FROM routes r
     LEFT JOIN local_partners lp ON r.local_partner_id = lp.id
     LEFT JOIN areas a ON lp.area_id = a.id
+    LEFT JOIN tms_org_nodes o
+      ON o.tms_source = r.tms_source AND o.node_id = r.tms_node_id
     WHERE 1=1
   `;
   const vals: any[] = [];
@@ -273,7 +287,16 @@ export async function getRoutes(params?: {
     sql += " AND r.status = ?";
     vals.push(params.status);
   }
-  sql += " ORDER BY r.created_at DESC";
+  // 排序：待绑定（tms_node_id 为空）优先 → 字典失联（已绑但字典找不到）→ 已绑定；同组内按创建时间倒序
+  sql += `
+    ORDER BY
+      CASE
+        WHEN r.tms_node_id IS NULL THEN 0
+        WHEN o.node_name IS NULL THEN 1
+        ELSE 2
+      END,
+      r.created_at DESC
+  `;
 
   const [rows] = await pool.query<RowDataPacket[]>(sql, vals);
   return rows.map(mapRouteRow);
@@ -281,10 +304,13 @@ export async function getRoutes(params?: {
 
 export async function getRouteById(id: string): Promise<Route | undefined> {
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT r.*, lp.name AS local_partner_name, a.name AS area_name
+    `SELECT r.*, lp.name AS local_partner_name, a.name AS area_name,
+            o.node_name AS tms_node_name
      FROM routes r
      LEFT JOIN local_partners lp ON r.local_partner_id = lp.id
      LEFT JOIN areas a ON lp.area_id = a.id
+     LEFT JOIN tms_org_nodes o
+       ON o.tms_source = r.tms_source AND o.node_id = r.tms_node_id
      WHERE r.id = ?`,
     [id]
   );
@@ -295,18 +321,35 @@ export async function createRoute(input: {
   name: string;
   localPartnerId: string;
   remark?: string;
+  tmsSource?: string;
+  tmsNodeId?: string;
 }): Promise<Route> {
   const id = randomUUID();
   await pool.query(
-    `INSERT INTO routes (id, name, local_partner_id, remark) VALUES (?, ?, ?, ?)`,
-    [id, input.name, input.localPartnerId, input.remark || null]
+    `INSERT INTO routes (id, name, local_partner_id, remark, tms_source, tms_node_id)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      input.name,
+      input.localPartnerId,
+      input.remark || null,
+      input.tmsSource || null,
+      input.tmsNodeId || null,
+    ]
   );
   return (await getRouteById(id))!;
 }
 
 export async function updateRoute(
   id: string,
-  input: Partial<{ name: string; localPartnerId: string; remark: string; status: "active" | "disabled" }>
+  input: Partial<{
+    name: string;
+    localPartnerId: string;
+    remark: string;
+    status: "active" | "disabled";
+    tmsSource: string | null;
+    tmsNodeId: string | null;
+  }>
 ): Promise<Route> {
   const sets: string[] = [];
   const vals: any[] = [];
@@ -315,6 +358,8 @@ export async function updateRoute(
   if (input.localPartnerId !== undefined) { sets.push("local_partner_id = ?"); vals.push(input.localPartnerId); }
   if (input.remark !== undefined) { sets.push("remark = ?"); vals.push(input.remark); }
   if (input.status !== undefined) { sets.push("status = ?"); vals.push(input.status); }
+  if (input.tmsSource !== undefined) { sets.push("tms_source = ?"); vals.push(input.tmsSource); }
+  if (input.tmsNodeId !== undefined) { sets.push("tms_node_id = ?"); vals.push(input.tmsNodeId); }
 
   if (sets.length > 0) {
     sets.push("updated_at = NOW()");

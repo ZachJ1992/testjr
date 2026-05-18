@@ -15,7 +15,7 @@ import { Page } from 'puppeteer-core';
 export interface FieldConfig {
   key: string;              // 字段键名
   label: string;            // 显示标签
-  type: 'text' | 'password' | 'number' | 'select';
+  type: 'text' | 'password' | 'number' | 'select' | 'textarea';
   required: boolean;
   placeholder?: string;
   defaultValue?: string | number;
@@ -48,6 +48,14 @@ export interface SyncResult {
   skippedCount: number;
   errorCount: number;
   error?: string;
+}
+
+/**
+ * 会话保活结果
+ */
+export interface KeepAliveResult {
+  success: boolean;
+  message?: string;
 }
 
 /**
@@ -91,6 +99,8 @@ export interface WaybillData {
   deliveryTime?: Date;
   subFinancier?: string;
   branch?: string;
+  tmsSource?: string;
+  tmsBranchNodeId?: string;
   [key: string]: any;
 }
 
@@ -119,6 +129,12 @@ export interface CrawlerTemplate {
    * @returns 原始数据数组
    */
   fetchData: (page: Page, config: CrawlerRuntimeConfig, maxPages: number) => Promise<any[]>;
+
+  /**
+   * 可选：保持外部系统会话活跃，不触发数据入库。
+   * 适用于短会话 Cookie 的接口直连类爬虫。
+   */
+  keepAlive?: (config: CrawlerRuntimeConfig) => Promise<KeepAliveResult>;
   
   /**
    * 将原始数据映射为标准运单格式

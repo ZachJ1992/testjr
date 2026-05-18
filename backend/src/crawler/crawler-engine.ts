@@ -189,9 +189,10 @@ async function saveWaybillData(
 
     // 检查是否已存在
     const [existing] = await pool.query<any[]>(
-      `SELECT id, receivable_total, payable_total, receivable_cash, receivable_collect,
+      `SELECT id, freight_amount, receivable_total, payable_total, receivable_cash, receivable_collect,
               receivable_return, monthly_cost, total_volume, goods_weight,
-              remark, status, branch, batch_status, waybill_date FROM waybills
+              remark, status, branch, batch_status, waybill_date,
+              tms_source, tms_branch_node_id FROM waybills
        WHERE waybill_number = ? AND deleted_at IS NULL`,
       [waybill.waybillNumber]
     );
@@ -225,6 +226,7 @@ async function saveWaybillData(
       const nextWeight = resolveWaybillWeight(waybill);
       const nextVolume = resolveWaybillVolume(waybill);
       const needUpdate = 
+        Math.abs((existingRow.freight_amount || 0) - (waybill.freight || 0)) > 0.01 ||
         Math.abs((existingRow.receivable_total || 0) - (waybill.receivableTotal || 0)) > 0.01 ||
         Math.abs((existingRow.payable_total || 0) - (waybill.payableTotal || 0)) > 0.01 ||
         Math.abs((existingRow.receivable_cash || 0) - (waybill.receivableCash || 0)) > 0.01 ||
@@ -237,11 +239,14 @@ async function saveWaybillData(
         (!!waybill.status && (existingRow.status || '') !== (waybill.status || '')) ||
         (!!waybill.branch && (existingRow.branch || '') !== (waybill.branch || '')) ||
         (!!waybill.batchStatusText && (existingRow.batch_status || '') !== (waybill.batchStatusText || '')) ||
-        (!!normalizedBusinessDateYmd && existingWaybillDateYmd !== normalizedBusinessDateYmd);
+        (!!normalizedBusinessDateYmd && existingWaybillDateYmd !== normalizedBusinessDateYmd) ||
+        (!!waybill.tmsBranchNodeId &&
+          String(existingRow.tms_branch_node_id || '') !== String(waybill.tmsBranchNodeId));
       
       if (needUpdate) {
         await pool.query(
           `UPDATE waybills SET 
+            freight_amount = ?,
             receivable_total = ?,
             payable_total = ?,
             receivable_cash = ?,
@@ -256,9 +261,12 @@ async function saveWaybillData(
             status = COALESCE(NULLIF(?, ''), status),
             branch = COALESCE(NULLIF(?, ''), branch),
             batch_status = COALESCE(NULLIF(?, ''), batch_status),
+            tms_source = COALESCE(?, tms_source),
+            tms_branch_node_id = COALESCE(?, tms_branch_node_id),
             updated_at = NOW()
            WHERE id = ?`,
           [
+            waybill.freight || 0,
             waybill.receivableTotal || 0,
             waybill.payableTotal || 0,
             waybill.receivableCash || 0,
@@ -273,6 +281,8 @@ async function saveWaybillData(
             waybill.status || '',
             waybill.branch || '',
             waybill.batchStatusText || '',
+            waybill.tmsSource || null,
+            waybill.tmsBranchNodeId || null,
             existingRow.id,
           ]
         );
@@ -290,8 +300,10 @@ async function saveWaybillData(
         freight_amount, receivable_total, payable_total,
         receivable_cash, receivable_collect, receivable_return, monthly_cost, receivable_transport,
         total_volume, goods_weight,
-        status, batch_status, remark, waybill_date, business_mode, sub_financier, branch, created_time, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        status, batch_status, remark, waybill_date, business_mode, sub_financier, branch,
+        tms_source, tms_branch_node_id,
+        created_time, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         id,
         waybill.waybillNumber,
@@ -318,6 +330,8 @@ async function saveWaybillData(
         'standard',
         waybill.subFinancier || '',
         waybill.branch || '',
+        waybill.tmsSource || null,
+        waybill.tmsBranchNodeId || null,
         waybill.createTime ? new Date(waybill.createTime) : null,
       ]
     );

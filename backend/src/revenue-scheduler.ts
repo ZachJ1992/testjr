@@ -30,7 +30,12 @@ function buildWaybillRevenueDateSql(waybillAlias: string, financierAlias: string
   END`;
 }
 
-async function repairWaybillCommissionIntegrity(): Promise<{ relinked: number; deduped: number }> {
+async function repairWaybillCommissionIntegrity(): Promise<{
+  relinked: number;
+  deduped: number;
+  primaryLinks: number;
+  fallbackLinks: number;
+}> {
   const [relinkResult] = await pool.query<ResultSetHeader>(`
     UPDATE revenue_records rr
     LEFT JOIN waybills w_current
@@ -62,9 +67,47 @@ async function repairWaybillCommissionIntegrity(): Promise<{ relinked: number; d
       AND rr_keep.status IN ('reconciling', 'reconciled', 'settled', 'accounted')
   `);
 
+  const [primaryResult] = await pool.query<ResultSetHeader>(`
+    UPDATE revenue_records rr
+    JOIN waybills w ON rr.waybill_id = w.id AND w.deleted_at IS NULL
+    JOIN routes r
+      ON r.tms_source = w.tms_source
+     AND r.tms_node_id = w.tms_branch_node_id
+     AND r.status = 'active'
+    JOIN contract_routes cr ON cr.route_id = r.id
+    JOIN commission_contracts cc ON cc.id = cr.contract_id AND cc.status = 'active'
+    SET rr.commission_contract_id = cr.contract_id,
+        rr.route_id = r.id,
+        rr.contract_id = cr.contract_id
+    WHERE rr.source_type = 'waybill_commission'
+      AND w.tms_source IS NOT NULL
+      AND w.tms_branch_node_id IS NOT NULL
+      AND (
+        rr.commission_contract_id IS NULL OR rr.route_id IS NULL
+        OR rr.commission_contract_id <> cr.contract_id
+        OR rr.route_id <> r.id
+      )
+  `);
+
+  const [fallbackResult] = await pool.query<ResultSetHeader>(`
+    UPDATE revenue_records rr
+    JOIN waybills w ON rr.waybill_id = w.id AND w.deleted_at IS NULL
+    JOIN routes r ON r.name = w.branch AND r.status = 'active'
+    JOIN contract_routes cr ON cr.route_id = r.id
+    JOIN commission_contracts cc ON cc.id = cr.contract_id AND cc.status = 'active'
+    SET rr.commission_contract_id = cr.contract_id,
+        rr.route_id = r.id,
+        rr.contract_id = cr.contract_id
+    WHERE rr.source_type = 'waybill_commission'
+      AND rr.commission_contract_id IS NULL
+      AND rr.route_id IS NULL
+  `);
+
   return {
     relinked: Number(relinkResult.affectedRows || 0),
     deduped: Number(dedupeResult.affectedRows || 0),
+    primaryLinks: Number(primaryResult.affectedRows || 0),
+    fallbackLinks: Number(fallbackResult.affectedRows || 0),
   };
 }
 
@@ -398,14 +441,19 @@ export async function createCommissionFeeRecord(params: {
 /**
  * 计算运单平台抽成收益
  * 从 commission_contracts 的 commission_config 动态读取抽成规则
- * 匹配路径: waybills.branch -> routes.name -> contract_routes -> commission_contracts
+ * 匹配路径: tms_source+tms_branch_node_id → routes；未命中则 waybills.branch → routes.name
  */
 export async function calculateWaybillPlatformRevenue(): Promise<number> {
   try {
     const repairResult = await repairWaybillCommissionIntegrity();
-    if (repairResult.relinked > 0 || repairResult.deduped > 0) {
+    if (
+      repairResult.relinked > 0 ||
+      repairResult.deduped > 0 ||
+      repairResult.primaryLinks > 0 ||
+      repairResult.fallbackLinks > 0
+    ) {
       console.log(
-        `[WaybillRevenue] 数据修复: 回链 ${repairResult.relinked} 条, 去重 ${repairResult.deduped} 条`
+        `[WaybillRevenue] 数据修复: 回链 ${repairResult.relinked} 条, 去重 ${repairResult.deduped} 条, 主匹配补链 ${repairResult.primaryLinks} 条, 兜底 ${repairResult.fallbackLinks} 条`
       );
     }
 
@@ -445,7 +493,8 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
     // 1. 加载所有 active 合同及其线路、落地合作方
     const [contractRows] = await pool.query<RowDataPacket[]>(`
       SELECT cc.id as contract_id, cc.commission_config, cc.financier_id, cc.customer_name,
-             r.id as route_id, r.name as route_name
+             r.id as route_id, r.name as route_name,
+             r.tms_source as route_tms_source, r.tms_node_id as route_tms_node_id
       FROM commission_contracts cc
       JOIN contract_routes cr ON cc.id = cr.contract_id
       JOIN routes r ON cr.route_id = r.id
@@ -457,14 +506,16 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
       return 0;
     }
 
-    // 2. 构建 route_name -> 合同配置映射
-    const routeConfigMap = new Map<string, {
+    type RouteCfg = {
       contractId: string;
       routeId: string;
       commissionConfig: any[];
       financierId: string;
       financierName: string;
-    }>();
+    };
+
+    const routeByTmsKey = new Map<string, RouteCfg>();
+    const routeByName = new Map<string, RouteCfg>();
 
     const financierIdSet = new Set<string>();
 
@@ -475,22 +526,28 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
       }
       if (!Array.isArray(config) || config.length === 0) continue;
 
-      routeConfigMap.set(row.route_name, {
+      const cfg: RouteCfg = {
         contractId: row.contract_id,
         routeId: row.route_id,
         commissionConfig: config,
         financierId: row.financier_id,
         financierName: row.customer_name,
-      });
+      };
+      const tmsSrc = row.route_tms_source != null ? String(row.route_tms_source).trim() : "";
+      const tmsNode = row.route_tms_node_id != null ? String(row.route_tms_node_id).trim() : "";
+      if (tmsSrc && tmsNode) {
+        routeByTmsKey.set(`${tmsSrc}::${tmsNode}`, cfg);
+      }
+      routeByName.set(row.route_name, cfg);
       if (row.financier_id) financierIdSet.add(row.financier_id);
     }
 
-    if (routeConfigMap.size === 0 || financierIdSet.size === 0) {
+    if (routeByName.size === 0 || financierIdSet.size === 0) {
       console.log("[WaybillRevenue] 无有效的线路-合同配置，跳过");
       return 0;
     }
 
-    console.log(`[WaybillRevenue] 加载到 ${routeConfigMap.size} 条线路配置，涉及 ${financierIdSet.size} 个合作方`);
+    console.log(`[WaybillRevenue] 加载到 ${routeByName.size} 条线路配置，涉及 ${financierIdSet.size} 个合作方`);
 
     // 3. 查询这些合作方下未计算收益的运单
     const financierIds = Array.from(financierIdSet);
@@ -518,9 +575,34 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
     const records: CreateRevenueRecordInput[] = [];
     let skippedNoRoute = 0;
     let skippedNoBase = 0;
+    let fallbackHits = 0;
+    type FallbackHitDetail = {
+      waybill: string;
+      branch: string;
+      tms: string;
+      routeId: string;
+    };
+    const fallbackHitDetails: FallbackHitDetail[] = [];
 
     for (const w of waybills) {
-      const routeConfig = w.branch ? routeConfigMap.get(w.branch) : undefined;
+      let routeConfig: RouteCfg | undefined;
+      const wbTms = w.tms_source != null ? String(w.tms_source).trim() : "";
+      const wbNode = w.tms_branch_node_id != null ? String(w.tms_branch_node_id).trim() : "";
+      if (wbTms && wbNode) {
+        routeConfig = routeByTmsKey.get(`${wbTms}::${wbNode}`);
+      }
+      if (!routeConfig && w.branch) {
+        routeConfig = routeByName.get(w.branch);
+        if (routeConfig) {
+          fallbackHits++;
+          fallbackHitDetails.push({
+            waybill: String(w.waybill_number ?? ""),
+            branch: String(w.branch),
+            tms: `${w.tms_source || "null"}::${w.tms_branch_node_id || "null"}`,
+            routeId: routeConfig.routeId,
+          });
+        }
+      }
       if (!routeConfig) {
         skippedNoRoute++;
         continue;
@@ -585,11 +667,31 @@ export async function calculateWaybillPlatformRevenue(): Promise<number> {
       });
     }
 
+    if (fallbackHits > 0) {
+      if (fallbackHits <= 10) {
+        for (const d of fallbackHitDetails) {
+          console.log(
+            `[WaybillRevenue] Fallback 命中: waybill=${d.waybill} branch="${d.branch}" tms=${d.tms} → route_id=${d.routeId}`
+          );
+        }
+      } else {
+        for (const d of fallbackHitDetails.slice(0, 5)) {
+          console.log(
+            `[WaybillRevenue] Fallback 命中: waybill=${d.waybill} branch="${d.branch}" tms=${d.tms} → route_id=${d.routeId}`
+          );
+        }
+        console.log(`[WaybillRevenue] 共 ${fallbackHits} 条 fallback 命中（仅展示前 5 条）`);
+      }
+    }
+
     if (records.length > 0) {
       await revenueStore.batchCreateRevenueRecords(records);
     }
 
-    console.log(`[WaybillRevenue] 运单 ${waybills.length} 条: 生成收益 ${records.length} 条, 无匹配线路 ${skippedNoRoute}, 基数为0 ${skippedNoBase}`);
+    console.log(
+      `[WaybillRevenue] 运单 ${waybills.length} 条: 生成收益 ${records.length} 条, ` +
+        `无匹配线路 ${skippedNoRoute}, 基数为0 ${skippedNoBase}, Fallback 命中 ${fallbackHits}`
+    );
     return records.length;
   } catch (err) {
     console.error("[WaybillRevenue] 计算运单平台抽成失败:", err);
@@ -609,9 +711,14 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
 }> {
   try {
     const repairResult = await repairWaybillCommissionIntegrity();
-    if (repairResult.relinked > 0 || repairResult.deduped > 0) {
+    if (
+      repairResult.relinked > 0 ||
+      repairResult.deduped > 0 ||
+      repairResult.primaryLinks > 0 ||
+      repairResult.fallbackLinks > 0
+    ) {
       console.log(
-        `[WaybillRevenue] 历史回算前数据修复: 回链 ${repairResult.relinked} 条, 去重 ${repairResult.deduped} 条`
+        `[WaybillRevenue] 历史回算前数据修复: 回链 ${repairResult.relinked} 条, 去重 ${repairResult.deduped} 条, 主匹配补链 ${repairResult.primaryLinks} 条, 兜底 ${repairResult.fallbackLinks} 条`
       );
     }
 

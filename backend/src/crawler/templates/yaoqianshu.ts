@@ -5,7 +5,9 @@
  * 登录后进入车辆配载页，通过业务筛选口径抓取目标数据
  */
 
+import { randomUUID } from 'crypto';
 import { Page } from 'puppeteer-core';
+import { pool } from '../../db.js';
 import { 
   CrawlerTemplate, 
   CrawlerRuntimeConfig, 
@@ -16,6 +18,9 @@ import {
 // ==================== 全局状态 ====================
 let interceptedApiData: any[] = [];
 let tmsTotalRecords: number = 0;
+
+/** orgList 同步完成后：node_id → 展示名（short_name ?? company_name），供 mapFields 使用 */
+const orgNodeNameMap = new Map<string, string>();
 
 const TARGET_ORG_NAME = '嘉上嘉供应链重庆山东A';
 const DEFAULT_SHIP_TIME_START = '';
@@ -1270,6 +1275,266 @@ async function switchOrganization(page: Page): Promise<boolean> {
   return true;
 }
 
+function parseNameHistoryRaw(raw: any): Array<{ name: string; changed_at: string }> {
+  if (raw == null || raw === '') return [];
+  if (Array.isArray(raw)) return raw as Array<{ name: string; changed_at: string }>;
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw);
+      return Array.isArray(p) ? p : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function extractOrgListDataPayload(res: any): any[] {
+  const data = res?.res?.data ?? res?.data;
+  return Array.isArray(data) ? data : [];
+}
+
+function isLoginAuthFailure(res: any): boolean {
+  const errno = res?.errno;
+  if (errno === 401 || errno === '401') return true;
+  const msg = String(res?.errmsg || res?.msg || res?.message || '').toLowerCase();
+  return msg.includes('登录') || msg.includes('login');
+}
+
+/**
+ * 处理已合并的 orgList.data（入库、改名、停用检测、填充 orgNodeNameMap）。
+ * 供 syncTmsOrgNodes 与 dry-run 脚本共用。
+ */
+export async function processOrgListPayload(allDataArray: any[]): Promise<void> {
+  const tmsSource = 'yaoqianshu';
+  if (!Array.isArray(allDataArray) || allDataArray.length === 0) {
+    return;
+  }
+
+  const [existingRows] = await pool.query<any[]>(
+    `SELECT node_id, node_name, name_history FROM tms_org_nodes WHERE tms_source = ?`,
+    [tmsSource]
+  );
+  const existingMap = new Map<string, { node_name: string; name_history: any }>();
+  for (const r of existingRows || []) {
+    existingMap.set(String(r.node_id), {
+      node_name: String(r.node_name || ''),
+      name_history: r.name_history,
+    });
+  }
+
+  const idList: string[] = [];
+  const rowsToUpsert: any[] = [];
+
+  for (const item of allDataArray) {
+    const nodeId = String(item?.id ?? '').trim();
+    if (!nodeId) continue;
+    idList.push(nodeId);
+
+    const newNodeName = String(item.company_name || item.short_name || '').trim();
+    const newShortName = String(item.short_name || item.company_name || '').trim();
+    const old = existingMap.get(nodeId);
+    let nameHistoryJson: string | null = null;
+
+    if (old && old.node_name && newNodeName && old.node_name !== newNodeName) {
+      const history = parseNameHistoryRaw(old.name_history);
+      history.push({ name: old.node_name, changed_at: new Date().toISOString() });
+      nameHistoryJson = JSON.stringify(history);
+      console.log(`[摇钱树] 网点改名: id=${nodeId} 旧:${old.node_name} → 新:${newNodeName}`);
+      await pool.query(
+        `UPDATE routes SET name = ?, updated_at = NOW()
+         WHERE tms_source = ? AND tms_node_id = ?`,
+        [newNodeName, tmsSource, nodeId]
+      );
+    } else if (old) {
+      nameHistoryJson =
+        old.name_history == null
+          ? null
+          : typeof old.name_history === 'string'
+            ? old.name_history
+            : JSON.stringify(old.name_history);
+    } else {
+      nameHistoryJson = null;
+    }
+
+    const parentRaw = item?.sup_id;
+    const parentNodeId =
+      parentRaw !== undefined && parentRaw !== null && String(parentRaw).trim() !== ''
+        ? String(parentRaw).trim()
+        : null;
+
+    rowsToUpsert.push({
+      id: randomUUID(),
+      tmsSource,
+      nodeId,
+      nodeName: newNodeName,
+      shortName: newShortName || newNodeName,
+      companyCode: String(item.company_code || ''),
+      accountCode: String(item.account_code || ''),
+      parentNodeId,
+      nodeType: String(item.type || ''),
+      property: String(item.property || ''),
+      state: String(item.state || ''),
+      province: String(item.province || ''),
+      city: String(item.city || ''),
+      raw: JSON.stringify(item),
+      nameHistoryJson,
+    });
+  }
+
+  const chunkSize = 200;
+  for (let i = 0; i < rowsToUpsert.length; i += chunkSize) {
+    const chunk = rowsToUpsert.slice(i, i + chunkSize);
+    const placeholders = chunk
+      .map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())')
+      .join(', ');
+    const flat: any[] = [];
+    for (const r of chunk) {
+      flat.push(
+        r.id,
+        r.tmsSource,
+        r.nodeId,
+        r.nodeName,
+        r.shortName,
+        r.companyCode,
+        r.accountCode,
+        r.parentNodeId,
+        r.nodeType,
+        r.property,
+        r.state,
+        r.province,
+        r.city,
+        r.raw,
+        r.nameHistoryJson
+      );
+    }
+    await pool.query(
+      `INSERT INTO tms_org_nodes (
+        id, tms_source, node_id, node_name, short_name, company_code, account_code,
+        parent_node_id, node_type, property, state, province, city, raw, name_history,
+        first_seen_at, last_seen_at
+      ) VALUES ${placeholders}
+      ON DUPLICATE KEY UPDATE
+        node_name = VALUES(node_name),
+        short_name = VALUES(short_name),
+        company_code = VALUES(company_code),
+        account_code = VALUES(account_code),
+        parent_node_id = VALUES(parent_node_id),
+        node_type = VALUES(node_type),
+        property = VALUES(property),
+        state = VALUES(state),
+        province = VALUES(province),
+        city = VALUES(city),
+        raw = VALUES(raw),
+        name_history = VALUES(name_history),
+        last_seen_at = NOW()`,
+      flat
+    );
+  }
+
+  if (idList.length > 0) {
+    const stalePlaceholders = idList.map(() => '?').join(', ');
+    const [staleRows] = await pool.query<any[]>(
+      `SELECT node_id, node_name FROM tms_org_nodes
+       WHERE tms_source = ? AND state = '2' AND node_id NOT IN (${stalePlaceholders})`,
+      [tmsSource, ...idList]
+    );
+    for (const sr of staleRows || []) {
+      console.log(`[摇钱树] 网点停用: id=${sr.node_id} name=${sr.node_name}`);
+    }
+    await pool.query(
+      `UPDATE tms_org_nodes SET state = '3', updated_at = NOW()
+       WHERE tms_source = ? AND state = '2' AND node_id NOT IN (${stalePlaceholders})`,
+      [tmsSource, ...idList]
+    );
+  }
+
+  orgNodeNameMap.clear();
+  for (const item of allDataArray) {
+    const nid = String(item?.id ?? '').trim();
+    if (!nid) continue;
+    const label = String(item.short_name || item.company_name || '').trim();
+    if (label) orgNodeNameMap.set(nid, label);
+  }
+}
+
+async function syncTmsOrgNodes(page: Page, config: CrawlerRuntimeConfig): Promise<void> {
+  const baseUrl = normalizeBaseUrl(config.loginUrl || 'https://rm.zo-cloud.cn');
+  const orgListGroupId = String(config.orgListGroupId || '188696').trim();
+  const pageSizeRequested = 1000;
+  const maxPages = 20;
+  let companyIdParam: string | number = orgListGroupId;
+  if (/^\d+$/.test(orgListGroupId)) {
+    companyIdParam = Number(orgListGroupId);
+  }
+
+  const merged: any[] = [];
+  let syncOk = true;
+
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+    const reqObj = {
+      company_id: companyIdParam,
+      page_num: pageNum,
+      page_size: pageSizeRequested,
+      category: 'Company',
+      filter: [],
+      query: { state: ['2'] },
+    };
+    const body = `req=${encodeURIComponent(JSON.stringify(reqObj))}`;
+    const url = `${baseUrl}/api/Table/Search/orgList`;
+
+    let res: any;
+    try {
+      res = await page.evaluate(
+        async (payload: { url: string; body: string }) => {
+          const r = await fetch(payload.url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: payload.body,
+            credentials: 'include',
+          });
+          return r.json();
+        },
+        { url, body }
+      );
+    } catch (e: any) {
+      console.error('[摇钱树] orgList 请求异常:', e?.message || e);
+      syncOk = false;
+      break;
+    }
+
+    if (isLoginAuthFailure(res)) {
+      throw new Error('登录态失效');
+    }
+
+    const errno = res?.errno;
+    if (errno !== 0 && errno !== '0') {
+      console.error('[摇钱树] orgList 接口 errno 非 0:', errno, res?.errmsg || res?.msg || '');
+      syncOk = false;
+      break;
+    }
+
+    const pageData = extractOrgListDataPayload(res);
+    merged.push(...pageData);
+
+    if (pageData.length < pageSizeRequested) {
+      break;
+    }
+  }
+
+  if (!syncOk) {
+    console.error('[摇钱树] 组织架构同步未完成，跳过停用检测与全量 upsert');
+    return;
+  }
+
+  if (merged.length === 0) {
+    console.log('[摇钱树] orgList 无数据返回，跳过 tms_org_nodes 写入与字典刷新');
+    return;
+  }
+
+  await processOrgListPayload(merged);
+}
+
 // ==================== 登录逻辑 ====================
 async function login(page: Page, config: CrawlerRuntimeConfig): Promise<boolean> {
   console.log(`[摇钱树] 开始登录 - 用户名: ${config.username}`);
@@ -1295,6 +1560,13 @@ async function login(page: Page, config: CrawlerRuntimeConfig): Promise<boolean>
   if (currentUrl.includes('/Order') || currentUrl.includes('/Index') || currentUrl.includes('/Home') || currentUrl.includes('/Operate')) {
     console.log('[摇钱树] 已经登录，无需重新登录');
     console.log('[摇钱树] 按新策略跳过组织跳转，直接在配载页按业务字段筛选');
+    try {
+      await syncTmsOrgNodes(page, config);
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (msg.includes('登录态失效')) throw e;
+      console.error('[摇钱树] 组织架构同步异常（不影响后续抓取）:', msg);
+    }
     return true;
   }
   
@@ -1562,7 +1834,17 @@ async function login(page: Page, config: CrawlerRuntimeConfig): Promise<boolean>
       console.log('[摇钱树] 登录成功，按新策略跳过组织切换');
     }
   }
-  
+
+  if (loginSuccess) {
+    try {
+      await syncTmsOrgNodes(page, config);
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (msg.includes('登录态失效')) throw e;
+      console.error('[摇钱树] 组织架构同步异常（不影响后续抓取）:', msg);
+    }
+  }
+
   return loginSuccess;
 }
 
@@ -2148,7 +2430,7 @@ function pickFirstPositiveNumber(candidates: any[]): number {
 //   应付: b_arr_f_total(到付合计), b_fuel_card_f_total(油卡合计),
 //         b_billing_f_total(开单合计), b_receipt_f_total(签单合计)
 //   其他: b_tr_trans_f_s(运费), b_tr_d_profit_head_f(毛利), b_profit(利润)
-function mapFields(rawData: any): WaybillData {
+export function mapFields(rawData: any): WaybillData {
   const item = rawData;
   
   const statusMap: Record<string, string> = {
@@ -2215,6 +2497,13 @@ function mapFields(rawData: any): WaybillData {
   // 发车时间（用作运单日期和shipTime）
   const truckTime = item.truck_t || item.head_truck_t || item.cur_truck_t || item.plan_truck_t || null;
 
+  const branchNodeId = String(item.bsc_company_id || '').trim();
+  const branchFromTms = branchNodeId ? orgNodeNameMap.get(branchNodeId) : undefined;
+  const branchFallback =
+    String(item.down_line_text || '').split('->')[0].trim() ||
+    extractOutletName(item).split('->')[0].trim() ||
+    '';
+
   return {
     waybillNumber,
     externalId: String(item.id || ''),
@@ -2242,7 +2531,9 @@ function mapFields(rawData: any): WaybillData {
     createTime: truckTime ? new Date(truckTime) : undefined,
     shipTime: truckTime ? new Date(truckTime) : undefined,
     subFinancier: String(item.down_line_text || '').split('->')[0].trim() || TARGET_ORG_NAME,
-    branch: String(item.down_line_text || '').split('->')[0].trim() || extractOutletName(item).split('->')[0].trim() || '',
+    branch: branchFromTms || branchFallback,
+    tmsSource: 'yaoqianshu',
+    tmsBranchNodeId: branchNodeId || undefined,
   };
 }
 
@@ -2304,6 +2595,14 @@ const yaoqianshuTemplate: CrawlerTemplate = {
       type: 'text',
       required: false,
       placeholder: '逗号分隔；若不填则仅按状态名称本地过滤'
+    },
+    {
+      key: 'orgListGroupId',
+      label: '组织架构 group 顶层 ID',
+      type: 'text',
+      required: false,
+      placeholder: '默认 188696；用于 orgList 接口拉网点字典',
+      defaultValue: '188696',
     },
   ],
   login,

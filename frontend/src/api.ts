@@ -3320,6 +3320,52 @@ export interface RouteItem {
   status: "active" | "disabled";
   createdAt: string;
   updatedAt: string;
+  tmsSource?: string;
+  tmsNodeId?: string;
+  tmsNodeName?: string;
+  /** 与 TMS 字典的绑定状态：bound=已绑且字典命中；stale=已绑但字典失联；unbound=未绑，运维需要对齐 */
+  tmsBindingStatus?: "bound" | "stale" | "unbound";
+}
+
+export interface TmsOrgNode {
+  id: string;
+  tmsSource: string;
+  nodeId: string;
+  nodeName: string;
+  shortName?: string;
+  companyCode?: string;
+  accountCode?: string;
+  nodeType?: string;
+  nodeTypeLabel?: string;
+  property?: string;
+  propertyLabel?: string;
+  state?: string;
+  stateLabel?: string;
+  parentNodeId?: string;
+  province?: string;
+  city?: string;
+}
+
+export async function fetchTmsOrgNodes(
+  token: string,
+  params?: {
+    tmsSource?: string;
+    state?: string;
+    nodeType?: string;
+    keyword?: string;
+    pageSize?: number;
+  }
+): Promise<{ items: TmsOrgNode[]; total: number }> {
+  const sp = new URLSearchParams();
+  if (params?.tmsSource) sp.append("tmsSource", params.tmsSource);
+  if (params?.state) sp.append("state", params.state);
+  if (params?.nodeType) sp.append("nodeType", params.nodeType);
+  if (params?.keyword) sp.append("keyword", params.keyword);
+  if (params?.pageSize) sp.append("pageSize", String(params.pageSize));
+  const q = sp.toString();
+  return request(`/tms-org-nodes${q ? `?${q}` : ""}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 export async function fetchRoutes(
@@ -3339,7 +3385,13 @@ export async function fetchRoutes(
 
 export async function createRouteApi(
   token: string,
-  payload: { name: string; localPartnerId: string; remark?: string }
+  payload: {
+    name: string;
+    localPartnerId: string;
+    remark?: string;
+    tmsSource?: string;
+    tmsNodeId?: string;
+  }
 ): Promise<{ route: RouteItem }> {
   return request("/routes", {
     method: "POST",
@@ -3351,7 +3403,14 @@ export async function createRouteApi(
 export async function updateRouteApi(
   token: string,
   id: string,
-  payload: Partial<{ name: string; localPartnerId: string; remark: string; status: "active" | "disabled" }>
+  payload: Partial<{
+    name: string;
+    localPartnerId: string;
+    remark: string;
+    status: "active" | "disabled";
+    tmsSource: string | null;
+    tmsNodeId: string | null;
+  }>
 ): Promise<{ route: RouteItem }> {
   return request(`/routes/${id}`, {
     method: "PUT",

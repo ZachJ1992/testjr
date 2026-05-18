@@ -25,6 +25,7 @@ import {
   type RouteItem
 } from "../api";
 import { useAuth } from "../auth";
+import TmsOrgNodeSelect from "../components/TmsOrgNodeSelect";
 import { useI18n } from "../i18n";
 import type { Financier } from "../types";
 import {
@@ -85,6 +86,42 @@ const COMMISSION_FIELDS = [
   { key: "premiumFee", label: "保险费" },
   { key: "handlingFee", label: "装卸费" }
 ] as const;
+
+/**
+ * 渲染线路 TMS 绑定状态 Tag
+ * - bound：蓝色「✓ TMS: 网点名」
+ * - stale：橙色「TMS 字典失联」
+ * - unbound：红色「⚠ 名称与 TMS 无法匹配」（醒目提示，需要运维改成 TMS 真实名）
+ */
+function renderTmsBindingTag(route: {
+  tmsNodeId?: string;
+  tmsNodeName?: string;
+  tmsBindingStatus?: "bound" | "stale" | "unbound";
+}) {
+  // 兼容旧数据：没有 tmsBindingStatus 时，按 tmsNodeId 推断
+  const status: "bound" | "stale" | "unbound" =
+    route.tmsBindingStatus ?? (route.tmsNodeId ? (route.tmsNodeName ? "bound" : "stale") : "unbound");
+  const baseStyle = { fontSize: 11, marginLeft: 6 } as const;
+  if (status === "bound") {
+    return (
+      <Tag color="blue" style={baseStyle}>
+        ✓ TMS: {route.tmsNodeName || route.tmsNodeId}
+      </Tag>
+    );
+  }
+  if (status === "stale") {
+    return (
+      <Tag color="orange" style={baseStyle}>
+        TMS 字典失联（id: {route.tmsNodeId}）
+      </Tag>
+    );
+  }
+  return (
+    <Tag color="error" style={{ ...baseStyle, fontWeight: 600 }}>
+      ⚠ 名称与 TMS 无法匹配
+    </Tag>
+  );
+}
 
 interface CommissionContractForm {
   contractName: string;
@@ -443,7 +480,22 @@ function NewContractsPage() {
     if (!token) return;
     try {
       const values = await routeForm.validateFields();
-      await createRouteApi(token, values);
+      const payload: {
+        name: string;
+        localPartnerId: string;
+        remark?: string;
+        tmsSource?: string;
+        tmsNodeId?: string;
+      } = {
+        name: values.name,
+        localPartnerId: values.localPartnerId,
+        remark: values.remark,
+      };
+      if (values.bindMode === "tms" && values.tmsSource && values.tmsNodeId) {
+        payload.tmsSource = values.tmsSource;
+        payload.tmsNodeId = values.tmsNodeId;
+      }
+      await createRouteApi(token, payload);
       message.success("线路创建成功");
       setRouteModalOpen(false);
       routeForm.resetFields();
@@ -550,8 +602,18 @@ function NewContractsPage() {
       const children = lpRoutes.length > 0
         ? lpRoutes.map(r => ({
             title: (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <EnvironmentOutlined style={{ color: "#52c41a" }} />{r.name}
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                <EnvironmentOutlined style={{ color: "#52c41a" }} />
+                <span
+                  style={
+                    r.tmsBindingStatus === "unbound"
+                      ? { color: "#ff4d4f", fontWeight: 600 }
+                      : undefined
+                  }
+                >
+                  {r.name}
+                </span>
+                {renderTmsBindingTag(r)}
                 <DeleteOutlined
                   style={{ color: "#ff4d4f", fontSize: 12, cursor: "pointer", marginLeft: 8, opacity: 0.6 }}
                   onClick={(e) => { e.stopPropagation(); handleDeleteRouteInTree(r.id, r.name); }}
@@ -1375,16 +1437,67 @@ function NewContractsPage() {
         cancelText="取消"
         zIndex={1100}
       >
-        <Form form={routeForm} layout="vertical">
+        <Form form={routeForm} layout="vertical" initialValues={{ bindMode: "tms" }}>
           <Form.Item name="localPartnerId" label="所属落地合作方" rules={[{ required: true, message: "请选择落地合作方" }]}>
             <Select
               options={(manageModalOpen ? localPartners : filteredLocalPartners).map(lp => ({ value: lp.id, label: lp.name }))}
               placeholder="选择落地合作方"
             />
           </Form.Item>
-          <Form.Item name="name" label="线路名称" rules={[{ required: true, message: "请输入线路名称" }]}>
-            <Input placeholder="如：重庆-山东A线" />
+          <Form.Item name="bindMode" label="线路命名方式">
+            <Radio.Group>
+              <Radio value="tms">绑定 TMS 网点（推荐）</Radio>
+              <Radio value="manual">手动输入</Radio>
+            </Radio.Group>
           </Form.Item>
+
+          <Form.Item name="tmsSource" hidden>
+            <Input type="hidden" />
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, curr) => prev.bindMode !== curr.bindMode}
+          >
+            {({ getFieldValue }) =>
+              getFieldValue("bindMode") === "tms" ? (
+                <Form.Item
+                  name="tmsNodeId"
+                  label="选择 TMS 网点"
+                  rules={[{ required: true, message: "请选择网点" }]}
+                  extra="选择后，「线路名称」会自动跟随 TMS 网点的当前名称"
+                >
+                  <TmsOrgNodeSelect
+                    tmsSource="yaoqianshu"
+                    onNodeSelect={(node) => {
+                      routeForm.setFieldsValue({
+                        name: node ? (node.shortName || node.nodeName) : undefined,
+                        tmsSource: node?.tmsSource,
+                      });
+                    }}
+                  />
+                </Form.Item>
+              ) : null}
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, curr) => prev.bindMode !== curr.bindMode}
+          >
+            {({ getFieldValue }) => (
+              <Form.Item
+                name="name"
+                label="线路名称"
+                rules={[{ required: true, message: "请输入线路名称" }]}
+              >
+                <Input
+                  placeholder={getFieldValue("bindMode") === "tms" ? "由 TMS 网点自动填充" : "如：重庆-山东A线"}
+                  disabled={getFieldValue("bindMode") === "tms"}
+                />
+              </Form.Item>
+            )}
+          </Form.Item>
+
           <Form.Item name="remark" label="备注">
             <TextArea rows={2} placeholder="选填" />
           </Form.Item>
@@ -1584,7 +1697,24 @@ function NewContractsPage() {
                     size="small"
                     pagination={false}
                     columns={[
-                      { title: "线路名称", dataIndex: "name", key: "name" },
+                      {
+                        title: "线路名称",
+                        key: "name",
+                        render: (_: unknown, record: RouteItem) => (
+                          <span>
+                            <span
+                              style={
+                                record.tmsBindingStatus === "unbound"
+                                  ? { color: "#ff4d4f", fontWeight: 600 }
+                                  : undefined
+                              }
+                            >
+                              {record.name}
+                            </span>
+                            {renderTmsBindingTag(record)}
+                          </span>
+                        ),
+                      },
                       { title: "区域", dataIndex: "areaName", key: "areaName", render: (v: string) => v || <Tag>无区域</Tag> },
                       { title: "所属落地合作方", dataIndex: "localPartnerName", key: "localPartnerName" },
                       {
@@ -1593,6 +1723,7 @@ function NewContractsPage() {
                         width: 120,
                         render: (_: any, record: RouteItem) => (
                           <Space size={0}>
+                            {/* TODO(T4 §4.2): 增加「绑定/解绑 TMS 网点」独立入口（TmsOrgNodeSelect + updateRouteApi），本期略过。 */}
                             <Button type="link" size="small" onClick={() => {
                               Modal.confirm({
                                 title: "编辑线路",

@@ -22,6 +22,7 @@ import * as directedPayStore from "./directed-pay-contracts-store.js";
 import directedPaymentRoutes from "./directed-payment-routes.js";
 import crawlerRoutes from "./crawler/crawler-routes.js";
 import * as commissionV2Store from "./commission-v2-store.js";
+import * as tmsOrgNodesStore from "./tms-org-nodes-store.js";
 import * as reconStore from "./reconciliation-store.js";
 import { createSettlement as createSettlementRecord } from "./settlements-store.js";
 import { verifyPassword } from "./password.js";
@@ -4335,6 +4336,28 @@ router.delete(
 // =============================================
 
 router.get(
+  "/tms-org-nodes",
+  authenticate,
+  requirePermissions("manage_contracts"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { tmsSource, state, nodeType, keyword, pageSize } = req.query;
+      const ps = pageSize ? Number(pageSize) : undefined;
+      const result = await tmsOrgNodesStore.getTmsOrgNodes({
+        tmsSource: tmsSource as string | undefined,
+        state: state as string | undefined,
+        nodeType: nodeType as string | undefined,
+        keyword: keyword as string | undefined,
+        pageSize: Number.isFinite(ps) ? ps : undefined,
+      });
+      res.json({ items: result.items, total: result.total });
+    } catch (err) {
+      handleError(res, req, 500, err);
+    }
+  }
+);
+
+router.get(
   "/routes",
   authenticate,
   requirePermissions("manage_contracts"),
@@ -4360,12 +4383,33 @@ router.post(
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { name, localPartnerId, remark } = req.body ?? {};
+      const { name, localPartnerId, remark, tmsSource, tmsNodeId } = req.body ?? {};
       if (!name || !localPartnerId) {
         sendError(res, req, 400, "名称和落地合作方为必填");
         return;
       }
-      const item = await commissionV2Store.createRoute({ name, localPartnerId, remark });
+      const hasTs = tmsSource != null && String(tmsSource).trim() !== "";
+      const hasTn = tmsNodeId != null && String(tmsNodeId).trim() !== "";
+      if (hasTs !== hasTn) {
+        sendError(res, req, 400, "tmsSource 和 tmsNodeId 必须同时提供或同时缺失");
+        return;
+      }
+      const ts = hasTs ? String(tmsSource).trim() : undefined;
+      const tn = hasTn ? String(tmsNodeId).trim() : undefined;
+      if (tn && ts) {
+        const exists = await tmsOrgNodesStore.checkTmsNodeExists(ts, tn);
+        if (!exists) {
+          sendError(res, req, 400, `TMS 网点不存在: ${ts}/${tn}`);
+          return;
+        }
+      }
+      const item = await commissionV2Store.createRoute({
+        name,
+        localPartnerId,
+        remark,
+        tmsSource: ts,
+        tmsNodeId: tn,
+      });
       res.status(201).json({ route: item });
     } catch (err) {
       handleError(res, req, 400, err);
@@ -4379,7 +4423,50 @@ router.put(
   requirePermissions("manage_contracts"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const item = await commissionV2Store.updateRoute(req.params.id, req.body);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const patch: Parameters<typeof commissionV2Store.updateRoute>[1] = {};
+
+      if (body.name !== undefined) patch.name = body.name as string;
+      if (body.localPartnerId !== undefined) patch.localPartnerId = body.localPartnerId as string;
+      if (body.remark !== undefined) patch.remark = body.remark as string;
+      if (body.status !== undefined) patch.status = body.status as "active" | "disabled";
+
+      const bodyHasTs = Object.prototype.hasOwnProperty.call(body, "tmsSource");
+      const bodyHasTn = Object.prototype.hasOwnProperty.call(body, "tmsNodeId");
+
+      if (bodyHasTs !== bodyHasTn) {
+        sendError(res, req, 400, "tmsSource 与 tmsNodeId 须同时出现在请求体中");
+        return;
+      }
+
+      if (bodyHasTs && bodyHasTn) {
+        const { tmsSource, tmsNodeId } = body;
+        patch.tmsSource =
+          tmsSource === null || tmsSource === "" ? null : String(tmsSource);
+        patch.tmsNodeId =
+          tmsNodeId === null || tmsNodeId === "" ? null : String(tmsNodeId);
+
+        const tsTrim = patch.tmsSource ? String(patch.tmsSource).trim() : "";
+        const tnTrim = patch.tmsNodeId ? String(patch.tmsNodeId).trim() : "";
+        const hasTs = tsTrim.length > 0;
+        const hasTn = tnTrim.length > 0;
+        if (hasTs !== hasTn) {
+          sendError(res, req, 400, "tmsSource 和 tmsNodeId 必须同时提供或同时缺失");
+          return;
+        }
+        if (hasTn && hasTs && patch.tmsSource && patch.tmsNodeId) {
+          const exists = await tmsOrgNodesStore.checkTmsNodeExists(
+            String(patch.tmsSource).trim(),
+            String(patch.tmsNodeId).trim()
+          );
+          if (!exists) {
+            sendError(res, req, 400, `TMS 网点不存在: ${patch.tmsSource}/${patch.tmsNodeId}`);
+            return;
+          }
+        }
+      }
+
+      const item = await commissionV2Store.updateRoute(req.params.id, patch);
       res.json({ route: item });
     } catch (err) {
       handleError(res, req, 400, err);

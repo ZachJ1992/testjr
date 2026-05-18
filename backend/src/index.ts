@@ -29,6 +29,8 @@ import { trimTestData } from "./migrations/trim-test-data.js";
 import { runCommissionV2Migration } from "./migrations/commission-v2-tables.js";
 import { runRevenueContractLinkMigration } from "./migrations/revenue-contract-link.js";
 import { runMultiTenantPermissionMigration } from "./migrations/multi-tenant-permission.js";
+import { runTmsOrgNodesMigration } from "./migrations/tms-org-nodes.js";
+import { backfillWaybillsTmsNode } from "./migrations/backfill-waybills-tms-node.js";
 import revenueRoutes from "./revenue-routes.js";
 import contractLoanRoutes from "./contract-loan-routes.js";
 import dashboardRoutes from "./dashboard-routes.js";
@@ -88,6 +90,8 @@ initData()
   .then(() => runCommissionV2Migration())
   .then(() => runRevenueContractLinkMigration())
   .then(() => runMultiTenantPermissionMigration())
+  .then(() => runTmsOrgNodesMigration())
+  .then(() => backfillWaybillsTmsNode())
   .then(() => {
     // 清理旧的临时目录
     cleanupOldTempDirectories();
