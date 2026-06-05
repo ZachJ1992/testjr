@@ -148,3 +148,67 @@ export async function checkTmsNodeExists(tmsSource: string, nodeId: string): Pro
   );
   return rows.length > 0;
 }
+
+/**
+ * 查找某个 name 在指定 TMS 字典里唯一精确匹配的启用网点（state=2）。
+ * 命中条件：短名 (short_name) 或全名 (node_name) 与 name 严格相等，且全字典内此 name 唯一对应一个 node_id。
+ * 用于「按名字自动绑定 routes.tms_node_id」的场景。
+ */
+export async function findUniqueTmsNodeByName(
+  tmsSource: string,
+  name: string
+): Promise<{ nodeId: string; nodeName: string } | undefined> {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return undefined;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT DISTINCT node_id, node_name
+     FROM tms_org_nodes
+     WHERE tms_source = ?
+       AND state = '2'
+       AND (short_name = ? OR node_name = ?)`,
+    [tmsSource, trimmed, trimmed]
+  );
+  if (rows.length !== 1) return undefined;
+  return {
+    nodeId: String(rows[0].node_id),
+    nodeName: String(rows[0].node_name),
+  };
+}
+
+/**
+ * 全量扫描 routes，找出所有「tms_node_id 为空、name 在某 TMS 字典里唯一精确匹配」的活跃记录，
+ * 一次性回写 tms_source + tms_node_id。
+ *
+ * 注意：
+ * - 仅作用于 routes.tms_node_id IS NULL 的活跃线路，绝不会覆盖已有绑定。
+ * - 借助 SQL 自连接的 NOT EXISTS 排除歧义（一个 name 对应字典里多个 node_id 时跳过）。
+ * - 用于摇钱树同步组织树后的「字典刷新 → 反向自动绑定」补偿。
+ *
+ * @returns 本次新增绑定的 routes 条数
+ */
+export async function autoBindRoutesByName(tmsSource: string): Promise<number> {
+  const src = String(tmsSource || "").trim();
+  if (!src) return 0;
+  const [result] = await pool.query<RowDataPacket[] & { affectedRows: number }>(
+    `UPDATE routes r
+     JOIN tms_org_nodes o
+       ON o.tms_source = ?
+      AND o.state = '2'
+      AND (o.short_name = r.name OR o.node_name = r.name)
+     SET r.tms_source = o.tms_source,
+         r.tms_node_id = o.node_id,
+         r.updated_at = NOW()
+     WHERE r.status = 'active'
+       AND r.tms_node_id IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM tms_org_nodes o2
+         WHERE o2.tms_source = o.tms_source
+           AND o2.state = '2'
+           AND (o2.short_name = r.name OR o2.node_name = r.name)
+           AND o2.node_id <> o.node_id
+       )`,
+    [src]
+  );
+  const affected = Number((result as any)?.affectedRows ?? 0);
+  return affected;
+}

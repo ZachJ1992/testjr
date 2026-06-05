@@ -92,15 +92,15 @@ const COMMISSION_FIELDS = [
  * - bound：蓝色「✓ TMS: 网点名」
  * - stale：橙色「TMS 字典失联」
  * - unbound：红色「⚠ 名称与 TMS 无法匹配」（醒目提示，需要运维改成 TMS 真实名）
+ * - undefined：该 financier 未接入 TMS 同步（如金罗/临沂），不显示任何标签
  */
 function renderTmsBindingTag(route: {
   tmsNodeId?: string;
   tmsNodeName?: string;
   tmsBindingStatus?: "bound" | "stale" | "unbound";
 }) {
-  // 兼容旧数据：没有 tmsBindingStatus 时，按 tmsNodeId 推断
-  const status: "bound" | "stale" | "unbound" =
-    route.tmsBindingStatus ?? (route.tmsNodeId ? (route.tmsNodeName ? "bound" : "stale") : "unbound");
+  const status = route.tmsBindingStatus;
+  if (!status) return null;
   const baseStyle = { fontSize: 11, marginLeft: 6 } as const;
   if (status === "bound") {
     return (

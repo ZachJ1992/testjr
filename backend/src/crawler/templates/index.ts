@@ -9,6 +9,8 @@
 import './zo-cloud.js';
 import './zo-cloud-orders.js';
 import './yaoqianshu.js';
+import './qqt-linyi.js';
+import './dszny-jinluo.js';
 
 // 导出模板注册表相关功能
 export { 

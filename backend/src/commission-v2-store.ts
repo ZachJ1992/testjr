@@ -6,6 +6,30 @@ import { pool } from "./db.js";
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import type { Area, LocalPartner, Route, ContractRoute } from "./types.js";
+import { findUniqueTmsNodeByName } from "./tms-org-nodes-store.js";
+
+/**
+ * 摇钱树是目前我们唯一同步组织树的 TMS，新建/改名 routes 时若调用方未显式提供
+ * tmsNodeId，则默认按 'yaoqianshu' 字典做唯一名字精确匹配的自动绑定。
+ * 后续接入其它 TMS 同步时可改为配置项。
+ */
+const DEFAULT_AUTO_BIND_TMS_SOURCE = "yaoqianshu";
+
+/**
+ * 接入了 TMS 组织树同步的 financier 名单，只有这些 financier 下的 routes 才参与 TMS 绑定状态展示。
+ * 未接入的 financier（如金罗），routes 的 tmsBindingStatus 直接返回 undefined，
+ * UI 不再显示"未匹配"的红色误报。
+ *
+ * 新接入其它 TMS 时在此添加对应 financier 的 enterprise_name 即可。
+ */
+const TMS_BINDING_ENABLED_FINANCIERS = new Set<string>(["融满"]);
+
+/**
+ * 即使 financier 接入了 TMS，但部分区域的运单来自其它系统（如临沂走 56qqt 不走摇钱树），
+ * 字典里永远查不到对应网点，这些区域下的 routes 同样不参与 TMS 绑定状态展示。
+ * 列出需要豁免的 area_name 即可。
+ */
+const TMS_BINDING_DISABLED_AREAS = new Set<string>(["临沂融满"]);
 
 // =============================================
 // 区域 (Areas)
@@ -231,11 +255,28 @@ export async function deleteLocalPartner(id: string): Promise<void> {
 function mapRouteRow(row: RowDataPacket): Route {
   const tmsNodeId = row.tms_node_id ?? undefined;
   const tmsNodeName = row.tms_node_name ?? undefined;
-  // 绑定状态：已绑且字典命中=bound；已绑但字典查不到=stale；未绑=unbound
-  let tmsBindingStatus: "bound" | "stale" | "unbound" = "unbound";
-  if (tmsNodeId) {
-    tmsBindingStatus = tmsNodeName ? "bound" : "stale";
+  const financierName = row.financier_enterprise_name
+    ? String(row.financier_enterprise_name)
+    : undefined;
+  const areaName = row.area_name ? String(row.area_name) : undefined;
+
+  // 计算 TMS 绑定状态的前提：
+  //   1) financier 接入了 TMS 组织树同步（如融满走摇钱树）；
+  //   2) 该 route 所在区域不在豁免列表（如「临沂融满」走 56qqt 不走摇钱树，字典里查不到）。
+  // 任一条件不满足，tmsBindingStatus 返回 undefined，前端不再展示绑定 Tag，避免红色误报。
+  let tmsBindingStatus: "bound" | "stale" | "unbound" | undefined = undefined;
+  if (
+    financierName &&
+    TMS_BINDING_ENABLED_FINANCIERS.has(financierName) &&
+    !(areaName && TMS_BINDING_DISABLED_AREAS.has(areaName))
+  ) {
+    if (tmsNodeId) {
+      tmsBindingStatus = tmsNodeName ? "bound" : "stale";
+    } else {
+      tmsBindingStatus = "unbound";
+    }
   }
+
   return {
     id: row.id,
     name: row.name,
@@ -261,9 +302,11 @@ export async function getRoutes(params?: {
 }): Promise<Route[]> {
   let sql = `
     SELECT r.*, lp.name AS local_partner_name, a.name AS area_name,
-           o.node_name AS tms_node_name
+           o.node_name AS tms_node_name,
+           f.enterprise_name AS financier_enterprise_name
     FROM routes r
     LEFT JOIN local_partners lp ON r.local_partner_id = lp.id
+    LEFT JOIN financiers f ON lp.financier_id = f.id
     LEFT JOIN areas a ON lp.area_id = a.id
     LEFT JOIN tms_org_nodes o
       ON o.tms_source = r.tms_source AND o.node_id = r.tms_node_id
@@ -305,9 +348,11 @@ export async function getRoutes(params?: {
 export async function getRouteById(id: string): Promise<Route | undefined> {
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT r.*, lp.name AS local_partner_name, a.name AS area_name,
-            o.node_name AS tms_node_name
+            o.node_name AS tms_node_name,
+            f.enterprise_name AS financier_enterprise_name
      FROM routes r
      LEFT JOIN local_partners lp ON r.local_partner_id = lp.id
+     LEFT JOIN financiers f ON lp.financier_id = f.id
      LEFT JOIN areas a ON lp.area_id = a.id
      LEFT JOIN tms_org_nodes o
        ON o.tms_source = r.tms_source AND o.node_id = r.tms_node_id
@@ -325,6 +370,26 @@ export async function createRoute(input: {
   tmsNodeId?: string;
 }): Promise<Route> {
   const id = randomUUID();
+
+  let finalTmsSource: string | null = input.tmsSource || null;
+  let finalTmsNodeId: string | null = input.tmsNodeId || null;
+
+  // 自动绑定：新建时未指定 tmsNodeId，则按 name 在默认字典做唯一精确匹配，命中即顺手绑上。
+  if (!finalTmsNodeId) {
+    try {
+      const hit = await findUniqueTmsNodeByName(DEFAULT_AUTO_BIND_TMS_SOURCE, input.name);
+      if (hit) {
+        finalTmsSource = DEFAULT_AUTO_BIND_TMS_SOURCE;
+        finalTmsNodeId = hit.nodeId;
+        console.log(
+          `[Routes] 新建时自动绑定 TMS 网点: name=${input.name} → ${DEFAULT_AUTO_BIND_TMS_SOURCE}/${hit.nodeId}`
+        );
+      }
+    } catch (e: any) {
+      console.warn(`[Routes] 新建时自动绑定 TMS 网点失败（不影响主流程）: ${e?.message || e}`);
+    }
+  }
+
   await pool.query(
     `INSERT INTO routes (id, name, local_partner_id, remark, tms_source, tms_node_id)
      VALUES (?, ?, ?, ?, ?, ?)`,
@@ -333,8 +398,8 @@ export async function createRoute(input: {
       input.name,
       input.localPartnerId,
       input.remark || null,
-      input.tmsSource || null,
-      input.tmsNodeId || null,
+      finalTmsSource,
+      finalTmsNodeId,
     ]
   );
   return (await getRouteById(id))!;
@@ -366,6 +431,36 @@ export async function updateRoute(
     vals.push(id);
     await pool.query(`UPDATE routes SET ${sets.join(", ")} WHERE id = ?`, vals);
   }
+
+  // 自动绑定：只要调用方没有显式触碰 tmsNodeId / tmsSource（即非"切换 TMS 模式"场景），
+  // 就在每次编辑后尝试做一次自动绑定补偿。当 route 已绑定时该检查会自然短路，开销可忽略。
+  // 这样无论运维改的是 name、remark、partner 还是 status，都能把"已经能识别"的线路顺手绑上。
+  // 仅对接入了 TMS 同步的 financier 做尝试（tmsBindingStatus 不为 undefined 即代表已接入）。
+  if (input.tmsNodeId === undefined && input.tmsSource === undefined) {
+    const current = await getRouteById(id);
+    if (
+      current &&
+      !current.tmsNodeId &&
+      current.status === "active" &&
+      current.tmsBindingStatus !== undefined
+    ) {
+      try {
+        const hit = await findUniqueTmsNodeByName(DEFAULT_AUTO_BIND_TMS_SOURCE, current.name);
+        if (hit) {
+          await pool.query(
+            `UPDATE routes SET tms_source = ?, tms_node_id = ?, updated_at = NOW() WHERE id = ?`,
+            [DEFAULT_AUTO_BIND_TMS_SOURCE, hit.nodeId, id]
+          );
+          console.log(
+            `[Routes] 编辑后自动绑定 TMS 网点: route=${id} name=${current.name} → ${DEFAULT_AUTO_BIND_TMS_SOURCE}/${hit.nodeId}`
+          );
+        }
+      } catch (e: any) {
+        console.warn(`[Routes] 自动绑定 TMS 网点失败（不影响主流程）: ${e?.message || e}`);
+      }
+    }
+  }
+
   const r = await getRouteById(id);
   if (!r) throw new Error("线路不存在");
   return r;

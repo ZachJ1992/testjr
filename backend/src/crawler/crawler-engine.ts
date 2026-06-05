@@ -175,6 +175,39 @@ function buildRuntimeConfig(config: ExternalSystemConfig): CrawlerRuntimeConfig 
   };
 }
 
+/**
+ * 运单金额变化后，就地同步其抽成收益记录。
+ * - 抽成基数口径（与 commission_config / recalculateHistoricalWaybillCommissions 保持一致）：
+ *     融满 = 应付合计(payable_total) × 2.5%
+ *     金罗 = 应收合计(receivable_total) × 2.5%
+ * - 只更新未进入对账流转（非锁定）的记录；锁定记录由上层锁定校验拦截，不会走到这里。
+ * - 仅更新已存在的收益记录；尚无记录的运单由爬虫后的 calculateWaybillPlatformRevenue 负责新建。
+ * - 临沂（融满名下，56qqt 来源）应付==应收，跟随融满走应付口径、金额不变。
+ */
+async function syncWaybillRevenueOnChange(waybillId: string): Promise<number> {
+  const [res] = await pool.query<any>(
+    `UPDATE revenue_records rr
+     JOIN waybills w ON rr.waybill_id = w.id
+     JOIN financiers f ON w.customer_id = f.id
+     SET rr.principal_amount = CASE
+           WHEN f.enterprise_name = '融满' THEN COALESCE(w.payable_total, 0)
+           ELSE COALESCE(w.receivable_total, 0)
+         END,
+         rr.rate = 0.025,
+         rr.amount = CASE
+           WHEN f.enterprise_name = '融满' THEN ROUND(COALESCE(w.payable_total, 0) * 0.025, 2)
+           ELSE ROUND(COALESCE(w.receivable_total, 0) * 0.025, 2)
+         END,
+         rr.updated_at = NOW()
+     WHERE rr.source_type = 'waybill_commission'
+       AND rr.waybill_id = ?
+       AND f.enterprise_name IN ('融满', '金罗')
+       AND rr.status NOT IN ('reconciling', 'reconciled', 'settled', 'accounted')`,
+    [waybillId]
+  );
+  return Number(res?.affectedRows || 0);
+}
+
 // ==================== 保存运单数据 ====================
 async function saveWaybillData(
   waybill: WaybillData, 
@@ -286,6 +319,17 @@ async function saveWaybillData(
             existingRow.id,
           ]
         );
+
+        // 运单金额变化后，同步更新其抽成收益（避免收益卡在旧基数上）
+        try {
+          const synced = await syncWaybillRevenueOnChange(existingRow.id);
+          if (synced > 0) {
+            console.log(`[CrawlerEngine] 运单金额变化，已同步收益记录: ${waybill.waybillNumber} (${synced} 条)`);
+          }
+        } catch (e: any) {
+          console.error(`[CrawlerEngine] 同步收益记录失败（不影响运单更新）: ${waybill.waybillNumber}, ${e?.message || e}`);
+        }
+
         return { inserted: false, updated: true };
       }
       

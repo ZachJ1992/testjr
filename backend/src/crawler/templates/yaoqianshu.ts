@@ -1456,6 +1456,20 @@ export async function processOrgListPayload(allDataArray: any[]): Promise<void> 
     const label = String(item.short_name || item.company_name || '').trim();
     if (label) orgNodeNameMap.set(nid, label);
   }
+
+  // 字典刷新完后，反向扫一遍 routes：把"未绑定但名字在字典里唯一精确匹配"的自动绑上。
+  // 覆盖以下场景：
+  // - 运维改了 routes.name 让它变成可绑定（B 路径漏掉的）
+  // - 字典里新加了节点，使原本不匹配的 route 变成匹配
+  try {
+    const { autoBindRoutesByName } = await import('../../tms-org-nodes-store.js');
+    const bound = await autoBindRoutesByName(tmsSource);
+    if (bound > 0) {
+      console.log(`[摇钱树] 字典刷新后自动绑定 routes ${bound} 条 (tms_source=${tmsSource})`);
+    }
+  } catch (e: any) {
+    console.error('[摇钱树] 自动绑定 routes 失败（不影响主流程）:', e?.message || e);
+  }
 }
 
 async function syncTmsOrgNodes(page: Page, config: CrawlerRuntimeConfig): Promise<void> {

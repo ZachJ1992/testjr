@@ -137,9 +137,20 @@ export async function calculateDailyRevenue(targetDate?: string): Promise<{
   // 3. 撮合业务抽成 (在结算时生成，这里不处理)
   // 4. 抽成合同费用 (在结算时生成，这里不处理)
 
-  // 5. 运单平台抽成（按融资方规则：融满2.5%应收，金罗200元/单）
+  // 5. 运单平台抽成（按融资方规则：融满/金罗均为应收合计 2.5%）
   const waybillCommissionRecords = await calculateWaybillPlatformRevenue();
   totalRecords += waybillCommissionRecords;
+
+  // 6. 历史运单抽成全量重算：同步那些"首次计算后运费被 TMS 修正"的存量记录
+  //    （增量计算只新建不更新，故每日重算一次拉齐非锁定记录；已对账记录自动跳过）
+  try {
+    const recalc = await recalculateHistoricalWaybillCommissions();
+    console.log(
+      `${date} 运单抽成历史重算: 更新 ${recalc.updated} 条, 新增 ${recalc.inserted} 条`
+    );
+  } catch (err) {
+    console.error(`${date} 运单抽成历史重算失败（不影响其他收益计算）:`, err);
+  }
 
   console.log(`${date} 收益计算完成，共生成 ${totalRecords} 条记录`);
 
@@ -733,18 +744,17 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
         rr.contract_type = 'waybill',
         rr.financier_id = w.customer_id,
         rr.financier_name = f.enterprise_name,
+        -- 业务口径（2026-06 修订）：融满抽成基数=应付合计(payable_total)，金罗=应收合计(receivable_total)，均 × 2.5%。
+        -- 临沂（融满名下、56qqt 来源）应付==应收，跟随融满走应付口径、金额不变。
+        -- 已对账/对账中/已结算/已入账的记录通过下方 WHERE 过滤跳过，保持锁定时口径不变。
         rr.principal_amount = CASE
           WHEN f.enterprise_name = '融满' THEN COALESCE(w.payable_total, 0)
           ELSE COALESCE(w.receivable_total, 0)
         END,
-        rr.rate = CASE
-          WHEN f.enterprise_name = '融满' THEN 0.025
-          ELSE 0
-        END,
+        rr.rate = 0.025,
         rr.amount = CASE
           WHEN f.enterprise_name = '融满' THEN ROUND(COALESCE(w.payable_total, 0) * 0.025, 2)
-          WHEN f.enterprise_name = '金罗' THEN 200
-          ELSE rr.amount
+          ELSE ROUND(COALESCE(w.receivable_total, 0) * 0.025, 2)
         END,
         rr.record_type = 'revenue',
         rr.beneficiary_type = 'platform',
@@ -769,19 +779,16 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
         UUID(), 'revenue', 'platform', 'waybill_commission',
         w.customer_id, w.waybill_number, 'waybill',
         w.customer_id, f.enterprise_name,
-        CASE
-          WHEN f.enterprise_name = '融满' THEN ROUND(COALESCE(w.payable_total, 0) * 0.025, 2)
-          WHEN f.enterprise_name = '金罗' THEN 200
-          ELSE 0
+        -- 业务口径（2026-06 修订）：融满=应付合计(payable_total)，金罗=应收合计(receivable_total)，均 × 2.5%。
+        CASE WHEN f.enterprise_name = '融满'
+          THEN ROUND(COALESCE(w.payable_total, 0) * 0.025, 2)
+          ELSE ROUND(COALESCE(w.receivable_total, 0) * 0.025, 2)
         END AS amount,
-        CASE
-          WHEN f.enterprise_name = '融满' THEN COALESCE(w.payable_total, 0)
+        CASE WHEN f.enterprise_name = '融满'
+          THEN COALESCE(w.payable_total, 0)
           ELSE COALESCE(w.receivable_total, 0)
         END AS principal_amount,
-        CASE
-          WHEN f.enterprise_name = '融满' THEN 0.025
-          ELSE 0
-        END AS rate,
+        0.025 AS rate,
         COALESCE(${revenueDateExpr}, CURRENT_DATE) AS revenue_date,
         'confirmed' AS status,
         w.id AS waybill_id
@@ -798,7 +805,10 @@ export async function recalculateHistoricalWaybillCommissions(): Promise<{
         AND f.enterprise_name IN ('融满', '金罗')
         AND rr.id IS NULL
         AND rr_cn.id IS NULL
-        AND (f.enterprise_name <> '融满' OR COALESCE(w.payable_total, 0) > 0)
+        AND CASE WHEN f.enterprise_name = '融满'
+              THEN COALESCE(w.payable_total, 0) > 0
+              ELSE COALESCE(w.receivable_total, 0) > 0
+            END
     `);
 
     const updated = Number(updateResult.affectedRows || 0);
