@@ -41,6 +41,12 @@ function getLockInfo(): { pid: number; timestamp: number } | null {
     if (fs.existsSync(LOCK_FILE)) {
       const content = fs.readFileSync(LOCK_FILE, 'utf-8');
       const [pid, timestamp] = content.split(':').map(Number);
+      // 损坏/空的锁文件（如磁盘满导致写入不完整）会解析出 NaN，
+      // 若直接返回会让过期判断永远为 false，从而永久卡死调度器。
+      // 这里将其视为无效锁，返回 null 让上层重新获取（覆盖）锁。
+      if (!Number.isFinite(pid) || !Number.isFinite(timestamp)) {
+        return null;
+      }
       return { pid, timestamp };
     }
   } catch (e) {
